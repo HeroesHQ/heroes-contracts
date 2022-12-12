@@ -1,12 +1,27 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{env, AccountId, BorshStorageKey, Gas};
+use near_sdk::{env, ext_contract, AccountId, Balance, BorshStorageKey, Gas};
 
 pub type BountyIndex = u64;
 
-pub const GAS_FOR_ADD_PROPOSAL: Gas = Gas(25_000_000_000_000);
+pub const GAS_FOR_ADD_PROPOSAL: Gas = Gas(35_000_000_000_000);
+pub const GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK: Gas = Gas(10_000_000_000_000);
 pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(50_000_000_000_000);
+pub const GAS_FOR_FT_TRANSFER: Gas = Gas(30_000_000_000_000);
+pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
+
+pub const ONE_YOCTO: Balance = 1;
+
+#[ext_contract(ext_ft_contract)]
+trait ExtFtContract {
+  fn ft_transfer(
+    &mut self,
+    receiver_id: AccountId,
+    amount: U128,
+    memo: Option<String>
+  );
+}
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]

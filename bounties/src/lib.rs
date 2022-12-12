@@ -253,8 +253,10 @@ impl BountiesContract {
           )
           .then(
             Self::ext(env::current_account_id())
-              .on_added_proposal_callback(id.clone(), sender_id)
-          ).into()
+              .with_static_gas(GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK)
+              .on_added_proposal_callback(sender_id, claims.as_mut(), claim_idx)
+          )
+          .into()
 
       } else {
         claims[claim_idx].status = ClaimStatus::Completed;
@@ -338,13 +340,20 @@ impl BountiesContract {
         );
 
         let result = if matches!(action, BountyAction::ClaimApproved { .. }) {
-          // TODO: call ft_transfer
-          claims[claim_idx].status = ClaimStatus::Approved;
-          self.internal_save_claims(&receiver_id, &claims);
-          bounty.status = BountyStatus::Completed;
-          self.bounties.insert(&id, &bounty);
-          // TODO: update reputation
-          self.internal_return_bonds(sender_id.clone())
+          ext_ft_contract::ext(bounty.token.clone())
+            .with_attached_deposit(ONE_YOCTO)
+            .with_static_gas(GAS_FOR_FT_TRANSFER)
+            .ft_transfer(
+              receiver_id.clone(),
+              bounty.amount.clone(),
+              Some(format!("Bounty {} payout", id)),
+            )
+            .then(
+              Self::ext(env::current_account_id())
+                .with_static_gas(GAS_FOR_AFTER_FT_TRANSFER)
+                .after_ft_transfer(id, receiver_id, &mut bounty, claims.as_mut(), claim_idx)
+            )
+            .into()
 
         } else {
           claims[claim_idx].status = ClaimStatus::Rejected;
@@ -353,15 +362,10 @@ impl BountiesContract {
           if self.dispute_contract.is_none() {
             // If the creation of a dispute is not foreseen,
             // then the bounty reset to initial state
-            bounty.status = BountyStatus::New;
-            self.bounties.insert(&id, &bounty);
-            // TODO: update reputation
-            self.internal_return_bonds(sender_id.clone())
-          } else {
-            // You need to wait until the recipient creates a dispute,
-            // or the deadline for creating a dispute expires
-            PromiseOrValue::Value(())
+            self.internal_reset_bounty_to_initial_state(id, receiver_id, &mut bounty);
           }
+
+          PromiseOrValue::Value(())
         };
 
         result

@@ -111,4 +111,16 @@ impl BountiesContract {
       .transfer(self.config.bounty_claim_bond.0)
       .into()
   }
+
+  pub(crate) fn internal_reset_bounty_to_initial_state(
+    &mut self,
+    id: BountyIndex,
+    receiver_id: AccountId,
+    bounty: &mut Bounty,
+  ) {
+    bounty.status = BountyStatus::New;
+    self.bounties.insert(&id, &bounty);
+    // TODO: update reputation
+    self.internal_return_bonds(receiver_id);
+  }
 }
