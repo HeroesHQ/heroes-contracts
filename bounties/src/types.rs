@@ -7,7 +7,7 @@ pub type BountyIndex = u64;
 
 pub const GAS_FOR_ADD_PROPOSAL: Gas = Gas(35_000_000_000_000);
 pub const GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK: Gas = Gas(10_000_000_000_000);
-pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(50_000_000_000_000);
+pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(60_000_000_000_000);
 pub const GAS_FOR_FT_TRANSFER: Gas = Gas(30_000_000_000_000);
 pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
 
@@ -133,7 +133,7 @@ impl Bounty {
       "Expected bounty amount to be positive",
     );
     assert!(
-      env::block_timestamp() > self.max_deadline.0,
+      env::block_timestamp() < self.max_deadline.0,
       "The deadline has passed"
     );
   }

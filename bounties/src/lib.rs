@@ -1,11 +1,11 @@
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedSet};
-use near_sdk::json_types::{U128, U64};
+use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::serde_json::json;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{assert_one_yocto, env, is_promise_success, log, near_bindgen, serde_json, AccountId,
-               Balance, Gas, PanicOnDefault, Promise, PromiseOrValue};
+               Balance, Gas, PanicOnDefault, Promise, PromiseError, PromiseOrValue};
 
 pub use crate::types::*;
 
@@ -228,8 +228,8 @@ impl BountiesContract {
                     "actions": [
                       {
                         "method_name": "bounty_action",
-                        "args": json!({
-                          "id": id.to_string(),
+                        "args": Base64VecU8::from(json!({
+                          "id": id.clone(),
                           "action": {
                             "ClaimApproved": {
                               "receiver_id": sender_id.to_string(),
@@ -237,8 +237,9 @@ impl BountiesContract {
                           }
                         })
                           .to_string()
-                          .into_bytes(),
-                        "deposit": "0",
+                          .into_bytes()
+                          .to_vec()),
+                        "deposit": "1",
                         "gas": dao.gas_for_claim_approval,
                       }
                     ],

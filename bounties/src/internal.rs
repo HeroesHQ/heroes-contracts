@@ -24,6 +24,7 @@ impl BountiesContract {
       .unwrap_or_default();
     indices.push(id);
     self.internal_save_account_bounties(&bounty.owner, indices);
+    self.last_bounty_id += 1;
     id
   }
 

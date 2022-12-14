@@ -1,5 +1,6 @@
 use crate::*;
 
+#[near_bindgen]
 impl BountiesContract {
   pub fn get_token_account_ids(&self) -> Vec<AccountId> {
     self.token_account_ids.to_vec()
