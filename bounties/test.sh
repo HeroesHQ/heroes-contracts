@@ -30,9 +30,9 @@ export COUNCIL='["'$BASE_ACCOUNT'"]'
 near call $DAO_CONTRACT_ID new '{"config": {"name": "genesis2", "purpose": "test", "metadata": ""}, "policy": '$COUNCIL'}' --accountId $DAO_CONTRACT_ID
 
 # Add a bounty under the control of the validators DAO
-near call usdn.testnet ft_transfer_call '{"receiver_id":"'$BOUNTY_CONTRACT_ID'","amount":"1000000000000000000","msg":"{\"description\":\"Test bounty description\",\"bounty_type\":\"MarketingServices\",\"max_deadline\":\"1925376849430593581\",\"validators_dao\":{\"account_id\":\"'$DAO_CONTRACT_ID'\",\"add_proposal_bond\":\"1000000000000000000000000\"}}"}' --accountId $BASE_ACCOUNT --depositYocto 1 --gas 300000000000000
+near call usdn.testnet ft_transfer_call '{"receiver_id":"'$BOUNTY_CONTRACT_ID'","amount":"1000000000000000000","msg":"{\"description\":\"Test bounty description\",\"bounty_type\":\"MarketingServices\",\"max_deadline\":\"604800000000000\",\"validators_dao\":{\"account_id\":\"'$DAO_CONTRACT_ID'\",\"add_proposal_bond\":\"1000000000000000000000000\"}}"}' --accountId $BASE_ACCOUNT --depositYocto 1 --gas 300000000000000
 # Add a bounty under the control of the project owner
-#near call usdn.testnet ft_transfer_call '{"receiver_id":"'$BOUNTY_CONTRACT_ID'","amount":"1000000000000000000","msg":"{\"description\":\"Test bounty description\",\"bounty_type\":\"MarketingServices\",\"max_deadline\":\"1925376849430593581\"}"}' --accountId $BASE_ACCOUNT --depositYocto 1 --gas 300000000000000
+#near call usdn.testnet ft_transfer_call '{"receiver_id":"'$BOUNTY_CONTRACT_ID'","amount":"1000000000000000000","msg":"{\"description\":\"Test bounty description\",\"bounty_type\":\"MarketingServices\",\"max_deadline\":\"604800000000000\"}"}' --accountId $BASE_ACCOUNT --depositYocto 1 --gas 300000000000000
 
 # Verify
 near view usdn.testnet ft_balance_of '{"account_id":"'$BOUNTY_CONTRACT_ID'"}'
@@ -51,7 +51,7 @@ near view $BOUNTY_CONTRACT_ID get_locked_storage_amount '{}'
 near view $BOUNTY_CONTRACT_ID get_available_amount '{}'
 
 # Someone claims bounty
-near call $BOUNTY_CONTRACT_ID bounty_claim '{"id":0,"deadline":"1685577600000000000"}' --accountId $FREELANCER_ACCOUNT --deposit 1 --gas 25000000000000
+near call $BOUNTY_CONTRACT_ID bounty_claim '{"id":0,"deadline":"86400000000000"}' --accountId $FREELANCER_ACCOUNT --deposit 1 --gas 25000000000000
 
 # Show bounty claims
 near view $BOUNTY_CONTRACT_ID get_bounty_claims_by_id '{"id":0}'

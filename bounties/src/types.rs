@@ -133,8 +133,8 @@ impl Bounty {
       "Expected bounty amount to be positive",
     );
     assert!(
-      env::block_timestamp() < self.max_deadline.0,
-      "The deadline has passed"
+      self.max_deadline.0 > 0,
+      "The deadline is wrong"
     );
   }
 }
