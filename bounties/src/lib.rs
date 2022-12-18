@@ -400,3 +400,420 @@ impl BountiesContract {
     self.bounties.insert(&id, &bounty);
   }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(test)]
+mod tests {
+  use near_sdk::test_utils::{accounts, VMContextBuilder};
+  use near_sdk::json_types::{U128, U64};
+  use near_sdk::{testing_env, AccountId, Balance};
+  use crate::{BountiesContract, Bounty, BountyAction, BountyClaim, BountyIndex, BountyStatus,
+              BountyType, ClaimStatus, Config, ValidatorsDao, ValidatorsDaoParams};
+
+  pub const TOKEN_DECIMALS: u8 = 18;
+
+  fn get_token_id() -> AccountId {
+    "token_id".parse().unwrap()
+  }
+
+  pub const fn d(value: Balance, decimals: u8) -> Balance {
+    value * 10u128.pow(decimals as _)
+  }
+
+  fn add_bounty(
+    contract: &mut BountiesContract,
+    owner: &AccountId,
+    validators_dao: Option<ValidatorsDao>
+  ) -> BountyIndex {
+    let bounty_index: BountyIndex = 0;
+    contract.bounties.insert(&bounty_index, &Bounty {
+      description: "test".to_string(),
+      token: get_token_id(),
+      amount: U128(d(2_000, TOKEN_DECIMALS)),
+      bounty_type: BountyType::Other,
+      max_deadline: U64(1_000_000_000 * 60 * 60 * 24 * 7),
+      validators_dao,
+      owner: owner.clone(),
+      status: BountyStatus::New,
+    });
+    contract.account_bounties.insert(owner, &vec![bounty_index]);
+    contract.last_bounty_id = bounty_index.clone() + 1;
+    bounty_index
+  }
+
+  fn bounty_claim(
+    context: &mut VMContextBuilder,
+    contract: &mut BountiesContract,
+    id: BountyIndex,
+    claimer: &AccountId
+  ) {
+    let bond = Config::default().bounty_claim_bond.0;
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(bond.clone())
+      .block_timestamp(0)
+      .build());
+    contract.bounty_claim(id, U64(1_000_000_000 * 60 * 60 * 24 * 2));
+  }
+
+  fn bounty_done(
+    context: &mut VMContextBuilder,
+    contract: &mut BountiesContract,
+    id: BountyIndex,
+    claimer: &AccountId
+  ) {
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(1)
+      .build());
+    contract.bounty_done(id, "test description".to_string());
+  }
+
+  fn bounty_give_up(
+    context: &mut VMContextBuilder,
+    contract: &mut BountiesContract,
+    id: BountyIndex,
+    claimer: &AccountId,
+    current_block_timestamp: u64
+  ) {
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(1)
+      .block_timestamp(current_block_timestamp)
+      .build());
+    contract.bounty_give_up(id);
+  }
+
+  fn bounty_action(
+    context: &mut VMContextBuilder,
+    contract: &mut BountiesContract,
+    id: BountyIndex,
+    project_owner: &AccountId,
+    action: BountyAction
+  ) {
+    testing_env!(context
+      .predecessor_account_id(project_owner.clone())
+      .attached_deposit(1)
+      .build());
+    contract.bounty_action(id, action);
+  }
+
+  #[test]
+  #[should_panic(expected = "Admin whitelist must contain at least one account")]
+  fn test_failed_to_init_contract() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.predecessor_account_id(accounts(0)).build());
+    BountiesContract::new(
+      vec![get_token_id()],
+      vec![],
+      None,
+      None,
+      None
+    );
+  }
+
+  #[test]
+  fn test_add_to_admin_whitelist() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context
+      .predecessor_account_id(accounts(0))
+      .attached_deposit(1)
+      .build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0).into()],
+      None,
+      None,
+      None
+    );
+    let account_ids: Vec<AccountId> = vec![accounts(1), accounts(2)];
+    contract.add_to_admin_whitelist(None, Some(account_ids.clone()));
+    assert_eq!(contract.get_admin_whitelist(), vec![accounts(0), accounts(1), accounts(2)]);
+
+    contract.add_to_admin_whitelist(Some(accounts(3)), None);
+    assert_eq!(
+      contract.get_admin_whitelist(),
+      vec![accounts(0), accounts(1), accounts(2), accounts(3)]
+    );
+  }
+
+  #[test]
+  fn test_remove_from_admin_whitelist() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context
+      .predecessor_account_id(accounts(0))
+      .attached_deposit(1)
+      .build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0).into()],
+      None,
+      None,
+      None
+    );
+    contract.add_to_admin_whitelist(
+      None,
+      Some(vec![accounts(1), accounts(2), accounts(3)])
+    );
+
+    contract.remove_from_admin_whitelist(Some(accounts(3)), None);
+    assert_eq!(contract.get_admin_whitelist(), vec![accounts(0), accounts(1), accounts(2)]);
+    contract.remove_from_admin_whitelist(None, Some(vec![accounts(1), accounts(2)]));
+    assert_eq!(contract.get_admin_whitelist(), vec![accounts(0)]);
+  }
+
+  #[test]
+  #[should_panic(expected = "Expected either account_id or account_ids")]
+  fn test_failed_to_whitelist_admin() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context
+      .predecessor_account_id(accounts(0))
+      .attached_deposit(1)
+      .build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0).into()],
+      None,
+      None,
+      None
+    );
+    contract.add_to_admin_whitelist(None, None);
+  }
+
+  #[test]
+  #[should_panic(expected = "Requires attached deposit of exactly 1 yoctoNEAR")]
+  fn test_add_to_admin_whitelist_without_deposit() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.predecessor_account_id(accounts(0)).build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0).into()],
+      None,
+      None,
+      None
+    );
+    contract.add_to_admin_whitelist(Some(accounts(1)), None);
+  }
+
+  #[test]
+  fn test_add_token() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context
+      .predecessor_account_id(accounts(0))
+      .attached_deposit(1)
+      .build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0).into()],
+      None,
+      None,
+      None
+    );
+
+    contract.add_token_id("new_token".parse().unwrap());
+    assert_eq!(
+      contract.get_token_account_ids(),
+      vec!["token_id".parse().unwrap(), "new_token".parse().unwrap()]
+    );
+  }
+
+  #[test]
+  fn test_change_config() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context
+      .predecessor_account_id(accounts(0))
+      .attached_deposit(1)
+      .build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0).into()],
+      None,
+      None,
+      None
+    );
+
+    let config = Config {
+      bounty_claim_bond: U128::from(2_000_000_000_000_000_000_000_000),
+      bounty_forgiveness_period: U64::from(1_000_000_000 * 60 * 60 * 24),
+    };
+    contract.change_config(config.clone());
+    assert_eq!(contract.get_config(), config);
+  }
+
+  #[test]
+  fn test_bounty_claim() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    assert_eq!(
+      contract.bounty_claimers.get(&claimer).unwrap()[0],
+      BountyClaim {
+        bounty_id: id.clone(),
+        start_time: U64(0),
+        deadline: U64(1_000_000_000 * 60 * 60 * 24 * 2),
+        status: ClaimStatus::New,
+        proposal_id: None,
+      }
+    );
+    assert_eq!(contract.bounty_claimer_accounts.get(&id).unwrap()[0], claimer);
+    assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
+    assert_eq!(contract.bounties.get(&id).unwrap().status, BountyStatus::Claimed);
+  }
+
+  #[test]
+  fn test_bounty_done() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+    assert_eq!(contract.bounty_claimers.get(&claimer).unwrap()[0].status, ClaimStatus::Completed);
+    assert_eq!(contract.bounties.get(&id).unwrap().status, BountyStatus::Claimed);
+  }
+
+  #[test]
+  fn test_bounty_give_up() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+
+    let bounty_forgiveness_period = Config::default().bounty_forgiveness_period.0;
+    bounty_give_up(
+      &mut context,
+      &mut contract,
+      id.clone(),
+      &claimer,
+      bounty_forgiveness_period.clone() - 1
+    );
+    assert_eq!(contract.bounty_claimers.get(&claimer).unwrap()[0].status, ClaimStatus::Canceled);
+    assert_eq!(contract.bounties.get(&id).unwrap().status, BountyStatus::New);
+    assert_eq!(contract.locked_amount, 0);
+
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+
+    bounty_give_up(
+      &mut context,
+      &mut contract,
+      id.clone(),
+      &claimer,
+      bounty_forgiveness_period.clone() + 1
+    );
+    assert_eq!(contract.bounty_claimers.get(&claimer).unwrap()[0].status, ClaimStatus::Canceled);
+    assert_eq!(contract.bounties.get(&id).unwrap().status, BountyStatus::New);
+    assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
+  }
+
+
+  #[test]
+  fn test_bounty_action() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let project_owner = accounts(1);
+    let id = add_bounty(&mut contract, &project_owner, None);
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+
+    bounty_action(
+      &mut context,
+      &mut contract,
+      id.clone(),
+      &project_owner,
+      BountyAction::ClaimRejected { receiver_id: claimer.clone() }
+    );
+    assert_eq!(contract.bounty_claimers.get(&claimer).unwrap()[0].status, ClaimStatus::Rejected);
+    assert_eq!(contract.bounties.get(&id).unwrap().status, BountyStatus::New);
+    assert_eq!(contract.locked_amount, 0);
+
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+
+    bounty_action(
+      &mut context,
+      &mut contract,
+      id.clone(),
+      &project_owner,
+      BountyAction::ClaimApproved { receiver_id: claimer }
+    );
+    // For the unit test, the object statuses have not changed.
+    // The action is performed in the promise callback function (see simulation test).
+  }
+
+  #[test]
+  fn test_update_validators_dao_params() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let project_owner = accounts(1);
+    let id = add_bounty(
+      &mut contract,
+      &project_owner,
+      Some(
+        ValidatorsDaoParams {
+          account_id: "dao".parse().unwrap(),
+          add_proposal_bond: U128(10u128.pow(24)),
+          gas_for_add_proposal: None,
+          gas_for_claim_approval: None,
+        }
+          .to_validators_dao()
+      )
+    );
+
+    let new_dao_params = ValidatorsDaoParams {
+      account_id: "dao".parse().unwrap(),
+      add_proposal_bond: U128(2 * 10u128.pow(24)),
+      gas_for_add_proposal: Some(U64(50_000_000_000_000)),
+      gas_for_claim_approval: Some(U64(50_000_000_000_000)),
+    };
+    testing_env!(context
+      .predecessor_account_id(project_owner)
+      .attached_deposit(1)
+      .build());
+    contract.update_validators_dao_params(id, new_dao_params.clone());
+    assert_eq!(
+      contract.get_bounty(id.clone()).validators_dao.unwrap(),
+      new_dao_params.to_validators_dao()
+    );
+  }
+}

@@ -1,7 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{env, ext_contract, AccountId, Balance, BorshStorageKey, Gas};
+use near_sdk::{ext_contract, AccountId, Balance, BorshStorageKey, Gas};
 
 pub type BountyIndex = u64;
 
@@ -25,6 +25,7 @@ trait ExtFtContract {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum BountyStatus {
   New,
   Claimed,
@@ -101,6 +102,7 @@ impl BountyCreate {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct ValidatorsDao {
   pub account_id: AccountId,
   pub add_proposal_bond: U128,
@@ -141,6 +143,7 @@ impl Bounty {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum ClaimStatus {
   New,
   Completed,
@@ -152,6 +155,7 @@ pub enum ClaimStatus {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct BountyClaim {
   /// Bounty id that was claimed.
   pub bounty_id: BountyIndex,
@@ -176,6 +180,7 @@ pub enum BountyAction {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Config {
   pub bounty_claim_bond: U128,
   pub bounty_forgiveness_period: U64,

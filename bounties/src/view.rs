@@ -18,6 +18,10 @@ impl BountiesContract {
     self.dispute_contract.clone()
   }
 
+  pub fn get_config(&self) -> Config {
+    self.config.clone()
+  }
+
   /// Returns locked amount of NEAR that is used for storage.
   pub fn get_locked_storage_amount(&self) -> U128 {
     let locked_storage_amount = env::storage_byte_cost() * (env::storage_usage() as u128);
