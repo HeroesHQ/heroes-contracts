@@ -1,7 +1,22 @@
-[workspace]
-members = [
-    "bounties",
-]
+[package]
+name = "heroes-contracts"
+version = "1.0.0"
+authors = ["Oleh Ivaniuk <fedencer7@gmail.com>"]
+edition = "2021"
+
+[dev-dependencies]
+anyhow = "1.0"
+borsh = "0.9"
+maplit = "1.0"
+near-sdk = "4.1.1"
+near-units = "0.2.0"
+serde_json = { version = "1.0", features = ["arbitrary_precision"] }
+tokio = { version = "1.18.1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3.11", features = ["env-filter"] }
+workspaces = "0.6.0"
+pkg-config = "0.3.1"
+bounties = { path = "bounties" }
 
 [profile.release]
 codegen-units=1
@@ -10,3 +25,12 @@ lto = true
 debug = false
 panic = "abort"
 overflow-checks = true
+
+[workspace]
+members = [
+    "bounties",
+]
+
+[[example]]
+name = "integration-tests"
+path = "integration-tests/tests.rs"

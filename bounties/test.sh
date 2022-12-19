@@ -25,7 +25,7 @@ near deploy $BOUNTY_CONTRACT_ID --wasmFile res/bounties.wasm
 export ADMIN_ACCOUNT='["'$BASE_ACCOUNT'"]'
 near call $BOUNTY_CONTRACT_ID new '{"token_account_ids":["usdn.testnet"],"admin_whitelist":'$ADMIN_ACCOUNT'}' --accountId $BOUNTY_CONTRACT_ID
 # Set up validators DAO contract
-near deploy $DAO_CONTRACT_ID --wasmFile ../tests/res/sputnikdao2.wasm
+near deploy $DAO_CONTRACT_ID --wasmFile ../integration-tests/res/sputnikdao2.wasm
 export COUNCIL='["'$BASE_ACCOUNT'"]'
 near call $DAO_CONTRACT_ID new '{"config": {"name": "genesis2", "purpose": "test", "metadata": ""}, "policy": '$COUNCIL'}' --accountId $DAO_CONTRACT_ID
 

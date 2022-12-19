@@ -11,6 +11,9 @@ pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(60_000_000_000_000);
 pub const GAS_FOR_FT_TRANSFER: Gas = Gas(30_000_000_000_000);
 pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
 
+pub const DEFAULT_BOUNTY_CLAIM_BOND: U128 = U128(1_000_000_000_000_000_000_000_000);
+pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24);
+
 pub const ONE_YOCTO: Balance = 1;
 
 #[ext_contract(ext_ft_contract)]
@@ -36,6 +39,7 @@ pub enum BountyStatus {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum BountyType {
   MarketingServices,
   SoftwareDevelopment,
@@ -112,6 +116,7 @@ pub struct ValidatorsDao {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Bounty {
   pub description: String,
   pub token: AccountId,
@@ -189,8 +194,8 @@ pub struct Config {
 impl Default for Config {
   fn default() -> Self {
     Config {
-      bounty_claim_bond: U128::from(1_000_000_000_000_000_000_000_000),
-      bounty_forgiveness_period: U64::from(1_000_000_000 * 60 * 60 * 24),
+      bounty_claim_bond: DEFAULT_BOUNTY_CLAIM_BOND,
+      bounty_forgiveness_period: DEFAULT_BOUNTY_FORGIVENESS_PERIOD,
     }
   }
 }
