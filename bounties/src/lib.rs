@@ -411,6 +411,7 @@ mod tests {
               BountyType, ClaimStatus, Config, ValidatorsDao, ValidatorsDaoParams};
 
   pub const TOKEN_DECIMALS: u8 = 18;
+  pub const MAX_DEADLINE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
 
   fn get_token_id() -> AccountId {
     "token_id".parse().unwrap()
@@ -431,7 +432,7 @@ mod tests {
       token: get_token_id(),
       amount: U128(d(2_000, TOKEN_DECIMALS)),
       bounty_type: BountyType::Other,
-      max_deadline: U64(1_000_000_000 * 60 * 60 * 24 * 7),
+      max_deadline: MAX_DEADLINE,
       validators_dao,
       owner: owner.clone(),
       status: BountyStatus::New,
@@ -596,6 +597,40 @@ mod tests {
   }
 
   #[test]
+  #[should_panic(expected = "Not in admin whitelist")]
+  fn test_add_to_admin_whitelist_by_other_user() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.predecessor_account_id(accounts(0)).build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0).into()],
+      None,
+      None,
+      None
+    );
+    testing_env!(context.predecessor_account_id(accounts(1)).attached_deposit(1).build());
+    contract.add_to_admin_whitelist(Some(accounts(1)), None);
+  }
+
+  #[test]
+  #[should_panic(expected = "Cannot remove all accounts from admin whitelist")]
+  fn test_remove_from_admin_whitelist_all_members() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context
+      .predecessor_account_id(accounts(0))
+      .attached_deposit(1)
+      .build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0).into()],
+      None,
+      None,
+      None
+    );
+    contract.remove_from_admin_whitelist(Some(accounts(0)), None);
+  }
+
+  #[test]
   fn test_add_token() {
     let mut context = VMContextBuilder::new();
     testing_env!(context
@@ -671,6 +706,90 @@ mod tests {
   }
 
   #[test]
+  #[should_panic(expected = "Bounty wrong bond")]
+  fn test_bounty_claim_without_bond() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+
+    testing_env!(context
+      .predecessor_account_id(accounts(2))
+      .build());
+    contract.bounty_claim(id, U64(1_000_000_000 * 60 * 60 * 24 * 2));
+  }
+
+  #[test]
+  #[should_panic(expected = "Bounty status does not allow to submit a claim")]
+  fn test_bounty_claim_with_incorrect_status() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+    bounty_claim(&mut context, &mut contract, id.clone(), &accounts(2));
+
+    testing_env!(context
+      .predecessor_account_id(accounts(3))
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(id, U64(1_000_000_000 * 60 * 60 * 24 * 2));
+  }
+
+  #[test]
+  #[should_panic(expected = "Bounty wrong deadline")]
+  fn test_bounty_claim_with_incorrect_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+
+    testing_env!(context
+      .predecessor_account_id(accounts(2))
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(id, U64(MAX_DEADLINE.0 + 1));
+  }
+
+  #[test]
+  #[should_panic(expected = "Bounty not found")]
+  fn test_claim_for_non_existent_bounty() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+
+    testing_env!(context
+      .predecessor_account_id(accounts(2))
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(id + 1, MAX_DEADLINE);
+  }
+
+  #[test]
   fn test_bounty_done() {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
@@ -688,6 +807,69 @@ mod tests {
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
     assert_eq!(contract.bounty_claimers.get(&claimer).unwrap()[0].status, ClaimStatus::Completed);
     assert_eq!(contract.bounties.get(&id).unwrap().status, BountyStatus::Claimed);
+  }
+
+  #[test]
+  #[should_panic(expected = "Bounty status does not allow to completion")]
+  fn test_bounty_done_with_incorrect_bounty_status() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+    let claimer = accounts(2);
+
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+  }
+
+  #[test]
+  #[should_panic(expected = "The claim status does not allow to complete the bounty")]
+  fn test_bounty_done_with_incorrect_claim_status() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+  }
+
+  #[test]
+  fn test_bounty_done_on_claim_that_has_expired() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(1)
+      .block_timestamp(1_000_000_000 * 60 * 60 * 24 * 2 + 1)
+      .build());
+    contract.bounty_done(id, "test description".to_string());
+    assert_eq!(contract.bounty_claimers.get(&claimer).unwrap()[0].status, ClaimStatus::Expired);
+    assert_eq!(contract.bounties.get(&id).unwrap().status, BountyStatus::New);
   }
 
   #[test]
@@ -731,6 +913,55 @@ mod tests {
     assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
   }
 
+  #[test]
+  #[should_panic(expected = "Bounty status does not allow to give up")]
+  fn test_bounty_give_up_with_incorrect_bounty_status() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+    let claimer = accounts(2);
+
+    bounty_give_up(
+      &mut context,
+      &mut contract,
+      id.clone(),
+      &claimer,
+      0,
+    );
+  }
+
+  #[test]
+  #[should_panic(expected = "The claim status does not allow to give up the bounty")]
+  fn test_bounty_give_up_with_incorrect_claim_status() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let id = add_bounty(&mut contract, &accounts(1), None);
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+
+    bounty_give_up(
+      &mut context,
+      &mut contract,
+      id.clone(),
+      &claimer,
+      0,
+    );
+  }
 
   #[test]
   fn test_bounty_action() {
@@ -772,6 +1003,65 @@ mod tests {
     );
     // For the unit test, the object statuses have not changed.
     // The action is performed in the promise callback function (see simulation test).
+  }
+
+  #[test]
+  #[should_panic(expected = "This method can only call DAO validators")]
+  fn test_bounty_action_by_other_user() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let project_owner = accounts(1);
+    let dao_params = ValidatorsDaoParams {
+      account_id: "dao".parse().unwrap(),
+      add_proposal_bond: U128(10u128.pow(24)),
+      gas_for_add_proposal: None,
+      gas_for_claim_approval: None,
+    };
+    let id = add_bounty(&mut contract, &project_owner, Some(dao_params.to_validators_dao()));
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+
+    bounty_action(
+      &mut context,
+      &mut contract,
+      id.clone(),
+      &project_owner,
+      BountyAction::ClaimApproved { receiver_id: claimer }
+    );
+  }
+
+  #[test]
+  #[should_panic(expected = "Only the owner of the bounty can call this method")]
+  fn test_bounty_action_by_dao() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let project_owner = accounts(1);
+    let id = add_bounty(&mut contract, &project_owner, None);
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+
+    testing_env!(context
+      .predecessor_account_id("dao".parse().unwrap())
+      .attached_deposit(1)
+      .build());
+    let action = BountyAction::ClaimApproved { receiver_id: claimer };
+    contract.bounty_action(id, action);
   }
 
   #[test]
