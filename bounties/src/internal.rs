@@ -133,6 +133,11 @@ impl BountiesContract {
     env::block_timestamp() > claim.start_time.0 + claim.deadline.0
   }
 
+  pub(crate) fn deadline_for_opening_dispute_has_expired(&self, claim: &BountyClaim) -> bool {
+    env::block_timestamp() >
+      claim.rejected_timestamp.unwrap().0 + self.config.period_for_opening_dispute.0
+  }
+
   pub(crate) fn internal_set_claim_expiry_status(
     &mut self,
     id: BountyIndex,
@@ -213,6 +218,7 @@ impl BountiesContract {
   ) {
     if self.dispute_contract.is_some() {
       claims[claim_idx].status = ClaimStatus::Rejected;
+      claims[claim_idx].rejected_timestamp = Some(U64(env::block_timestamp()));
       self.internal_save_claims(&receiver_id, &claims);
     } else {
       // If the creation of a dispute is not foreseen,
@@ -284,11 +290,11 @@ impl BountiesContract {
     claims: &mut Vec<BountyClaim>,
   ) -> PromiseOrValue<()> {
     let dao = bounty.validators_dao.clone().unwrap();
-    let proposal_id = claims[claim_idx].proposal_id.unwrap_or_default();
+    let proposal_id = claims[claim_idx].proposal_id.unwrap();
     Promise::new(dao.account_id)
       .function_call(
         "get_proposal".to_string(),
-        json!({"id": proposal_id}).to_string().into_bytes(),
+        json!({"id": proposal_id.0}).to_string().into_bytes(),
         NO_DEPOSIT,
         GAS_FOR_CHECK_PROPOSAL,
       )

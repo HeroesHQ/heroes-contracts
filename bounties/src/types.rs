@@ -15,6 +15,7 @@ pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(45_000_000_000_000);
 
 pub const DEFAULT_BOUNTY_CLAIM_BOND: U128 = U128(1_000_000_000_000_000_000_000_000);
 pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24);
+pub const DEFAULT_PERIOD_FOR_OPENING_DISPUTE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 10);
 
 pub const NO_DEPOSIT: Balance = 0;
 pub const ONE_YOCTO: Balance = 1;
@@ -183,7 +184,9 @@ pub struct BountyClaim {
   /// status
   pub status: ClaimStatus,
   /// Bounty payout proposal ID
-  pub proposal_id: Option<u64>,
+  pub proposal_id: Option<U64>,
+  /// Timestamp when the status is set to rejected
+  pub rejected_timestamp: Option<U64>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -201,6 +204,7 @@ pub enum BountyAction {
 pub struct Config {
   pub bounty_claim_bond: U128,
   pub bounty_forgiveness_period: U64,
+  pub period_for_opening_dispute: U64,
 }
 
 impl Default for Config {
@@ -208,6 +212,7 @@ impl Default for Config {
     Config {
       bounty_claim_bond: DEFAULT_BOUNTY_CLAIM_BOND,
       bounty_forgiveness_period: DEFAULT_BOUNTY_FORGIVENESS_PERIOD,
+      period_for_opening_dispute: DEFAULT_PERIOD_FOR_OPENING_DISPUTE,
     }
   }
 }

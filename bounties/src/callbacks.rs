@@ -16,7 +16,7 @@ impl BountiesContract {
     } else {
       let proposal_id = result.unwrap();
       claims[claim_idx].status = ClaimStatus::Completed;
-      claims[claim_idx].proposal_id = Some(proposal_id);
+      claims[claim_idx].proposal_id = Some(U64(proposal_id));
       self.internal_save_claims(sender_id, &claims);
       true
     }
@@ -59,7 +59,7 @@ impl BountiesContract {
       env::panic_str("Error checking proposal status");
     } else {
       let proposal = result.unwrap();
-      assert_eq!(proposal.id, claims[claim_idx].proposal_id.unwrap());
+      assert_eq!(proposal.id, claims[claim_idx].proposal_id.unwrap().0);
       assert_eq!(proposal.proposer, env::current_account_id());
       if proposal.status == "Approved" {
         self.internal_bounty_payout(id, receiver_id, bounty, claim_idx, claims)

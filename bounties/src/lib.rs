@@ -176,6 +176,7 @@ impl BountiesContract {
       deadline,
       status: ClaimStatus::New,
       proposal_id: None,
+      rejected_timestamp: None,
     };
     self.internal_add_claim(id, claims.as_mut(), bounty_claim);
     self.internal_save_claims(&sender_id, &claims);
@@ -314,6 +315,12 @@ impl BountiesContract {
           bounty.validators_dao.is_some()
         {
           self.internal_get_proposal(id, receiver_id, &mut bounty, claim_idx, &mut claims)
+        }
+        else if matches!(claims[claim_idx].status, ClaimStatus::Rejected) &&
+          self.deadline_for_opening_dispute_has_expired(&claims[claim_idx])
+        {
+          self.internal_reset_bounty_to_initial_state(id, &receiver_id, &mut bounty, claim_idx, &mut claims);
+          PromiseOrValue::Value(())
         } else {
           // TODO: Finalization of the bounty during the dispute
           env::panic_str("This bounty is not subject to finalization")
@@ -618,7 +625,8 @@ mod tests {
 
     let config = Config {
       bounty_claim_bond: U128::from(2_000_000_000_000_000_000_000_000),
-      bounty_forgiveness_period: U64::from(1_000_000_000 * 60 * 60 * 24),
+      bounty_forgiveness_period: U64::from(1_000_000_000 * 60 * 60 * 24 * 7),
+      period_for_opening_dispute: U64::from(1_000_000_000 * 60 * 60 * 24 * 20),
     };
     contract.change_config(config.clone());
     assert_eq!(contract.get_config(), config);
@@ -647,6 +655,7 @@ mod tests {
         deadline: U64(1_000_000_000 * 60 * 60 * 24 * 2),
         status: ClaimStatus::New,
         proposal_id: None,
+        rejected_timestamp: None,
       }
     );
     assert_eq!(contract.bounty_claimer_accounts.get(&id).unwrap()[0], claimer);

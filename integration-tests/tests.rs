@@ -199,7 +199,7 @@ async fn bounty_approve_by_validators_dao(
   let proposal_id = get_claim_proposal_id(bounties, bounty_id, 0).await?;
   let res = dao_council_member
     .call(validators_dao.id(), "act_proposal")
-    .args_json((proposal_id, "VoteApprove".to_string(), Option::<bool>::None))
+    .args_json((proposal_id.0, "VoteApprove".to_string(), Option::<bool>::None))
     .max_gas()
     .transact()
     .await?;
@@ -255,7 +255,7 @@ async fn get_claim_proposal_id(
   bounties: &Contract,
   bounty_id: u64,
   claim_index: usize,
-) -> anyhow::Result<u64> {
+) -> anyhow::Result<U64> {
   let bounty_claims = get_bounty_claims_by_id(bounties, bounty_id).await?;
   assert!(bounty_claims.len() > claim_index);
   let bounty_claim = bounty_claims[claim_index].clone().1;
