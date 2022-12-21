@@ -204,61 +204,13 @@ impl BountiesContract {
       "The claim status does not allow to complete the bounty"
     );
 
-    if env::block_timestamp() > claims[claim_idx].start_time.0 + claims[claim_idx].deadline.0 {
-      // Expired
-      claims[claim_idx].status = ClaimStatus::Expired;
-      self.internal_save_claims(sender_id, &claims);
-      bounty.status = BountyStatus::New;
-      self.bounties.insert(&id, &bounty);
-
+    if Self::internal_check_claim_is_expired(&claims[claim_idx]) {
+      self.internal_set_claim_expiry_status(id, sender_id, &mut bounty, claim_idx, &mut claims);
       PromiseOrValue::Value(())
 
     } else {
       if bounty.validators_dao.is_some() {
-        let dao = bounty.validators_dao.clone().unwrap();
-        Promise::new(dao.account_id)
-          .function_call(
-            "add_proposal".to_string(),
-            json!({
-              "proposal": {
-                "description": description,
-                "kind": {
-                  "FunctionCall" : {
-                    "receiver_id": env::current_account_id(),
-                    "actions": [
-                      {
-                        "method_name": "bounty_action",
-                        "args": Base64VecU8::from(json!({
-                          "id": id.clone(),
-                          "action": {
-                            "ClaimApproved": {
-                              "receiver_id": sender_id.to_string(),
-                            }
-                          }
-                        })
-                          .to_string()
-                          .into_bytes()
-                          .to_vec()),
-                        "deposit": "1",
-                        "gas": dao.gas_for_claim_approval,
-                      }
-                    ],
-                  }
-                }
-              }
-            })
-              .to_string()
-              .into_bytes(),
-            dao.add_proposal_bond.0,
-            Gas(dao.gas_for_add_proposal.0),
-          )
-          .then(
-            Self::ext(env::current_account_id())
-              .with_static_gas(GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK)
-              .on_added_proposal_callback(sender_id, claims.as_mut(), claim_idx)
-          )
-          .into()
-
+        self.internal_add_proposal(id, sender_id, &mut bounty, claim_idx, &mut claims, description)
       } else {
         claims[claim_idx].status = ClaimStatus::Completed;
         self.internal_save_claims(sender_id, &claims);
@@ -294,7 +246,7 @@ impl BountiesContract {
       PromiseOrValue::Value(())
     } else {
       // Within forgiveness period. Return bond.
-      self.internal_return_bonds(sender_id.clone())
+      self.internal_return_bonds(&sender_id)
     };
 
     claims[claim_idx].status = ClaimStatus::Canceled;
@@ -341,38 +293,35 @@ impl BountiesContract {
         );
 
         let result = if matches!(action, BountyAction::ClaimApproved { .. }) {
-          ext_ft_contract::ext(bounty.token.clone())
-            .with_attached_deposit(ONE_YOCTO)
-            .with_static_gas(GAS_FOR_FT_TRANSFER)
-            .ft_transfer(
-              receiver_id.clone(),
-              bounty.amount.clone(),
-              Some(format!("Bounty {} payout", id)),
-            )
-            .then(
-              Self::ext(env::current_account_id())
-                .with_static_gas(GAS_FOR_AFTER_FT_TRANSFER)
-                .after_ft_transfer(id, receiver_id, &mut bounty, claims.as_mut(), claim_idx)
-            )
-            .into()
-
+          self.internal_bounty_payout(id, receiver_id, &mut bounty, claim_idx, &mut claims)
         } else {
-          claims[claim_idx].status = ClaimStatus::Rejected;
-          self.internal_save_claims(&receiver_id, &claims);
-
-          if self.dispute_contract.is_none() {
-            // If the creation of a dispute is not foreseen,
-            // then the bounty reset to initial state
-            self.internal_reset_bounty_to_initial_state(id, receiver_id, &mut bounty);
-          }
-
+          self.internal_reject_claim(id, receiver_id, &mut bounty, claim_idx, &mut claims);
           PromiseOrValue::Value(())
         };
 
         result
       }
+      BountyAction::Finalize => {
+        let (receiver_id, mut claims, claim_idx) = self.internal_find_active_claim(id.clone());
+
+        let result = if matches!(claims[claim_idx].status, ClaimStatus::New) &&
+          Self::internal_check_claim_is_expired(&claims[claim_idx])
+        {
+          self.internal_set_claim_expiry_status(id, &receiver_id, &mut bounty, claim_idx, &mut claims);
+          PromiseOrValue::Value(())
+        }
+        else if matches!(claims[claim_idx].status, ClaimStatus::Completed) &&
+          bounty.validators_dao.is_some()
+        {
+          self.internal_get_proposal(id, receiver_id, &mut bounty, claim_idx, &mut claims)
+        } else {
+          // TODO: Finalization of the bounty during the dispute
+          env::panic_str("This bounty is not subject to finalization")
+        };
+
+        result
+      }
       BountyAction::CreateDispute => env::panic_str("Not yet implemented"),
-      BountyAction::Finalize => env::panic_str("Not yet implemented"),
     }
   }
 
@@ -987,7 +936,7 @@ mod tests {
       &project_owner,
       BountyAction::ClaimRejected { receiver_id: claimer.clone() }
     );
-    assert_eq!(contract.bounty_claimers.get(&claimer).unwrap()[0].status, ClaimStatus::Rejected);
+    assert_eq!(contract.bounty_claimers.get(&claimer).unwrap()[0].status, ClaimStatus::NotCompleted);
     assert_eq!(contract.bounties.get(&id).unwrap().status, BountyStatus::New);
     assert_eq!(contract.locked_amount, 0);
 

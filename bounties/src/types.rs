@@ -10,10 +10,13 @@ pub const GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK: Gas = Gas(10_000_000_000_000);
 pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(60_000_000_000_000);
 pub const GAS_FOR_FT_TRANSFER: Gas = Gas(30_000_000_000_000);
 pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_CHECK_PROPOSAL: Gas = Gas(60_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(45_000_000_000_000);
 
 pub const DEFAULT_BOUNTY_CLAIM_BOND: U128 = U128(1_000_000_000_000_000_000_000_000);
 pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24);
 
+pub const NO_DEPOSIT: Balance = 0;
 pub const ONE_YOCTO: Balance = 1;
 
 #[ext_contract(ext_ft_contract)]
@@ -26,6 +29,14 @@ trait ExtFtContract {
   );
 }
 
+#[derive(Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct Proposal {
+  pub id: u64,
+  pub proposer: AccountId,
+  pub status: String,
+}
+
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
@@ -33,7 +44,6 @@ pub enum BountyStatus {
   New,
   Claimed,
   Completed,
-  Disputed,
   Canceled,
 }
 
@@ -156,6 +166,8 @@ pub enum ClaimStatus {
   Rejected,
   Canceled,
   Expired,
+  Disputed,
+  NotCompleted,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]

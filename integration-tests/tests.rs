@@ -469,7 +469,7 @@ async fn test_bounty_reject_by_project_owner(
   assert_eq!(bounty_claims[0].0.to_string(), freelancer.id().to_string());
   let bounty_claim = bounty_claims[0].clone().1;
   assert_eq!(bounty_claim.bounty_id, bounty_id);
-  assert_eq!(bounty_claim.status, ClaimStatus::Rejected);
+  assert_eq!(bounty_claim.status, ClaimStatus::NotCompleted);
   let bounty = get_bounty(bounties, bounty_id).await?;
   assert_eq!(bounty.status, BountyStatus::New);
 
