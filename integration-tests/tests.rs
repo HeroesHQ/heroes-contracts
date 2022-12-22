@@ -104,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
   test_bounty_give_up(&test_token, &bounties, &project_owner, &freelancer).await?;
   test_bounty_reject_by_project_owner(&bounties, &project_owner, &freelancer).await?;
   test_bounty_approve_by_project_owner(&bounties, &project_owner, &freelancer).await?;
+  test_bounty_reject_by_validators_dao(&test_token, &bounties, &dao_council_member, &validators_dao, &project_owner, &freelancer).await?;
   Ok(())
 }
 
@@ -190,16 +191,17 @@ async fn bounty_done(
   Ok(())
 }
 
-async fn bounty_approve_by_validators_dao(
+async fn bounty_action_by_validators_dao(
   bounties: &Contract,
   bounty_id: u64,
   dao_council_member: &Account,
   validators_dao: &Contract,
+  proposal_action: String,
 ) -> anyhow::Result<()> {
   let proposal_id = get_claim_proposal_id(bounties, bounty_id, 0).await?;
   let res = dao_council_member
     .call(validators_dao.id(), "act_proposal")
-    .args_json((proposal_id.0, "VoteApprove".to_string(), Option::<bool>::None))
+    .args_json((proposal_id.0, proposal_action, Option::<bool>::None))
     .max_gas()
     .transact()
     .await?;
@@ -207,13 +209,13 @@ async fn bounty_approve_by_validators_dao(
   Ok(())
 }
 
-async fn bounty_action_by_project_owner(
+async fn bounty_action_by_user(
   bounties: &Contract,
   bounty_id: u64,
-  project_owner: &Account,
+  user: &Account,
   action: &BountyAction,
 ) -> anyhow::Result<()> {
-  let res = project_owner
+  let res = user
     .call(bounties.id(), "bounty_action")
     .args_json((bounty_id, action))
     .max_gas()
@@ -402,7 +404,13 @@ async fn test_bounty_approve_by_validators_dao(
   validators_dao: &Contract,
 ) -> anyhow::Result<()> {
   let bounty_id = 0;
-  bounty_approve_by_validators_dao(bounties, bounty_id, dao_council_member, validators_dao).await?;
+  bounty_action_by_validators_dao(
+    bounties,
+    bounty_id,
+    dao_council_member,
+    validators_dao,
+    "VoteApprove".to_string()
+  ).await?;
 
   let bounty_claims = get_bounty_claims_by_id(bounties, bounty_id).await?;
   assert_eq!(bounty_claims.len(), 1);
@@ -455,7 +463,7 @@ async fn test_bounty_reject_by_project_owner(
   let bounty_id = 1;
   bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
   bounty_done(bounties, bounty_id, freelancer, "test description".to_string()).await?;
-  bounty_action_by_project_owner(
+  bounty_action_by_user(
     bounties,
     bounty_id,
     project_owner,
@@ -485,7 +493,7 @@ async fn test_bounty_approve_by_project_owner(
   let bounty_id = 1;
   bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
   bounty_done(bounties, bounty_id, freelancer, "test description".to_string()).await?;
-  bounty_action_by_project_owner(
+  bounty_action_by_user(
     bounties,
     bounty_id,
     project_owner,
@@ -504,5 +512,53 @@ async fn test_bounty_approve_by_project_owner(
   assert_eq!(bounty.status, BountyStatus::Completed);
 
   println!("      Passed ✅ Bounty approve by project owner");
+  Ok(())
+}
+
+async fn test_bounty_reject_by_validators_dao(
+  test_token: &Contract,
+  bounties: &Contract,
+  dao_council_member: &Account,
+  validators_dao: &Contract,
+  project_owner: &Account,
+  freelancer: &Account,
+) -> anyhow::Result<()> {
+  let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
+  assert_eq!(last_bounty_id, 2);
+
+  add_bounty(test_token, bounties, Some(validators_dao), project_owner).await?;
+
+  let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
+  assert_eq!(last_bounty_id, 3);
+
+  let bounty_id = 2;
+  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
+  bounty_done(bounties, bounty_id, freelancer, "test description".to_string()).await?;
+
+  bounty_action_by_validators_dao(
+    bounties,
+    bounty_id,
+    dao_council_member,
+    validators_dao,
+    "VoteReject".to_string()
+  ).await?;
+
+  let bounty_claims = get_bounty_claims_by_id(bounties, bounty_id).await?;
+  assert_eq!(bounty_claims.len(), 1);
+  let bounty_claim = bounty_claims[0].clone().1;
+  assert_eq!(bounty_claim.bounty_id, bounty_id);
+  assert_eq!(bounty_claim.status, ClaimStatus::Completed);
+
+  bounty_action_by_user(bounties, bounty_id, freelancer, &BountyAction::Finalize).await?;
+
+  let bounty_claims = get_bounty_claims_by_id(bounties, bounty_id).await?;
+  assert_eq!(bounty_claims.len(), 1);
+  let bounty_claim = bounty_claims[0].clone().1;
+  assert_eq!(bounty_claim.bounty_id, bounty_id);
+  assert_eq!(bounty_claim.status, ClaimStatus::NotCompleted);
+  let bounty = get_bounty(bounties, bounty_id).await?;
+  assert_eq!(bounty.status, BountyStatus::New);
+
+  println!("      Passed ✅ Bounty reject by dao");
   Ok(())
 }
