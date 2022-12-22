@@ -4,7 +4,8 @@ use near_sdk::serde::Deserialize;
 use near_sdk::ONE_YOCTO;
 use near_units::parse_near;
 use serde_json::json;
-use workspaces::{Account, AccountId, Contract};
+use workspaces::{Account, AccountId, Contract, Worker};
+use workspaces::network::Sandbox;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyType, ClaimStatus, Config,
                GAS_FOR_ADD_PROPOSAL, GAS_FOR_CLAIM_APPROVAL, ValidatorsDao};
 
@@ -13,6 +14,10 @@ use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyType, Clai
 struct DaoPolicy {
   proposal_bond: U128,
 }
+
+pub const TEST_TOKEN_WASM: &str = "./integration-tests/res/test_token.wasm";
+pub const BOUNTIES_WASM: &str = "./bounties/res/bounties.wasm";
+pub const SPUTNIK_DAO2_WASM: &str = "./integration-tests/res/sputnikdao2.wasm";
 
 pub const BOUNTY_AMOUNT: U128 = U128(10u128.pow(18));
 pub const MAX_DEADLINE: U64 = U64(604_800_000_000_000);
@@ -50,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
     .await?
     .into_result()?;
 
-  let test_token = worker.dev_deploy(include_bytes!("res/test_token.wasm")).await?;
+  let test_token = worker.dev_deploy(&std::fs::read(TEST_TOKEN_WASM)?).await?;
   let mut res = test_token
     .call("new")
     .max_gas()
@@ -67,7 +72,7 @@ async fn main() -> anyhow::Result<()> {
   assert!(res.is_success());
   register_user(&test_token, freelancer.id()).await?;
 
-  let bounties = worker.dev_deploy(include_bytes!("../bounties/res/bounties.wasm")).await?;
+  let bounties = worker.dev_deploy(&std::fs::read(BOUNTIES_WASM)?).await?;
   res = bounties
     .call("new")
     .args_json(json!({
@@ -80,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
   assert!(res.is_success());
   register_user(&test_token, bounties.id()).await?;
 
-  let validators_dao = worker.dev_deploy(include_bytes!("res/sputnikdao2.wasm")).await?;
+  let validators_dao = worker.dev_deploy(&std::fs::read(SPUTNIK_DAO2_WASM)?).await?;
   res = validators_dao
     .call("new")
     .args_json(json!({
@@ -96,6 +101,13 @@ async fn main() -> anyhow::Result<()> {
     .await?;
   assert!(res.is_success());
 
+  let disputed_bounties = init_disputed_dao_contract(
+    &worker,
+    &root,
+    &test_token,
+    &bounties_contract_admin
+  ).await?;
+
   // begin tests
   test_create_bounty(&test_token, &bounties, &validators_dao, &project_owner).await?;
   test_bounty_claim(&bounties, &freelancer).await?;
@@ -104,7 +116,9 @@ async fn main() -> anyhow::Result<()> {
   test_bounty_give_up(&test_token, &bounties, &project_owner, &freelancer).await?;
   test_bounty_reject_by_project_owner(&bounties, &project_owner, &freelancer).await?;
   test_bounty_approve_by_project_owner(&bounties, &project_owner, &freelancer).await?;
-  test_bounty_reject_by_validators_dao(&test_token, &bounties, &dao_council_member, &validators_dao, &project_owner, &freelancer).await?;
+  test_bounty_reject_by_validators_dao(&worker, &test_token, &disputed_bounties, &dao_council_member,
+                                       &validators_dao, &project_owner, &freelancer).await?;
+  test_bounty_claim_deadline_that_has_expired(&worker, &disputed_bounties, &project_owner, &freelancer).await?;
   Ok(())
 }
 
@@ -121,6 +135,41 @@ async fn register_user(
     .await?;
   assert!(res.is_success());
   Ok(())
+}
+
+async fn init_disputed_dao_contract(
+  worker: &Worker<Sandbox>,
+  root: &Account,
+  test_token: &Contract,
+  bounties_contract_admin: &Account,
+) -> anyhow::Result<Contract> {
+  // TODO: Later, change the account to a dispute contract
+  let dispute_contract = root
+    .create_subaccount("dispute")
+    .initial_balance(parse_near!("30 N"))
+    .transact()
+    .await?
+    .into_result()?;
+
+  let mut config = Config::default();
+  config.period_for_opening_dispute = U64(1_000_000_000 * 60 * 10); // 10 min
+
+  let bounties = worker.dev_deploy(&std::fs::read(BOUNTIES_WASM)?).await?;
+  let res = bounties
+    .call("new")
+    .args_json(json!({
+      "token_account_ids": vec![test_token.id()],
+      "admin_whitelist": vec![bounties_contract_admin.id()],
+      "config": config,
+      "dispute_contract": dispute_contract.id(),
+    }))
+    .max_gas()
+    .transact()
+    .await?;
+  assert!(res.is_success());
+  register_user(&test_token, bounties.id()).await?;
+
+  Ok(bounties)
 }
 
 async fn add_bounty(
@@ -516,6 +565,7 @@ async fn test_bounty_approve_by_project_owner(
 }
 
 async fn test_bounty_reject_by_validators_dao(
+  worker: &Worker<Sandbox>,
   test_token: &Contract,
   bounties: &Contract,
   dao_council_member: &Account,
@@ -523,15 +573,16 @@ async fn test_bounty_reject_by_validators_dao(
   project_owner: &Account,
   freelancer: &Account,
 ) -> anyhow::Result<()> {
+  // New bounty contract, numbering reset
   let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
-  assert_eq!(last_bounty_id, 2);
+  assert_eq!(last_bounty_id, 0);
 
   add_bounty(test_token, bounties, Some(validators_dao), project_owner).await?;
 
   let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
-  assert_eq!(last_bounty_id, 3);
+  assert_eq!(last_bounty_id, 1);
 
-  let bounty_id = 2;
+  let bounty_id = 0;
   bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
   bounty_done(bounties, bounty_id, freelancer, "test description".to_string()).await?;
 
@@ -548,17 +599,58 @@ async fn test_bounty_reject_by_validators_dao(
   let bounty_claim = bounty_claims[0].clone().1;
   assert_eq!(bounty_claim.bounty_id, bounty_id);
   assert_eq!(bounty_claim.status, ClaimStatus::Completed);
+  let bounty = get_bounty(bounties, bounty_id).await?;
+  assert_eq!(bounty.status, BountyStatus::Claimed);
 
   bounty_action_by_user(bounties, bounty_id, freelancer, &BountyAction::Finalize).await?;
 
   let bounty_claims = get_bounty_claims_by_id(bounties, bounty_id).await?;
-  assert_eq!(bounty_claims.len(), 1);
   let bounty_claim = bounty_claims[0].clone().1;
-  assert_eq!(bounty_claim.bounty_id, bounty_id);
+  assert_eq!(bounty_claim.status, ClaimStatus::Rejected);
+  let bounty = get_bounty(bounties, bounty_id).await?;
+  assert_eq!(bounty.status, BountyStatus::Claimed);
+
+  // Period for opening a dispute: 10 min, wait for 1000 blocks
+  worker.fast_forward(1000).await?;
+  bounty_action_by_user(bounties, bounty_id, project_owner, &BountyAction::Finalize).await?;
+
+  let bounty_claims = get_bounty_claims_by_id(bounties, bounty_id).await?;
+  let bounty_claim = bounty_claims[0].clone().1;
   assert_eq!(bounty_claim.status, ClaimStatus::NotCompleted);
   let bounty = get_bounty(bounties, bounty_id).await?;
   assert_eq!(bounty.status, BountyStatus::New);
 
   println!("      Passed ✅ Bounty reject by dao");
+  Ok(())
+}
+
+async fn test_bounty_claim_deadline_that_has_expired(
+  worker: &Worker<Sandbox>,
+  bounties: &Contract,
+  project_owner: &Account,
+  freelancer: &Account,
+) -> anyhow::Result<()> {
+  let bounty_id = 0;
+
+  // Deadline 2 min
+  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 2)).await?;
+
+  let bounty_claims = get_bounty_claims_by_id(bounties, bounty_id).await?;
+  let bounty_claim = bounty_claims[0].clone().1;
+  assert_eq!(bounty_claim.status, ClaimStatus::New);
+  let bounty = get_bounty(bounties, bounty_id).await?;
+  assert_eq!(bounty.status, BountyStatus::Claimed);
+
+  // Wait for 200 blocks
+  worker.fast_forward(200).await?;
+  bounty_action_by_user(bounties, bounty_id, project_owner, &BountyAction::Finalize).await?;
+
+  let bounty_claims = get_bounty_claims_by_id(bounties, bounty_id).await?;
+  let bounty_claim = bounty_claims[0].clone().1;
+  assert_eq!(bounty_claim.status, ClaimStatus::Expired);
+  let bounty = get_bounty(bounties, bounty_id).await?;
+  assert_eq!(bounty.status, BountyStatus::New);
+
+  println!("      Passed ✅ Bounty claim deadline that has expired");
   Ok(())
 }
