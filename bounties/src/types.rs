@@ -1,7 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{ext_contract, AccountId, Balance, BorshStorageKey, Gas};
+use near_sdk::{ext_contract, AccountId, Balance, BorshStorageKey, Gas, ONE_NEAR};
 
 pub type BountyIndex = u64;
 
@@ -13,12 +13,11 @@ pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_CHECK_PROPOSAL: Gas = Gas(60_000_000_000_000);
 pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(45_000_000_000_000);
 
-pub const DEFAULT_BOUNTY_CLAIM_BOND: U128 = U128(1_000_000_000_000_000_000_000_000);
+pub const DEFAULT_BOUNTY_CLAIM_BOND: U128 = U128(ONE_NEAR);
 pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24);
 pub const DEFAULT_PERIOD_FOR_OPENING_DISPUTE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 10);
 
 pub const NO_DEPOSIT: Balance = 0;
-pub const ONE_YOCTO: Balance = 1;
 
 #[ext_contract(ext_ft_contract)]
 trait ExtFtContract {

@@ -5,7 +5,7 @@ use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::serde_json::json;
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{assert_one_yocto, env, is_promise_success, log, near_bindgen, serde_json, AccountId,
-               Balance, Gas, PanicOnDefault, Promise, PromiseError, PromiseOrValue};
+               Balance, Gas, ONE_YOCTO, PanicOnDefault, Promise, PromiseError, PromiseOrValue};
 
 pub use crate::types::*;
 
