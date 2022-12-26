@@ -222,6 +222,6 @@ pub(crate) enum StorageKey {
   Bounties,
   BountyClaimerAccounts,
   BountyClaimers,
-  DepositWhitelist,
+  AdminWhitelist,
   TokenAccountIds,
 }

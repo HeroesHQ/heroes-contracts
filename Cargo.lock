@@ -694,6 +694,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "disputes"
+version = "1.0.0"
+dependencies = [
+ "near-sdk",
+]
+
+[[package]]
 name = "dyn-clone"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1008,6 +1015,7 @@ dependencies = [
  "anyhow",
  "borsh",
  "bounties",
+ "disputes",
  "maplit",
  "near-sdk",
  "near-units",

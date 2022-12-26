@@ -72,7 +72,7 @@ impl BountiesContract {
     );
     let mut token_account_ids_set = UnorderedSet::new(StorageKey::TokenAccountIds);
     token_account_ids_set.extend(token_account_ids.into_iter().map(|a| a.into()));
-    let mut admin_whitelist_set = UnorderedSet::new(StorageKey::DepositWhitelist);
+    let mut admin_whitelist_set = UnorderedSet::new(StorageKey::AdminWhitelist);
     admin_whitelist_set.extend(admin_whitelist.into_iter().map(|a| a.into()));
 
     Self {
