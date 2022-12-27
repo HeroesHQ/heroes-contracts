@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 near-sdk = "4.1.1"
+chrono = "0.4.19"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -129,11 +129,7 @@ impl BountiesContract {
     self.internal_return_bonds(receiver_id);
   }
 
-  pub(crate) fn internal_check_claim_is_expired(claim: &BountyClaim) -> bool {
-    env::block_timestamp() > claim.start_time.0 + claim.deadline.0
-  }
-
-  pub(crate) fn deadline_for_opening_dispute_has_expired(&self, claim: &BountyClaim) -> bool {
+  pub(crate) fn is_deadline_for_opening_dispute_expired(&self, claim: &BountyClaim) -> bool {
     env::block_timestamp() >
       claim.rejected_timestamp.unwrap().0 + self.config.period_for_opening_dispute.0
   }

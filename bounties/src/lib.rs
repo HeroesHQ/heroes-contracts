@@ -205,7 +205,7 @@ impl BountiesContract {
       "The claim status does not allow to complete the bounty"
     );
 
-    if Self::internal_check_claim_is_expired(&claims[claim_idx]) {
+    if claims[claim_idx].is_claim_expired() {
       self.internal_set_claim_expiry_status(id, sender_id, &mut bounty, claim_idx, &mut claims);
       PromiseOrValue::Value(())
 
@@ -306,7 +306,7 @@ impl BountiesContract {
         let (receiver_id, mut claims, claim_idx) = self.internal_find_active_claim(id.clone());
 
         let result = if matches!(claims[claim_idx].status, ClaimStatus::New) &&
-          Self::internal_check_claim_is_expired(&claims[claim_idx])
+          claims[claim_idx].is_claim_expired()
         {
           self.internal_set_claim_expiry_status(id, &receiver_id, &mut bounty, claim_idx, &mut claims);
           PromiseOrValue::Value(())
@@ -317,7 +317,7 @@ impl BountiesContract {
           self.internal_get_proposal(id, receiver_id, &mut bounty, claim_idx, &mut claims)
         }
         else if matches!(claims[claim_idx].status, ClaimStatus::Rejected) &&
-          self.deadline_for_opening_dispute_has_expired(&claims[claim_idx])
+          self.is_deadline_for_opening_dispute_expired(&claims[claim_idx])
         {
           self.internal_reset_bounty_to_initial_state(id, &receiver_id, &mut bounty, claim_idx, &mut claims);
           PromiseOrValue::Value(())

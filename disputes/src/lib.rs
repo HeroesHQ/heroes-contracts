@@ -1,8 +1,10 @@
+use chrono::prelude::*;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedSet};
-use near_sdk::json_types::U64;
-use near_sdk::{assert_one_yocto, env, is_promise_success, AccountId, near_bindgen, PanicOnDefault,
-               PromiseError, PromiseOrValue};
+use near_sdk::json_types::{Base64VecU8, U64};
+use near_sdk::serde_json::json;
+use near_sdk::{assert_one_yocto, env, is_promise_success, near_bindgen, AccountId, Gas,
+               PanicOnDefault, Promise, PromiseError, PromiseOrValue};
 
 pub use crate::bounties::*;
 pub use crate::types::*;
@@ -11,6 +13,7 @@ pub mod bounties;
 pub mod callbacks;
 pub mod internal;
 pub mod types;
+pub mod utils;
 pub mod view;
 
 #[near_bindgen]
@@ -121,6 +124,105 @@ impl DisputesContract {
       !description.is_empty(),
       "The description cannot be empty"
     );
+
     self.internal_get_bounty_info(bounty_id, description)
+  }
+
+  #[payable]
+  pub fn provide_arguments(&mut self, id: DisputeIndex, description: String) -> usize {
+    assert_one_yocto();
+    let mut dispute = self.get_dispute(id);
+    assert!(
+      matches!(dispute.status, DisputeStatus::New),
+      "This action can be performed only for a dispute with the status 'New'",
+    );
+    assert!(
+      !self.is_argument_period_expired(&dispute),
+      "The period for providing arguments has expired, now you need to perform an 'escalation' action or cancel the dispute",
+    );
+
+    let side = dispute.get_side_of_dispute();
+    let reason_idx = dispute.add_argument(
+      Reason {
+        side,
+        argument_timestamp: U64::from(env::block_timestamp()),
+        description,
+      }
+    );
+    self.disputes.insert(&id, &dispute);
+    reason_idx
+  }
+
+  #[payable]
+  pub fn cancel_dispute(&mut self, id: DisputeIndex) {
+    assert_one_yocto();
+    let mut dispute = self.get_dispute(id);
+    assert!(
+      matches!(dispute.status, DisputeStatus::New),
+      "This action can be performed only for a dispute with the status 'New'",
+    );
+
+    let side = dispute.get_side_of_dispute();
+    dispute.status = match side {
+      Side::Claimer => DisputeStatus::CanceledByClaimer,
+      _ => DisputeStatus::CanceledByProjectOwner
+    };
+    self.disputes.insert(&id, &dispute);
+  }
+
+  #[payable]
+  pub fn escalation(&mut self, id: DisputeIndex) -> PromiseOrValue<()> {
+    assert_one_yocto();
+    let mut dispute = self.get_dispute(id);
+    assert!(
+      matches!(dispute.status, DisputeStatus::New),
+      "This action can be performed only for a dispute with the status 'New'",
+    );
+    assert!(
+      self.is_argument_period_expired(&dispute),
+      "Escalation of the dispute is possible only after the end of the argumentation period",
+    );
+
+    self.internal_add_proposal(id, &mut dispute)
+  }
+
+  #[payable]
+  pub fn result_of_dispute(
+    &mut self,
+    id: DisputeIndex,
+    success: bool,
+  ) -> PromiseOrValue<()> {
+    assert_one_yocto();
+    let mut dispute = self.get_dispute(id);
+    assert_eq!(
+      self.dispute_dao,
+      env::predecessor_account_id(),
+      "This method can only invoke a dispute resolution DAO contract"
+    );
+    assert!(
+      matches!(dispute.status, DisputeStatus::DecisionPending),
+      "This action can be performed only for a dispute with the status 'DecisionPending'",
+    );
+    assert!(
+      !self.is_decision_period_expired(&dispute),
+      "The decision period is over, now you need to perform the 'finalize' action",
+    );
+
+    self.internal_send_result_of_dispute(id, &mut dispute, success)
+  }
+
+  #[payable]
+  pub fn finalize_dispute(
+    &mut self,
+    id: DisputeIndex,
+  ) -> PromiseOrValue<()> {
+    assert_one_yocto();
+    let mut dispute = self.get_dispute(id);
+    assert!(
+      matches!(dispute.status, DisputeStatus::DecisionPending),
+      "This action can be performed only for a dispute with the status 'DecisionPending'",
+    );
+
+    self.internal_get_proposal(id, &mut dispute)
   }
 }

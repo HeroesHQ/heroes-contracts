@@ -1,7 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{ext_contract, AccountId, Balance, BorshStorageKey, Gas, ONE_NEAR};
+use near_sdk::{env, ext_contract, AccountId, Balance, BorshStorageKey, Gas, ONE_NEAR};
 
 pub type BountyIndex = u64;
 
@@ -186,6 +186,12 @@ pub struct BountyClaim {
   pub proposal_id: Option<U64>,
   /// Timestamp when the status is set to rejected
   pub rejected_timestamp: Option<U64>,
+}
+
+impl BountyClaim {
+  pub fn is_claim_expired(&self) -> bool {
+    env::block_timestamp() > self.start_time.0 + self.deadline.0
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
