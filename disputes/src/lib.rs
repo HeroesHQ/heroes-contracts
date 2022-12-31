@@ -1,15 +1,12 @@
-use chrono::prelude::*;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedSet};
 use near_sdk::json_types::{Base64VecU8, U64};
 use near_sdk::serde_json::json;
 use near_sdk::{assert_one_yocto, env, is_promise_success, near_bindgen, AccountId, Gas,
-               PanicOnDefault, Promise, PromiseError, PromiseOrValue};
+               PanicOnDefault, Promise, PromiseError, PromiseOrValue, Timestamp};
 
-pub use crate::bounties::*;
 pub use crate::types::*;
 
-pub mod bounties;
 pub mod callbacks;
 pub mod internal;
 pub mod types;
@@ -27,6 +24,8 @@ pub struct DisputesContract {
   pub last_dispute_id: DisputeIndex,
   /// Disputes map from ID to dispute information.
   pub disputes: LookupMap<DisputeIndex, Dispute>,
+  /// Arguments of the parties
+  pub arguments: LookupMap<DisputeIndex, Vec<Reason>>,
   /// Dispute indexes map per bounty ID.
   pub bounty_disputes: LookupMap<u64, Vec<DisputeIndex>>,
   /// account ids that can perform all actions:
@@ -59,6 +58,7 @@ impl DisputesContract {
       dispute_dao,
       last_dispute_id: 0,
       disputes: LookupMap::new(StorageKey::Disputes),
+      arguments: LookupMap::new(StorageKey::Reasons),
       bounty_disputes: LookupMap::new(StorageKey::BountyDisputes),
       admin_whitelist: admin_whitelist_set,
       config: config.unwrap_or_default(),
@@ -113,7 +113,7 @@ impl DisputesContract {
   }
 
   #[payable]
-  pub fn create_dispute(&mut self, bounty_id: u64, description: String) -> PromiseOrValue<()> {
+  pub fn create_dispute(&mut self, dispute_create: DisputeCreate) -> DisputeIndex {
     assert_one_yocto();
     assert_eq!(
       self.bounties_contract,
@@ -121,17 +121,18 @@ impl DisputesContract {
       "This method can only invoke a bounty contract"
     );
     assert!(
-      !description.is_empty(),
+      !dispute_create.description.is_empty(),
       "The description cannot be empty"
     );
 
-    self.internal_get_bounty_info(bounty_id, description)
+    let id = self.internal_add_dispute(dispute_create.to_dispute());
+    id
   }
 
   #[payable]
   pub fn provide_arguments(&mut self, id: DisputeIndex, description: String) -> usize {
     assert_one_yocto();
-    let mut dispute = self.get_dispute(id);
+    let dispute = self.get_dispute(id);
     assert!(
       matches!(dispute.status, DisputeStatus::New),
       "This action can be performed only for a dispute with the status 'New'",
@@ -142,19 +143,19 @@ impl DisputesContract {
     );
 
     let side = dispute.get_side_of_dispute();
-    let reason_idx = dispute.add_argument(
+    let reason_idx = self.internal_add_argument(
+      &id,
       Reason {
         side,
         argument_timestamp: U64::from(env::block_timestamp()),
         description,
-      }
+      },
     );
-    self.disputes.insert(&id, &dispute);
     reason_idx
   }
 
   #[payable]
-  pub fn cancel_dispute(&mut self, id: DisputeIndex) {
+  pub fn cancel_dispute(&mut self, id: DisputeIndex) -> PromiseOrValue<()> {
     assert_one_yocto();
     let mut dispute = self.get_dispute(id);
     assert!(
@@ -162,12 +163,8 @@ impl DisputesContract {
       "This action can be performed only for a dispute with the status 'New'",
     );
 
-    let side = dispute.get_side_of_dispute();
-    dispute.status = match side {
-      Side::Claimer => DisputeStatus::CanceledByClaimer,
-      _ => DisputeStatus::CanceledByProjectOwner
-    };
-    self.disputes.insert(&id, &dispute);
+    let success = matches!(dispute.get_side_of_dispute(), Side::ProjectOwner);
+    self.internal_send_result_of_dispute(id, &mut dispute, success, true)
   }
 
   #[payable]
@@ -208,7 +205,7 @@ impl DisputesContract {
       "The decision period is over, now you need to perform the 'finalize' action",
     );
 
-    self.internal_send_result_of_dispute(id, &mut dispute, success)
+    self.internal_send_result_of_dispute(id, &mut dispute, success, false)
   }
 
   #[payable]

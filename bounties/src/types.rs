@@ -12,6 +12,10 @@ pub const GAS_FOR_FT_TRANSFER: Gas = Gas(30_000_000_000_000);
 pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_CHECK_PROPOSAL: Gas = Gas(60_000_000_000_000);
 pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(45_000_000_000_000);
+pub const GAS_FOR_CREATE_DISPUTE: Gas = Gas(30_000_000_000_000);
+pub const GAS_FOR_AFTER_CREATE_DISPUTE: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_CHECK_DISPUTE: Gas = Gas(60_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_DISPUTE: Gas = Gas(45_000_000_000_000);
 
 pub const DEFAULT_BOUNTY_CLAIM_BOND: U128 = U128(ONE_NEAR);
 pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24);
@@ -34,6 +38,21 @@ trait ExtFtContract {
 pub struct Proposal {
   pub id: u64,
   pub proposer: AccountId,
+  pub status: String,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct DisputeCreate {
+  pub bounty_id: u64,
+  pub description: String,
+  pub claimer: AccountId,
+  pub project_owner_delegate: AccountId,
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct Dispute {
   pub status: String,
 }
 
@@ -68,11 +87,11 @@ pub struct ValidatorsDaoParams {
 
 impl ValidatorsDaoParams {
   pub fn to_validators_dao(&self) -> ValidatorsDao {
-    let mut gas_for_add_proposal = U64(GAS_FOR_ADD_PROPOSAL.0);
+    let mut gas_for_add_proposal = GAS_FOR_ADD_PROPOSAL.0.into();
     if self.gas_for_add_proposal.is_some() {
       gas_for_add_proposal = self.gas_for_add_proposal.unwrap();
     }
-    let mut gas_for_claim_approval = U64(GAS_FOR_CLAIM_APPROVAL.0);
+    let mut gas_for_claim_approval = GAS_FOR_CLAIM_APPROVAL.0.into();
     if self.gas_for_claim_approval.is_some() {
       gas_for_claim_approval = self.gas_for_claim_approval.unwrap();
     }
@@ -186,6 +205,8 @@ pub struct BountyClaim {
   pub proposal_id: Option<U64>,
   /// Timestamp when the status is set to rejected
   pub rejected_timestamp: Option<U64>,
+  /// Dispute ID
+  pub dispute_id: Option<U64>,
 }
 
 impl BountyClaim {

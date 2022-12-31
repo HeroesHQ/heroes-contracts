@@ -34,32 +34,12 @@ impl DisputesContract {
     id
   }
 
-  pub(crate) fn internal_get_bounty_info(
-    &mut self,
-    bounty_id: u64,
-    description: String,
-  ) -> PromiseOrValue<()> {
-    ext_bounty_contract::ext(self.bounties_contract.clone())
-      .with_static_gas(GAS_FOR_CHECK_BOUNTY)
-      .get_bounty(bounty_id.clone())
-      .and(
-        ext_bounty_contract::ext(self.bounties_contract.clone())
-          .with_static_gas(GAS_FOR_CHECK_BOUNTY_CLAIM)
-          .get_bounty_claims_by_id(bounty_id.clone())
-      )
-      .then(
-        Self::ext(env::current_account_id())
-          .with_static_gas(GAS_FOR_AFTER_CHECK_BOUNTY)
-          .after_get_bounty_info(bounty_id, description)
-      )
-      .into()
-  }
-
   pub(crate) fn internal_send_result_of_dispute(
     &self,
     id: DisputeIndex,
     dispute: &mut Dispute,
     success: bool,
+    canceled: bool,
   ) -> PromiseOrValue<()> {
     ext_bounty_contract::ext(self.bounties_contract.clone())
       .with_static_gas(GAS_FOR_SEND_RESULT_OF_DISPUTE)
@@ -68,20 +48,9 @@ impl DisputesContract {
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CLAIM_APPROVAL)
-          .after_claim_approval(id, dispute, success)
+          .after_claim_approval(id, dispute, success, canceled)
       )
       .into()
-  }
-
-  pub(crate) fn internal_find_claimer(
-    claims: Vec<(AccountId, BountyClaim)>,
-  ) -> Option<AccountId> {
-    for i in 0..claims.len() {
-      if claims[i].1.status == "Rejected" {
-        return Some(claims[i].0.clone())
-      }
-    }
-    None
   }
 
   pub(crate) fn is_argument_period_expired(&self, dispute: &Dispute) -> bool {
@@ -102,7 +71,7 @@ impl DisputesContract {
         "add_proposal".to_string(),
         json!({
           "proposal": {
-            "description": dispute.get_proposal_description(),
+            "description": self.internal_get_proposal_description(&id, dispute),
             "kind": {
               "FunctionCall" : {
                 "receiver_id": env::current_account_id(),
@@ -155,5 +124,30 @@ impl DisputesContract {
           .after_get_proposal(id, dispute)
       )
       .into()
+  }
+
+  pub(crate) fn internal_add_argument(
+    &mut self,
+    id: &DisputeIndex,
+    new_reason: Reason,
+  ) -> usize {
+    let mut reasons = self.arguments.get(id).unwrap_or_default();
+    reasons.push(new_reason);
+    self.arguments.insert(id, &reasons);
+    reasons.len() - 1
+  }
+
+  pub fn internal_get_proposal_description(
+    &self,
+    id: &DisputeIndex,
+    dispute: &Dispute
+  ) -> String {
+    let reasons = self.arguments.get(id).unwrap_or_default();
+    let mut full_description = dispute.description.to_owned();
+    for i in 0..reasons.len() {
+      let reason = &reasons[i];
+      full_description.push_str(Self::chunk_of_description(dispute, reason).as_str());
+    }
+    full_description
   }
 }

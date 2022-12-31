@@ -177,6 +177,7 @@ impl BountiesContract {
       status: ClaimStatus::New,
       proposal_id: None,
       rejected_timestamp: None,
+      dispute_id: None,
     };
     self.internal_add_claim(id, claims.as_mut(), bounty_claim);
     self.internal_save_claims(&sender_id, &claims);
@@ -311,18 +312,25 @@ impl BountiesContract {
           self.internal_set_claim_expiry_status(id, &receiver_id, &mut bounty, claim_idx, &mut claims);
           PromiseOrValue::Value(())
         }
+
         else if matches!(claims[claim_idx].status, ClaimStatus::Completed) &&
           bounty.validators_dao.is_some()
         {
           self.internal_get_proposal(id, receiver_id, &mut bounty, claim_idx, &mut claims)
         }
+
         else if matches!(claims[claim_idx].status, ClaimStatus::Rejected) &&
           self.is_deadline_for_opening_dispute_expired(&claims[claim_idx])
         {
           self.internal_reset_bounty_to_initial_state(id, &receiver_id, &mut bounty, claim_idx, &mut claims);
           PromiseOrValue::Value(())
-        } else {
-          // TODO: Finalization of the bounty during the dispute
+        }
+
+        else if matches!(claims[claim_idx].status, ClaimStatus::Disputed) {
+          self.internal_get_dispute(id, receiver_id, &mut bounty, claim_idx, &mut claims)
+        }
+
+        else {
           env::panic_str("This bounty is not subject to finalization")
         };
 
@@ -354,6 +362,75 @@ impl BountiesContract {
 
     bounty.validators_dao = Some(dao_params.to_validators_dao());
     self.bounties.insert(&id, &bounty);
+  }
+
+  #[payable]
+  pub fn open_dispute(&mut self, id: BountyIndex, description: String) -> PromiseOrValue<()> {
+    assert_one_yocto();
+
+    assert!(
+      self.dispute_contract.is_some(),
+      "Opening a dispute is not supported by this contract"
+    );
+
+    let bounty = self.get_bounty(id.clone());
+    assert!(
+      matches!(bounty.status, BountyStatus::Claimed),
+      "Bounty status does not allow opening a dispute"
+    );
+
+    let sender_id = env::predecessor_account_id();
+    let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
+    assert!(
+      matches!(claims[claim_idx].status, ClaimStatus::Rejected),
+      "The claim status does not allow opening a dispute"
+    );
+
+    assert!(
+      !self.is_deadline_for_opening_dispute_expired(&claims[claim_idx]),
+      "The period for opening a dispute has expired"
+    );
+
+    self.internal_create_dispute(id, &sender_id, bounty, claim_idx, &mut claims, description)
+  }
+
+  #[payable]
+  pub fn dispute_result(&mut self, id: BountyIndex, success: bool) -> PromiseOrValue<()> {
+    assert_one_yocto();
+
+    assert!(
+      self.dispute_contract.is_some(),
+      "The use of dispute is not supported by this contract"
+    );
+
+    assert_eq!(
+      self.dispute_contract.clone().unwrap(),
+      env::predecessor_account_id(),
+      "This method can only be called by a dispute contract"
+    );
+
+    let mut bounty = self.get_bounty(id.clone());
+    assert!(
+      matches!(bounty.status, BountyStatus::Claimed),
+      "Bounty status does not allow sending the result of the dispute"
+    );
+
+    let claimer = self.internal_find_claimer(id.clone());
+    assert!(
+      claimer.is_some(),
+      "The claim status does not allow sending the result of the dispute",
+    );
+    let sender_id = claimer.unwrap();
+    let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
+
+    let result = if success {
+      self.internal_bounty_payout(id, sender_id, &mut bounty, claim_idx, &mut claims)
+    } else {
+      self.internal_reject_claim(id, sender_id, &mut bounty, claim_idx, &mut claims);
+      PromiseOrValue::Value(())
+    };
+
+    result
   }
 }
 
@@ -656,6 +733,7 @@ mod tests {
         status: ClaimStatus::New,
         proposal_id: None,
         rejected_timestamp: None,
+        dispute_id: None,
       }
     );
     assert_eq!(contract.bounty_claimer_accounts.get(&id).unwrap()[0], claimer);

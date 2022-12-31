@@ -214,7 +214,7 @@ impl BountiesContract {
   ) {
     if self.dispute_contract.is_some() {
       claims[claim_idx].status = ClaimStatus::Rejected;
-      claims[claim_idx].rejected_timestamp = Some(U64(env::block_timestamp()));
+      claims[claim_idx].rejected_timestamp = Some(env::block_timestamp().into());
       self.internal_save_claims(&receiver_id, &claims);
     } else {
       // If the creation of a dispute is not foreseen,
@@ -298,6 +298,86 @@ impl BountiesContract {
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CHECK_PROPOSAL)
           .after_get_proposal(id, receiver_id, bounty, claims, claim_idx)
+      )
+      .into()
+  }
+
+  pub(crate) fn internal_create_dispute(
+    &mut self,
+    id: BountyIndex,
+    receiver_id: &AccountId,
+    bounty: Bounty,
+    claim_idx: usize,
+    claims: &mut Vec<BountyClaim>,
+    description: String,
+  ) -> PromiseOrValue<()> {
+    let project_owner_delegate = if bounty.validators_dao.is_some() {
+      bounty.validators_dao.unwrap().account_id
+    } else {
+      bounty.owner.clone()
+    };
+    let dispute_create = DisputeCreate {
+      bounty_id: id.clone(),
+      description,
+      claimer: receiver_id.clone(),
+      project_owner_delegate,
+    };
+
+    Promise::new(self.dispute_contract.clone().unwrap())
+      .function_call(
+        "create_dispute".to_string(),
+        json!({
+          "dispute_create": dispute_create,
+        })
+          .to_string()
+          .into_bytes(),
+        ONE_YOCTO,
+        GAS_FOR_CREATE_DISPUTE,
+      )
+      .then(
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_AFTER_CREATE_DISPUTE)
+          .after_create_dispute(receiver_id, claims, claim_idx)
+      )
+      .into()
+  }
+
+  pub(crate) fn internal_find_claimer(
+    &self,
+    id: BountyIndex,
+  ) -> Option<AccountId> {
+    let claims = self.get_bounty_claims_by_id(id.clone());
+    for i in 0..claims.len() {
+      if matches!(claims[i].1.status, ClaimStatus::Disputed) {
+        return Some(claims[i].0.clone())
+      }
+    }
+    None
+  }
+
+  pub(crate) fn internal_get_dispute(
+    &mut self,
+    id: BountyIndex,
+    receiver_id: AccountId,
+    bounty: &mut Bounty,
+    claim_idx: usize,
+    claims: &mut Vec<BountyClaim>,
+  ) -> PromiseOrValue<()> {
+    Promise::new(self.dispute_contract.clone().unwrap())
+      .function_call(
+        "get_dispute".to_string(),
+        json!({
+          "id": claims[claim_idx].dispute_id.unwrap().0,
+        })
+          .to_string()
+          .into_bytes(),
+        NO_DEPOSIT,
+        GAS_FOR_CHECK_DISPUTE,
+      )
+      .then(
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_AFTER_CHECK_DISPUTE)
+          .after_get_dispute(id, receiver_id, bounty, claims, claim_idx)
       )
       .into()
   }

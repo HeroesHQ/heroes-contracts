@@ -6,7 +6,8 @@ use near_units::parse_near;
 use serde_json::json;
 use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
-use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyType, ClaimStatus, Config,
+//use disputes::{Dispute, DisputeCreate, DisputeStatus};
+use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyType, ClaimStatus,
                GAS_FOR_ADD_PROPOSAL, GAS_FOR_CLAIM_APPROVAL, ValidatorsDao};
 
 #[derive(Deserialize)]
@@ -18,6 +19,7 @@ struct DaoPolicy {
 pub const TEST_TOKEN_WASM: &str = "./integration-tests/res/test_token.wasm";
 pub const BOUNTIES_WASM: &str = "./bounties/res/bounties.wasm";
 pub const SPUTNIK_DAO2_WASM: &str = "./integration-tests/res/sputnikdao2.wasm";
+pub const DISPUTES_WASM: &str = "./disputes/res/disputes.wasm";
 
 pub const BOUNTY_AMOUNT: U128 = U128(10u128.pow(18));
 pub const MAX_DEADLINE: U64 = U64(604_800_000_000_000);
@@ -101,7 +103,12 @@ async fn main() -> anyhow::Result<()> {
     .await?;
   assert!(res.is_success());
 
-  let disputed_bounties = init_disputed_dao_contract(
+  let (
+    disputed_bounties,
+    _dispute_contract,
+    _dispute_dao,
+    _arbitrator
+  ) = init_bounty_contract_with_dispute(
     &worker,
     &root,
     &test_token,
@@ -139,30 +146,64 @@ async fn register_user(
   Ok(())
 }
 
-async fn init_disputed_dao_contract(
+async fn init_bounty_contract_with_dispute(
   worker: &Worker<Sandbox>,
   root: &Account,
   test_token: &Contract,
   bounties_contract_admin: &Account,
-) -> anyhow::Result<Contract> {
-  // TODO: Later, change the account to a dispute contract
-  let dispute_contract = root
-    .create_subaccount("dispute")
+) -> anyhow::Result<(Contract, Contract, Contract, Account)> {
+  let dispute_dao_council_member = root
+    .create_subaccount("arbitrator")
     .initial_balance(parse_near!("30 N"))
     .transact()
     .await?
     .into_result()?;
 
-  let mut config = Config::default();
-  config.period_for_opening_dispute = U64(1_000_000_000 * 60 * 10); // 10 min
+  let dispute_dao = worker.dev_deploy(&std::fs::read(SPUTNIK_DAO2_WASM)?).await?;
+  let mut res = dispute_dao
+    .call("new")
+    .args_json(json!({
+      "config": {
+        "name": "genesis2",
+        "purpose": "test",
+        "metadata": "",
+      },
+      "policy": vec![dispute_dao_council_member.id()],
+    }))
+    .max_gas()
+    .transact()
+    .await?;
+  assert!(res.is_success());
 
   let bounties = worker.dev_deploy(&std::fs::read(BOUNTIES_WASM)?).await?;
-  let res = bounties
+
+  let mut disputes_config = disputes::Config::default();
+  disputes_config.argument_period = U64(1_000_000_000 * 60 * 5); // 5 min
+  disputes_config.decision_period = U64(1_000_000_000 * 60 * 5); // 5 min
+
+  let dispute_contract = worker.dev_deploy(&std::fs::read(DISPUTES_WASM)?).await?;
+  res = dispute_contract
+    .call("new")
+    .args_json(json!({
+      "bounties_contract": bounties.id(),
+      "dispute_dao": dispute_dao.id(),
+      "admin_whitelist": vec![bounties_contract_admin.id()],
+      "config": disputes_config,
+    }))
+    .max_gas()
+    .transact()
+    .await?;
+  assert!(res.is_success());
+
+  let mut bounties_config = bounties::Config::default();
+  bounties_config.period_for_opening_dispute = U64(1_000_000_000 * 60 * 10); // 5 min
+
+  res = bounties
     .call("new")
     .args_json(json!({
       "token_account_ids": vec![test_token.id()],
       "admin_whitelist": vec![bounties_contract_admin.id()],
-      "config": config,
+      "config": bounties_config,
       "dispute_contract": dispute_contract.id(),
     }))
     .max_gas()
@@ -171,7 +212,7 @@ async fn init_disputed_dao_contract(
   assert!(res.is_success());
   register_user(&test_token, bounties.id()).await?;
 
-  Ok(bounties)
+  Ok((bounties, dispute_contract, dispute_dao, dispute_dao_council_member))
 }
 
 async fn add_bounty(
@@ -213,7 +254,7 @@ async fn bounty_claim(
   freelancer: &Account,
   deadline: U64,
 ) -> anyhow::Result<()> {
-  let config: Config = bounties.call("get_config").view().await?.json()?;
+  let config: bounties::Config = bounties.call("get_config").view().await?.json()?;
   let res = freelancer
     .call(bounties.id(), "bounty_claim")
     .args_json((bounty_id, deadline))
@@ -439,8 +480,8 @@ async fn test_create_bounty(
         ValidatorsDao {
           account_id: validators_dao.id().to_string().parse().unwrap(),
           add_proposal_bond: get_proposal_bond(validators_dao).await?,
-          gas_for_add_proposal: U64(GAS_FOR_ADD_PROPOSAL.0),
-          gas_for_claim_approval: U64(GAS_FOR_CLAIM_APPROVAL.0),
+          gas_for_add_proposal: GAS_FOR_ADD_PROPOSAL.0.into(),
+          gas_for_claim_approval: GAS_FOR_CLAIM_APPROVAL.0.into(),
         }
       ),
       owner: project_owner.id().to_string().parse().unwrap(),
@@ -684,8 +725,8 @@ async fn test_bounty_reject_by_validators_dao(
     BountyStatus::Claimed,
   ).await?;
 
-  // Period for opening a dispute: 10 min, wait for 1000 blocks
-  worker.fast_forward(1000).await?;
+  // Period for opening a dispute: 5 min, wait for 500 blocks
+  worker.fast_forward(500).await?;
   bounty_action_by_user(bounties, bounty_id, project_owner, &BountyAction::Finalize).await?;
 
   assert_statuses(
