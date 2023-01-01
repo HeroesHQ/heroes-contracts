@@ -5,17 +5,17 @@ use near_sdk::{env, ext_contract, AccountId, Balance, BorshStorageKey, Gas, ONE_
 
 pub type BountyIndex = u64;
 
-pub const GAS_FOR_ADD_PROPOSAL: Gas = Gas(35_000_000_000_000);
+pub const GAS_FOR_ADD_PROPOSAL: Gas = Gas(25_000_000_000_000);
 pub const GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK: Gas = Gas(10_000_000_000_000);
 pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(60_000_000_000_000);
-pub const GAS_FOR_FT_TRANSFER: Gas = Gas(30_000_000_000_000);
-pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
-pub const GAS_FOR_CHECK_PROPOSAL: Gas = Gas(60_000_000_000_000);
-pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(45_000_000_000_000);
-pub const GAS_FOR_CREATE_DISPUTE: Gas = Gas(30_000_000_000_000);
+pub const GAS_FOR_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(30_000_000_000_000);
+pub const GAS_FOR_CHECK_PROPOSAL: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(60_000_000_000_000);
+pub const GAS_FOR_CREATE_DISPUTE: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_AFTER_CREATE_DISPUTE: Gas = Gas(15_000_000_000_000);
-pub const GAS_FOR_CHECK_DISPUTE: Gas = Gas(60_000_000_000_000);
-pub const GAS_FOR_AFTER_CHECK_DISPUTE: Gas = Gas(45_000_000_000_000);
+pub const GAS_FOR_CHECK_DISPUTE: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_DISPUTE: Gas = Gas(60_000_000_000_000);
 
 pub const DEFAULT_BOUNTY_CLAIM_BOND: U128 = U128(ONE_NEAR);
 pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24);
@@ -220,7 +220,6 @@ impl BountyClaim {
 pub enum BountyAction {
   ClaimApproved { receiver_id: AccountId },
   ClaimRejected { receiver_id: AccountId },
-  CreateDispute,
   Finalize,
 }
 

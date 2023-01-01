@@ -96,7 +96,7 @@ impl DisputesContract {
           .to_string()
           .into_bytes(),
         self.config.add_proposal_bond.0,
-        Gas(GAS_FOR_ADD_PROPOSAL.0),
+        GAS_FOR_ADD_PROPOSAL,
       )
       .then(
         Self::ext(env::current_account_id())
@@ -143,7 +143,14 @@ impl DisputesContract {
     dispute: &Dispute
   ) -> String {
     let reasons = self.arguments.get(id).unwrap_or_default();
-    let mut full_description = dispute.description.to_owned();
+    let mut full_description = Self::chunk_of_description(
+      dispute,
+      &Reason {
+        side: Side::Claimer,
+        argument_timestamp: dispute.start_time,
+        description: dispute.clone().description,
+      }
+    ).to_owned();
     for i in 0..reasons.len() {
       let reason = &reasons[i];
       full_description.push_str(Self::chunk_of_description(dispute, reason).as_str());

@@ -68,7 +68,11 @@ impl DisputesContract {
       let success = if proposal.status == "Approved" { true }
       else if proposal.status == "Rejected" { false }
       else {
-        env::panic_str("The proposal status is not being processed");
+        if self.is_decision_period_expired(&dispute) {
+          true
+        } else {
+          env::panic_str("The proposal status is not being processed");
+        }
       };
       self.internal_send_result_of_dispute(id, dispute, success, false)
     }

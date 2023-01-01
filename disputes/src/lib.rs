@@ -2,8 +2,8 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedSet};
 use near_sdk::json_types::{Base64VecU8, U64};
 use near_sdk::serde_json::json;
-use near_sdk::{assert_one_yocto, env, is_promise_success, near_bindgen, AccountId, Gas,
-               PanicOnDefault, Promise, PromiseError, PromiseOrValue, Timestamp};
+use near_sdk::{assert_one_yocto, env, is_promise_success, near_bindgen, AccountId, PanicOnDefault,
+               Promise, PromiseError, PromiseOrValue, Timestamp};
 
 pub use crate::types::*;
 

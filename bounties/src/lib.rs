@@ -336,7 +336,6 @@ impl BountiesContract {
 
         result
       }
-      BountyAction::CreateDispute => env::panic_str("Not yet implemented"),
     }
   }
 
@@ -426,7 +425,7 @@ impl BountiesContract {
     let result = if success {
       self.internal_bounty_payout(id, sender_id, &mut bounty, claim_idx, &mut claims)
     } else {
-      self.internal_reject_claim(id, sender_id, &mut bounty, claim_idx, &mut claims);
+      self.internal_reset_bounty_to_initial_state(id, &sender_id, &mut bounty, claim_idx, &mut claims);
       PromiseOrValue::Value(())
     };
 

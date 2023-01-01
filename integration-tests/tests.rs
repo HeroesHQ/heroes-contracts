@@ -6,7 +6,7 @@ use near_units::parse_near;
 use serde_json::json;
 use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
-//use disputes::{Dispute, DisputeCreate, DisputeStatus};
+use disputes::{Dispute, DisputeStatus, Proposal};
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyType, ClaimStatus,
                GAS_FOR_ADD_PROPOSAL, GAS_FOR_CLAIM_APPROVAL, ValidatorsDao};
 
@@ -105,9 +105,9 @@ async fn main() -> anyhow::Result<()> {
 
   let (
     disputed_bounties,
-    _dispute_contract,
-    _dispute_dao,
-    _arbitrator
+    dispute_contract,
+    dispute_dao,
+    arbitrator
   ) = init_bounty_contract_with_dispute(
     &worker,
     &root,
@@ -128,6 +128,16 @@ async fn main() -> anyhow::Result<()> {
                                        &validators_dao, &project_owner, &freelancer).await?;
   test_bounty_claim_deadline_that_has_expired(&worker, &disputed_bounties, &project_owner,
                                               &freelancer).await?;
+  test_bounty_open_and_reject_dispute(&worker, &disputed_bounties, &dao_council_member,
+                                      &validators_dao, &project_owner, &freelancer,
+                                      &dispute_contract, &dispute_dao, &arbitrator).await?;
+  test_cancel_dispute_by_claimer(&disputed_bounties, &dao_council_member, &validators_dao,
+                                 &freelancer, &dispute_contract).await?;
+  test_cancel_dispute_by_project_owner(&test_token, &disputed_bounties, &dao_council_member,
+                                       &validators_dao, &freelancer, &dispute_contract).await?;
+  test_bounty_open_and_approve_dispute(&worker, &test_token, &disputed_bounties, &dao_council_member,
+                                       &validators_dao, &project_owner, &freelancer,
+                                       &dispute_contract, &dispute_dao, &arbitrator).await?;
   Ok(())
 }
 
@@ -334,6 +344,103 @@ async fn bounty_give_up(
   Ok(())
 }
 
+async fn open_dispute(
+  bounties: &Contract,
+  bounty_id: u64,
+  claimer: &Account,
+) -> anyhow::Result<()> {
+  let res = claimer
+    .call(bounties.id(), "open_dispute")
+    .args_json((bounty_id, "Dispute description"))
+    .max_gas()
+    .deposit(ONE_YOCTO)
+    .transact()
+    .await?;
+  assert!(res.is_success());
+  Ok(())
+}
+
+async fn provide_arguments(
+  dispute_contract: &Contract,
+  dispute_id: u64,
+  user: &Account,
+  description: String,
+) -> anyhow::Result<()> {
+  let res = user
+    .call(dispute_contract.id(), "provide_arguments")
+    .args_json((dispute_id, description))
+    .max_gas()
+    .deposit(ONE_YOCTO)
+    .transact()
+    .await?;
+  assert!(res.is_success());
+  Ok(())
+}
+
+async fn escalation(
+  dispute_contract: &Contract,
+  dispute_id: u64,
+  user: &Account,
+) -> anyhow::Result<()> {
+  let res = user
+    .call(dispute_contract.id(), "escalation")
+    .args_json((dispute_id,))
+    .max_gas()
+    .deposit(ONE_YOCTO)
+    .transact()
+    .await?;
+  assert!(res.is_success());
+  Ok(())
+}
+
+async fn dispute_dao_action(
+  dispute_dao: &Contract,
+  dao_council_member: &Account,
+  proposal_id: u64,
+  proposal_action: String,
+) -> anyhow::Result<()> {
+  let res = dao_council_member
+    .call(dispute_dao.id(), "act_proposal")
+    .args_json((proposal_id, proposal_action, Option::<bool>::None))
+    .max_gas()
+    .transact()
+    .await?;
+  assert!(res.is_success());
+  Ok(())
+}
+
+async fn finalize_dispute(
+  dispute_contract: &Contract,
+  dispute_id: u64,
+  user: &Account,
+) -> anyhow::Result<()> {
+  let res = user
+    .call(dispute_contract.id(), "finalize_dispute")
+    .args_json((dispute_id,))
+    .max_gas()
+    .deposit(ONE_YOCTO)
+    .transact()
+    .await?;
+  assert!(res.is_success());
+  Ok(())
+}
+
+async fn cancel_dispute(
+  dispute_contract: &Contract,
+  dispute_id: u64,
+  user: &Account,
+) -> anyhow::Result<()> {
+  let res = user
+    .call(dispute_contract.id(), "cancel_dispute")
+    .args_json((dispute_id,))
+    .max_gas()
+    .deposit(ONE_YOCTO)
+    .transact()
+    .await?;
+  assert!(res.is_success());
+  Ok(())
+}
+
 async fn get_proposal_bond(
   validators_dao: &Contract,
 ) -> anyhow::Result<U128> {
@@ -419,6 +526,19 @@ async fn get_account_bounties(
     .await?
     .json()?;
   Ok(bounty_indexes)
+}
+
+async fn get_dispute(
+  dispute_contract: &Contract,
+  dispute_id: u64,
+) -> anyhow::Result<Dispute> {
+  let dispute = dispute_contract
+    .call("get_dispute")
+    .args_json((dispute_id,))
+    .view()
+    .await?
+    .json::<Dispute>()?;
+  Ok(dispute)
 }
 
 async fn assert_statuses(
@@ -773,5 +893,310 @@ async fn test_bounty_claim_deadline_that_has_expired(
   ).await?;
 
   println!("      Passed ✅ Bounty claim deadline that has expired");
+  Ok(())
+}
+
+async fn test_bounty_open_and_reject_dispute(
+  worker: &Worker<Sandbox>,
+  bounties: &Contract,
+  dao_council_member: &Account,
+  validators_dao: &Contract,
+  project_owner: &Account,
+  freelancer: &Account,
+  dispute_contract: &Contract,
+  dispute_dao: &Contract,
+  arbitrator: &Account,
+) -> anyhow::Result<()> {
+  let bounty_id = 0;
+
+  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 2)).await?;
+  bounty_done(bounties, bounty_id, freelancer, "test description".to_string()).await?;
+  bounty_action_by_validators_dao(
+    bounties,
+    bounty_id,
+    dao_council_member,
+    validators_dao,
+    "VoteReject".to_string()
+  ).await?;
+  bounty_action_by_user(bounties, bounty_id, freelancer, &BountyAction::Finalize).await?;
+
+  open_dispute(bounties, bounty_id, freelancer).await?;
+
+  assert_statuses(
+    bounties,
+    bounty_id.clone(),
+    freelancer,
+    ClaimStatus::Disputed,
+    BountyStatus::Claimed,
+  ).await?;
+
+  let dispute_id: u64 = 0;
+  let dispute = get_dispute(dispute_contract, dispute_id).await?;
+  assert_eq!(dispute.bounty_id.0, bounty_id);
+  assert_eq!(dispute.status, DisputeStatus::New);
+  assert_eq!(dispute.claimer.to_string(), freelancer.id().to_string());
+  assert_eq!(dispute.project_owner_delegate.to_string(), validators_dao.id().to_string());
+  assert_eq!(dispute.description, "Dispute description".to_string());
+  assert_eq!(dispute.proposal_id, None);
+  assert_eq!(dispute.proposal_timestamp, None);
+
+  provide_arguments(
+    dispute_contract,
+    dispute_id,
+    validators_dao.as_account(),
+    "Arguments of the project owner".to_string()
+  ).await?;
+
+  provide_arguments(
+    dispute_contract,
+    dispute_id,
+    freelancer,
+    "Claimer's arguments".to_string()
+  ).await?;
+
+  // Argument period: 5 min, wait for 500 blocks
+  worker.fast_forward(500).await?;
+
+  escalation(
+    dispute_contract,
+    dispute_id,
+    freelancer,
+  ).await?;
+
+  let dispute = get_dispute(dispute_contract, dispute_id).await?;
+  assert_eq!(dispute.status, DisputeStatus::DecisionPending);
+  let proposal_id = dispute.proposal_id.unwrap().0;
+  assert_eq!(proposal_id, 0);
+
+  let proposal = dispute_dao
+    .call("get_proposal")
+    .args_json((proposal_id,))
+    .view()
+    .await?
+    .json::<Proposal>()?;
+  println!("Proposal: {}", json!(proposal).to_string());
+
+  dispute_dao_action(
+    dispute_dao,
+    arbitrator,
+    proposal_id,
+    "VoteReject".to_string(),
+  ).await?;
+
+  finalize_dispute(
+    dispute_contract,
+    dispute_id,
+    project_owner,
+  ).await?;
+
+  let dispute = get_dispute(dispute_contract, dispute_id).await?;
+  assert_eq!(dispute.status, DisputeStatus::InFavorOfProjectOwner);
+
+  assert_statuses(
+    bounties,
+    bounty_id.clone(),
+    freelancer,
+    ClaimStatus::NotCompleted,
+    BountyStatus::New,
+  ).await?;
+
+  println!("      Passed ✅ Bounty open and reject the dispute");
+  Ok(())
+}
+
+async fn test_cancel_dispute_by_claimer(
+  bounties: &Contract,
+  dao_council_member: &Account,
+  validators_dao: &Contract,
+  freelancer: &Account,
+  dispute_contract: &Contract,
+) -> anyhow::Result<()> {
+  let bounty_id = 0;
+
+  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 2)).await?;
+  bounty_done(bounties, bounty_id, freelancer, "test description".to_string()).await?;
+  bounty_action_by_validators_dao(
+    bounties,
+    bounty_id,
+    dao_council_member,
+    validators_dao,
+    "VoteReject".to_string()
+  ).await?;
+  bounty_action_by_user(bounties, bounty_id, freelancer, &BountyAction::Finalize).await?;
+
+  assert_statuses(
+    bounties,
+    bounty_id.clone(),
+    freelancer,
+    ClaimStatus::Rejected,
+    BountyStatus::Claimed,
+  ).await?;
+
+  open_dispute(bounties, bounty_id, freelancer).await?;
+  let dispute_id: u64 = 1;
+  let dispute = get_dispute(dispute_contract, dispute_id).await?;
+  assert_eq!(dispute.status, DisputeStatus::New);
+
+  cancel_dispute(dispute_contract, dispute_id, freelancer).await?;
+
+  let dispute = get_dispute(dispute_contract, dispute_id).await?;
+  assert_eq!(dispute.status, DisputeStatus::CanceledByClaimer);
+
+  assert_statuses(
+    bounties,
+    bounty_id.clone(),
+    freelancer,
+    ClaimStatus::NotCompleted,
+    BountyStatus::New,
+  ).await?;
+
+  println!("      Passed ✅ Dispute was canceled by the claimer");
+  Ok(())
+}
+
+async fn test_cancel_dispute_by_project_owner(
+  test_token: &Contract,
+  bounties: &Contract,
+  dao_council_member: &Account,
+  validators_dao: &Contract,
+  freelancer: &Account,
+  dispute_contract: &Contract,
+) -> anyhow::Result<()> {
+  let token_balance = get_token_balance(test_token, bounties.id()).await?;
+  let freelancer_balance = get_token_balance(test_token, freelancer.id()).await?;
+
+  let bounty_id = 0;
+  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 2)).await?;
+  bounty_done(bounties, bounty_id, freelancer, "test description".to_string()).await?;
+  bounty_action_by_validators_dao(
+    bounties,
+    bounty_id,
+    dao_council_member,
+    validators_dao,
+    "VoteReject".to_string()
+  ).await?;
+  bounty_action_by_user(bounties, bounty_id, freelancer, &BountyAction::Finalize).await?;
+
+  assert_statuses(
+    bounties,
+    bounty_id.clone(),
+    freelancer,
+    ClaimStatus::Rejected,
+    BountyStatus::Claimed,
+  ).await?;
+
+  open_dispute(bounties, bounty_id, freelancer).await?;
+  let dispute_id: u64 = 2;
+  let dispute = get_dispute(dispute_contract, dispute_id).await?;
+  assert_eq!(dispute.status, DisputeStatus::New);
+
+  cancel_dispute(dispute_contract, dispute_id, validators_dao.as_account()).await?;
+
+  let dispute = get_dispute(dispute_contract, dispute_id).await?;
+  assert_eq!(dispute.status, DisputeStatus::CanceledByProjectOwner);
+
+  assert_statuses(
+    bounties,
+    bounty_id.clone(),
+    freelancer,
+    ClaimStatus::Approved,
+    BountyStatus::Completed,
+  ).await?;
+
+  assert_eq!(
+    get_token_balance(test_token, bounties.id()).await?,
+    token_balance - BOUNTY_AMOUNT.0
+  );
+  assert_eq!(
+    get_token_balance(test_token, freelancer.id()).await?,
+    freelancer_balance + BOUNTY_AMOUNT.0
+  );
+
+  println!("      Passed ✅ Dispute was canceled by the project owner");
+  Ok(())
+}
+
+async fn test_bounty_open_and_approve_dispute(
+  worker: &Worker<Sandbox>,
+  test_token: &Contract,
+  bounties: &Contract,
+  dao_council_member: &Account,
+  validators_dao: &Contract,
+  project_owner: &Account,
+  freelancer: &Account,
+  dispute_contract: &Contract,
+  dispute_dao: &Contract,
+  arbitrator: &Account,
+) -> anyhow::Result<()> {
+  let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
+  assert_eq!(last_bounty_id, 1);
+
+  add_bounty(test_token, bounties, Some(validators_dao), project_owner).await?;
+
+  let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
+  assert_eq!(last_bounty_id, 2);
+
+  let token_balance = get_token_balance(test_token, bounties.id()).await?;
+  let freelancer_balance = get_token_balance(test_token, freelancer.id()).await?;
+
+  let bounty_id = 1;
+  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
+  bounty_done(bounties, bounty_id, freelancer, "test description".to_string()).await?;
+  bounty_action_by_validators_dao(
+    bounties,
+    bounty_id,
+    dao_council_member,
+    validators_dao,
+    "VoteReject".to_string()
+  ).await?;
+  bounty_action_by_user(bounties, bounty_id, freelancer, &BountyAction::Finalize).await?;
+
+  open_dispute(bounties, bounty_id, freelancer).await?;
+  let dispute_id: u64 = 3;
+  let dispute = get_dispute(dispute_contract, dispute_id).await?;
+  assert_eq!(dispute.status, DisputeStatus::New);
+
+  // Argument period: 5 min, wait for 500 blocks
+  worker.fast_forward(500).await?;
+
+  escalation(
+    dispute_contract,
+    dispute_id,
+    freelancer,
+  ).await?;
+
+  let dispute = get_dispute(dispute_contract, dispute_id).await?;
+  assert_eq!(dispute.status, DisputeStatus::DecisionPending);
+  let proposal_id = dispute.proposal_id.unwrap().0;
+  assert_eq!(proposal_id, 1);
+
+  dispute_dao_action(
+    dispute_dao,
+    arbitrator,
+    proposal_id,
+    "VoteApprove".to_string(),
+  ).await?;
+
+  let dispute = get_dispute(dispute_contract, dispute_id).await?;
+  assert_eq!(dispute.status, DisputeStatus::InFavorOfClaimer);
+
+  assert_statuses(
+    bounties,
+    bounty_id.clone(),
+    freelancer,
+    ClaimStatus::Approved,
+    BountyStatus::Completed,
+  ).await?;
+
+  assert_eq!(
+    get_token_balance(test_token, bounties.id()).await?,
+    token_balance - BOUNTY_AMOUNT.0
+  );
+  assert_eq!(
+    get_token_balance(test_token, freelancer.id()).await?,
+    freelancer_balance + BOUNTY_AMOUNT.0
+  );
+
+  println!("      Passed ✅ Bounty open and approve the dispute");
   Ok(())
 }

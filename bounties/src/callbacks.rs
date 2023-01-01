@@ -107,7 +107,7 @@ impl BountiesContract {
       if dispute.status == "InFavorOfClaimer" || dispute.status == "CanceledByProjectOwner" {
         self.internal_bounty_payout(id, receiver_id, bounty, claim_idx, claims)
       } else if dispute.status == "InFavorOfProjectOwner" || dispute.status == "CanceledByClaimer" {
-        self.internal_reject_claim(id, receiver_id, bounty, claim_idx, claims);
+        self.internal_reset_bounty_to_initial_state(id, &receiver_id, bounty, claim_idx, claims);
         PromiseOrValue::Value(())
       } else {
         env::panic_str("The dispute status is not being processed");

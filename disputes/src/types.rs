@@ -7,13 +7,13 @@ use near_sdk::{env, ext_contract, AccountId, Balance, BorshStorageKey, Gas, ONE_
 pub type DisputeIndex = u64;
 pub type TimestampSec = u32;
 
-pub const GAS_FOR_ADD_PROPOSAL: Gas = Gas(35_000_000_000_000);
+pub const GAS_FOR_ADD_PROPOSAL: Gas = Gas(25_000_000_000_000);
 pub const GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK: Gas = Gas(10_000_000_000_000);
-pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(60_000_000_000_000);
-pub const GAS_FOR_AFTER_CLAIM_APPROVAL: Gas = Gas(10_000_000_000_000);
-pub const GAS_FOR_SEND_RESULT_OF_DISPUTE: Gas = Gas(45_000_000_000_000);
-pub const GAS_FOR_CHECK_PROPOSAL: Gas = Gas(70_000_000_000_000);
-pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(55_000_000_000_000);
+pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(90_000_000_000_000);
+pub const GAS_FOR_AFTER_CLAIM_APPROVAL: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_SEND_RESULT_OF_DISPUTE: Gas = Gas(60_000_000_000_000);
+pub const GAS_FOR_CHECK_PROPOSAL: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(90_000_000_000_000);
 
 pub const DEFAULT_ARGUMENT_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 10);
 pub const DEFAULT_DECISION_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
@@ -26,11 +26,12 @@ trait ExtBountyContract {
   fn dispute_result(&self, id: u64, success: bool) -> PromiseOrValue<()>;
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(crate = "near_sdk::serde")]
 pub struct Proposal {
   pub id: u64,
   pub proposer: AccountId,
+  pub description: String,
   pub status: String,
 }
 
