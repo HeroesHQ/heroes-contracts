@@ -449,6 +449,10 @@ mod tests {
     "token_id".parse().unwrap()
   }
 
+  fn get_disputes_contract() -> AccountId {
+    "disputes".parse().unwrap()
+  }
+
   pub const fn d(value: Balance, decimals: u8) -> Balance {
     value * 10u128.pow(decimals as _)
   }
@@ -1140,5 +1144,165 @@ mod tests {
       contract.get_bounty(id.clone()).validators_dao.unwrap(),
       new_dao_params.to_validators_dao()
     );
+  }
+
+  #[test]
+  #[should_panic(expected = "Opening a dispute is not supported by this contract")]
+  fn test_open_dispute_without_dispute_support() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      None
+    );
+    let project_owner = accounts(1);
+    let id = add_bounty(&mut contract, &project_owner, None);
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+
+    bounty_action(
+      &mut context,
+      &mut contract,
+      id.clone(),
+      &project_owner,
+      BountyAction::ClaimRejected { receiver_id: claimer.clone() }
+    );
+
+    testing_env!(context
+      .predecessor_account_id(claimer)
+      .attached_deposit(1)
+      .build());
+    contract.open_dispute(id, "Test description".to_string());
+  }
+
+  #[test]
+  #[should_panic(expected = "Bounty status does not allow opening a dispute")]
+  fn test_open_dispute_with_incorrect_bounty_status() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      Some(get_disputes_contract())
+    );
+    let project_owner = accounts(1);
+    let id = add_bounty(&mut contract, &project_owner, None);
+
+    testing_env!(context
+      .predecessor_account_id(accounts(2))
+      .attached_deposit(1)
+      .build());
+    contract.open_dispute(id, "Test description".to_string());
+  }
+
+  #[test]
+  #[should_panic(expected = "No claimer found")]
+  fn test_open_dispute_by_other_user() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      Some(get_disputes_contract())
+    );
+    let project_owner = accounts(1);
+    let id = add_bounty(&mut contract, &project_owner, None);
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+
+    bounty_action(
+      &mut context,
+      &mut contract,
+      id.clone(),
+      &project_owner,
+      BountyAction::ClaimRejected { receiver_id: claimer.clone() }
+    );
+    assert_eq!(contract.bounty_claimers.get(&claimer).unwrap()[0].status, ClaimStatus::Rejected);
+
+    testing_env!(context
+      .predecessor_account_id(accounts(3))
+      .attached_deposit(1)
+      .build());
+    contract.open_dispute(id, "Test description".to_string());
+  }
+
+  #[test]
+  #[should_panic(expected = "The claim status does not allow opening a dispute")]
+  fn test_open_dispute_with_incorrect_claim_status() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      Some(get_disputes_contract())
+    );
+    let project_owner = accounts(1);
+    let id = add_bounty(&mut contract, &project_owner, None);
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(1)
+      .build());
+    contract.open_dispute(id, "Test description".to_string());
+  }
+
+  #[test]
+  #[should_panic(expected = "The period for opening a dispute has expired")]
+  fn test_open_dispute_with_expired_opening_period() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![get_token_id()],
+      vec![accounts(0)],
+      None,
+      None,
+      Some(get_disputes_contract())
+    );
+
+    testing_env!(context
+      .predecessor_account_id(accounts(0))
+      .attached_deposit(1)
+      .build());
+    let mut config = Config::default();
+    config.period_for_opening_dispute = U64(10);
+    contract.change_config(config.clone());
+
+    let project_owner = accounts(1);
+    let id = add_bounty(&mut contract, &project_owner, None);
+    let claimer = accounts(2);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+
+    testing_env!(context
+      .block_timestamp(0)
+      .build());
+    bounty_action(
+      &mut context,
+      &mut contract,
+      id.clone(),
+      &project_owner,
+      BountyAction::ClaimRejected { receiver_id: claimer.clone() }
+    );
+
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(1)
+      .block_timestamp(20)
+      .build());
+    contract.open_dispute(id, "Test description".to_string());
   }
 }

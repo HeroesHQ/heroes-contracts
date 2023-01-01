@@ -57,4 +57,9 @@ impl DisputesContract {
       .filter_map(|id| self.disputes.get(&id).map(|dispute| (id, dispute)))
       .collect()
   }
+
+  pub fn get_arguments(&self, id: DisputeIndex) -> Vec<Reason> {
+    let arguments = self.arguments.get(&id).expect("No arguments");
+    arguments
+  }
 }
