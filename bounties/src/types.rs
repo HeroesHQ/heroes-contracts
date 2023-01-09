@@ -7,15 +7,16 @@ pub type BountyIndex = u64;
 
 pub const GAS_FOR_ADD_PROPOSAL: Gas = Gas(25_000_000_000_000);
 pub const GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK: Gas = Gas(10_000_000_000_000);
-pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(60_000_000_000_000);
+pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(70_000_000_000_000);
 pub const GAS_FOR_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
-pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(30_000_000_000_000);
+pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(40_000_000_000_000);
 pub const GAS_FOR_CHECK_PROPOSAL: Gas = Gas(15_000_000_000_000);
-pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(60_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(70_000_000_000_000);
 pub const GAS_FOR_CREATE_DISPUTE: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_AFTER_CREATE_DISPUTE: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_CHECK_DISPUTE: Gas = Gas(15_000_000_000_000);
-pub const GAS_FOR_AFTER_CHECK_DISPUTE: Gas = Gas(60_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_DISPUTE: Gas = Gas(70_000_000_000_000);
+pub const GAS_FOR_UPDATE_STATISTIC: Gas = Gas(15_000_000_000_000);
 
 pub const DEFAULT_BOUNTY_CLAIM_BOND: U128 = U128(ONE_NEAR);
 pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24);
@@ -54,6 +55,18 @@ pub struct DisputeCreate {
 #[serde(crate = "near_sdk::serde")]
 pub struct Dispute {
   pub status: String,
+}
+
+#[derive(Serialize)]
+#[serde(crate = "near_sdk::serde")]
+pub enum ReputationActionKind {
+  BountyCreated,
+  BountyCancelled,
+  ClaimCreated,
+  ClaimCancelled,
+  ClaimExpired,
+  SuccessfulClaim {with_dispute: bool},
+  UnsuccessfulClaim {with_dispute: bool},
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]

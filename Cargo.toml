@@ -18,6 +18,7 @@ workspaces = "0.6.0"
 pkg-config = "0.3.1"
 bounties = { path = "bounties" }
 disputes = { path = "disputes" }
+reputation = { path = "reputation" }
 
 [profile.release]
 codegen-units=1
@@ -30,7 +31,8 @@ overflow-checks = true
 [workspace]
 members = [
     "bounties",
-    "disputes"
+    "disputes",
+    "reputation"
 ]
 
 [[example]]

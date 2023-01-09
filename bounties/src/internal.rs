@@ -25,6 +25,11 @@ impl BountiesContract {
     indices.push(id);
     self.internal_save_account_bounties(&bounty.owner, indices);
     self.last_bounty_id += 1;
+    self.internal_update_statistic(
+      None,
+      Some(bounty.owner.clone()),
+      ReputationActionKind::BountyCreated
+    );
     id
   }
 
@@ -123,9 +128,14 @@ impl BountiesContract {
   ) {
     bounty.status = BountyStatus::New;
     self.bounties.insert(&id, &bounty);
+    let with_dispute = matches!(claims[claim_idx].status, ClaimStatus::Disputed);
     claims[claim_idx].status = ClaimStatus::NotCompleted;
     self.internal_save_claims(receiver_id, &claims);
-    // TODO: update reputation
+    self.internal_update_statistic(
+      Some(receiver_id.clone()),
+      Some(bounty.owner.clone()),
+      ReputationActionKind::UnsuccessfulClaim {with_dispute},
+    );
     self.internal_return_bonds(receiver_id);
   }
 
@@ -146,6 +156,11 @@ impl BountiesContract {
     self.internal_save_claims(receiver_id, &claims);
     bounty.status = BountyStatus::New;
     self.bounties.insert(&id, &bounty);
+    self.internal_update_statistic(
+      Some(receiver_id.clone()),
+      None,
+      ReputationActionKind::ClaimExpired
+    );
   }
 
   pub(crate) fn internal_find_active_claim(
@@ -380,5 +395,31 @@ impl BountiesContract {
           .after_get_dispute(id, receiver_id, bounty, claims, claim_idx)
       )
       .into()
+  }
+
+  pub(crate) fn internal_update_statistic(
+    &self,
+    claimer: Option<AccountId>,
+    bounty_owner: Option<AccountId>,
+    action_kind: ReputationActionKind,
+  ) -> PromiseOrValue<()> {
+    if self.reputation_contract.is_some() {
+      Promise::new(self.reputation_contract.clone().unwrap())
+        .function_call(
+          "emit".to_string(),
+          json!({
+            "claimer": claimer,
+            "bounty_owner": bounty_owner,
+            "action_kind": action_kind,
+          })
+            .to_string()
+            .into_bytes(),
+          NO_DEPOSIT,
+          GAS_FOR_UPDATE_STATISTIC,
+        )
+        .into()
+    } else {
+      PromiseOrValue::Value(())
+    }
   }
 }

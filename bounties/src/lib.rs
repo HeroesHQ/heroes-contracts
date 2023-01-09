@@ -182,8 +182,12 @@ impl BountiesContract {
     self.internal_add_claim(id, claims.as_mut(), bounty_claim);
     self.internal_save_claims(&sender_id, &claims);
     self.internal_add_bounty_claimer_account(id, sender_id.clone());
-
     self.locked_amount += env::attached_deposit();
+    self.internal_update_statistic(
+      Some(sender_id),
+      Some(bounty.owner.clone()),
+      ReputationActionKind::ClaimCreated
+    );
   }
 
   /// Report that bounty is done. Creates a proposal to vote for paying out the bounty,
@@ -255,6 +259,11 @@ impl BountiesContract {
     self.internal_save_claims(&sender_id, &claims);
     bounty.status = BountyStatus::New;
     self.bounties.insert(&id, &bounty);
+    self.internal_update_statistic(
+      Some(sender_id),
+      None,
+      ReputationActionKind::ClaimCancelled
+    );
 
     result
   }
