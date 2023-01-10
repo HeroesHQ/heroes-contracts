@@ -291,3 +291,443 @@ impl ReputationContract {
     }
   }
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[cfg(test)]
+mod tests {
+  use near_sdk::{AccountId, testing_env};
+  use near_sdk::test_utils::{accounts, VMContextBuilder};
+  use crate::{ActionKind, BountyOwnerMetrics, ClaimerMetrics, ReputationContract};
+
+  fn get_bounties_contract() -> AccountId {
+    "bounties".parse().unwrap()
+  }
+
+  #[test]
+  #[should_panic(expected = "Bounty owner is required and Claimer is not required")]
+  fn test_stats_after_bounty_created_with_claimer_account() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+    contract.emit(Some(accounts(0)), Some(accounts(1)), ActionKind::BountyCreated);
+  }
+
+  #[test]
+  #[should_panic(expected = "Bounty owner is required and Claimer is not required")]
+  fn test_stats_after_bounty_created_without_bounty_owner_account() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+    contract.emit(Some(accounts(0)), None, ActionKind::BountyCreated);
+  }
+
+  #[test]
+  #[should_panic(expected = "Only a bounties contract can call this method")]
+  fn test_stats_after_bounty_created_by_other_account() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(accounts(0));
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+    contract.emit(None, Some(accounts(1)), ActionKind::BountyCreated);
+  }
+
+  #[test]
+  fn test_stats_after_bounty_created() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+
+    contract.emit(None, Some(accounts(1)), ActionKind::BountyCreated);
+
+    let bounty_owner_stats = contract.bounty_owners_entries.get(&accounts(1)).unwrap();
+    assert_eq!(contract.bounty_owners_entries.len(), 1);
+    assert_eq!(
+      bounty_owner_stats,
+      BountyOwnerMetrics {
+        number_of_bounties: 1,
+        number_of_successful_bounties: 0,
+        number_of_canceled_bounties: 0,
+        number_of_claims: 0,
+        number_of_approved_claims: 0,
+        number_of_rejected_claims: 0,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+    assert_eq!(contract.claimers_entries.len(), 0);
+  }
+
+  #[test]
+  #[should_panic(expected = "Claimer and bounty owner required")]
+  fn test_stats_after_claim_created_without_claimer_account() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+    contract.emit(None, Some(accounts(1)), ActionKind::ClaimCreated);
+  }
+
+  #[test]
+  #[should_panic(expected = "Claimer and bounty owner required")]
+  fn test_stats_after_claim_created_without_bounty_owner_account() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+    contract.emit(Some(accounts(0)), None, ActionKind::ClaimCreated);
+  }
+
+  #[test]
+  fn test_stats_after_claim_created() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+
+    contract.emit(Some(accounts(0)), Some(accounts(1)), ActionKind::ClaimCreated);
+
+    let claimer_stats = contract.claimers_entries.get(&accounts(0)).unwrap();
+    let bounty_owner_stats = contract.bounty_owners_entries.get(&accounts(1)).unwrap();
+    assert_eq!(contract.claimers_entries.len(), 1);
+    assert_eq!(
+      claimer_stats,
+      ClaimerMetrics {
+        number_of_claims: 1,
+        number_of_successful_claims: 0,
+        number_of_unsuccessful_claims: 0,
+        number_of_overdue_claims: 0,
+        number_of_canceled_claims: 0,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+    assert_eq!(contract.bounty_owners_entries.len(), 1);
+    assert_eq!(
+      bounty_owner_stats,
+      BountyOwnerMetrics {
+        number_of_bounties: 0,
+        number_of_successful_bounties: 0,
+        number_of_canceled_bounties: 0,
+        number_of_claims: 1,
+        number_of_approved_claims: 0,
+        number_of_rejected_claims: 0,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+  }
+
+  #[test]
+  fn test_stats_after_bounty_cancelled() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+
+    contract.emit(None, Some(accounts(1)), ActionKind::BountyCancelled);
+
+    let bounty_owner_stats = contract.bounty_owners_entries.get(&accounts(1)).unwrap();
+    assert_eq!(contract.bounty_owners_entries.len(), 1);
+    assert_eq!(
+      bounty_owner_stats,
+      BountyOwnerMetrics {
+        number_of_bounties: 0,
+        number_of_successful_bounties: 0,
+        number_of_canceled_bounties: 1,
+        number_of_claims: 0,
+        number_of_approved_claims: 0,
+        number_of_rejected_claims: 0,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+    assert_eq!(contract.claimers_entries.len(), 0);
+  }
+
+  #[test]
+  #[should_panic(expected = "Claimer is required and Bounty owner is not required")]
+  fn test_stats_after_claim_cancelled_with_bounty_owner_account() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+    contract.emit(Some(accounts(0)), Some(accounts(1)), ActionKind::ClaimCancelled);
+  }
+
+  #[test]
+  #[should_panic(expected = "Claimer is required and Bounty owner is not required")]
+  fn test_stats_after_claim_cancelled_without_claimer_account() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+    contract.emit(None, Some(accounts(1)), ActionKind::ClaimCancelled);
+  }
+
+  #[test]
+  fn test_stats_after_claim_cancelled() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+
+    contract.emit(Some(accounts(0)), None, ActionKind::ClaimCancelled);
+
+    let claimer_stats = contract.claimers_entries.get(&accounts(0)).unwrap();
+    assert_eq!(contract.claimers_entries.len(), 1);
+    assert_eq!(
+      claimer_stats,
+      ClaimerMetrics {
+        number_of_claims: 0,
+        number_of_successful_claims: 0,
+        number_of_unsuccessful_claims: 0,
+        number_of_overdue_claims: 0,
+        number_of_canceled_claims: 1,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+    assert_eq!(contract.bounty_owners_entries.len(), 0);
+  }
+
+  #[test]
+  fn test_stats_after_claim_expired() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+
+    contract.emit(Some(accounts(0)), None, ActionKind::ClaimExpired);
+
+    let claimer_stats = contract.claimers_entries.get(&accounts(0)).unwrap();
+    assert_eq!(contract.claimers_entries.len(), 1);
+    assert_eq!(
+      claimer_stats,
+      ClaimerMetrics {
+        number_of_claims: 0,
+        number_of_successful_claims: 0,
+        number_of_unsuccessful_claims: 0,
+        number_of_overdue_claims: 1,
+        number_of_canceled_claims: 0,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+    assert_eq!(contract.bounty_owners_entries.len(), 0);
+  }
+
+  #[test]
+  fn test_stats_after_successful_claim() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+
+    contract.emit(
+      Some(accounts(0)),
+      Some(accounts(1)),
+      ActionKind::SuccessfulClaim { with_dispute: false }
+    );
+
+    let claimer_stats = contract.claimers_entries.get(&accounts(0)).unwrap();
+    let bounty_owner_stats = contract.bounty_owners_entries.get(&accounts(1)).unwrap();
+    assert_eq!(contract.claimers_entries.len(), 1);
+    assert_eq!(
+      claimer_stats,
+      ClaimerMetrics {
+        number_of_claims: 0,
+        number_of_successful_claims: 1,
+        number_of_unsuccessful_claims: 0,
+        number_of_overdue_claims: 0,
+        number_of_canceled_claims: 0,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+    assert_eq!(contract.bounty_owners_entries.len(), 1);
+    assert_eq!(
+      bounty_owner_stats,
+      BountyOwnerMetrics {
+        number_of_bounties: 0,
+        number_of_successful_bounties: 1,
+        number_of_canceled_bounties: 0,
+        number_of_claims: 0,
+        number_of_approved_claims: 1,
+        number_of_rejected_claims: 0,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+
+    let (stats_for_claimer, stats_for_bounty_owner) = contract.get_statistics(&accounts(0));
+    assert_eq!(stats_for_claimer.unwrap(), claimer_stats);
+    assert!(stats_for_bounty_owner.is_none());
+    let (stats_for_claimer, stats_for_bounty_owner) = contract.get_statistics(&accounts(1));
+    assert_eq!(stats_for_bounty_owner.unwrap(), bounty_owner_stats);
+    assert!(stats_for_claimer.is_none());
+
+    let stats = contract.get_bounty_owners_entries(None, None);
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].0, accounts(1));
+    assert_eq!(stats[0].1, bounty_owner_stats);
+
+    let stats = contract.get_claimers_entries(None, None);
+    assert_eq!(stats.len(), 1);
+    assert_eq!(stats[0].0, accounts(0));
+    assert_eq!(stats[0].1, claimer_stats);
+
+    assert_eq!(contract.get_num_bounty_owners_entries(), 1);
+    assert_eq!(contract.get_num_claimers_entries(), 1);
+  }
+
+  #[test]
+  fn test_stats_after_successful_claim_with_dispute() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+
+    contract.emit(
+      Some(accounts(0)),
+      Some(accounts(1)),
+      ActionKind::SuccessfulClaim { with_dispute: true }
+    );
+
+    let claimer_stats = contract.claimers_entries.get(&accounts(0)).unwrap();
+    let bounty_owner_stats = contract.bounty_owners_entries.get(&accounts(1)).unwrap();
+    assert_eq!(contract.claimers_entries.len(), 1);
+    assert_eq!(
+      claimer_stats,
+      ClaimerMetrics {
+        number_of_claims: 0,
+        number_of_successful_claims: 1,
+        number_of_unsuccessful_claims: 0,
+        number_of_overdue_claims: 0,
+        number_of_canceled_claims: 0,
+        number_of_open_disputes: 1,
+        number_of_disputes_won: 1,
+      }
+    );
+    assert_eq!(contract.bounty_owners_entries.len(), 1);
+    assert_eq!(
+      bounty_owner_stats,
+      BountyOwnerMetrics {
+        number_of_bounties: 0,
+        number_of_successful_bounties: 1,
+        number_of_canceled_bounties: 0,
+        number_of_claims: 0,
+        number_of_approved_claims: 0,
+        number_of_rejected_claims: 1,
+        number_of_open_disputes: 1,
+        number_of_disputes_won: 0,
+      }
+    );
+  }
+
+  #[test]
+  fn test_stats_after_unsuccessful_claim() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+
+    contract.emit(
+      Some(accounts(0)),
+      Some(accounts(1)),
+      ActionKind::UnsuccessfulClaim { with_dispute: false }
+    );
+
+    let claimer_stats = contract.claimers_entries.get(&accounts(0)).unwrap();
+    let bounty_owner_stats = contract.bounty_owners_entries.get(&accounts(1)).unwrap();
+    assert_eq!(contract.claimers_entries.len(), 1);
+    assert_eq!(
+      claimer_stats,
+      ClaimerMetrics {
+        number_of_claims: 0,
+        number_of_successful_claims: 0,
+        number_of_unsuccessful_claims: 1,
+        number_of_overdue_claims: 0,
+        number_of_canceled_claims: 0,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+    assert_eq!(contract.bounty_owners_entries.len(), 1);
+    assert_eq!(
+      bounty_owner_stats,
+      BountyOwnerMetrics {
+        number_of_bounties: 0,
+        number_of_successful_bounties: 0,
+        number_of_canceled_bounties: 0,
+        number_of_claims: 0,
+        number_of_approved_claims: 0,
+        number_of_rejected_claims: 1,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+  }
+
+  #[test]
+  fn test_stats_after_unsuccessful_claim_with_dispute() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+
+    contract.emit(
+      Some(accounts(0)),
+      Some(accounts(1)),
+      ActionKind::UnsuccessfulClaim { with_dispute: true }
+    );
+
+    let claimer_stats = contract.claimers_entries.get(&accounts(0)).unwrap();
+    let bounty_owner_stats = contract.bounty_owners_entries.get(&accounts(1)).unwrap();
+    assert_eq!(contract.claimers_entries.len(), 1);
+    assert_eq!(
+      claimer_stats,
+      ClaimerMetrics {
+        number_of_claims: 0,
+        number_of_successful_claims: 0,
+        number_of_unsuccessful_claims: 1,
+        number_of_overdue_claims: 0,
+        number_of_canceled_claims: 0,
+        number_of_open_disputes: 1,
+        number_of_disputes_won: 0,
+      }
+    );
+    assert_eq!(contract.bounty_owners_entries.len(), 1);
+    assert_eq!(
+      bounty_owner_stats,
+      BountyOwnerMetrics {
+        number_of_bounties: 0,
+        number_of_successful_bounties: 0,
+        number_of_canceled_bounties: 0,
+        number_of_claims: 0,
+        number_of_approved_claims: 0,
+        number_of_rejected_claims: 1,
+        number_of_open_disputes: 1,
+        number_of_disputes_won: 1,
+      }
+    );
+  }
+}
