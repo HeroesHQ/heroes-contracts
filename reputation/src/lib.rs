@@ -5,6 +5,7 @@ use near_sdk::{env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault};
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct ClaimerMetrics {
   /// Total number of claims created
   pub number_of_claims: u64,
@@ -38,6 +39,7 @@ impl Default for ClaimerMetrics {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct BountyOwnerMetrics {
   /// Total number of bounties created
   pub number_of_bounties: u64,
@@ -211,23 +213,35 @@ impl ReputationContract {
     let without_bounty_owner = matches!(action_kind, ActionKind::ClaimCancelled) ||
       matches!(action_kind, ActionKind::ClaimExpired);
 
-    assert!(
-      without_claimer && bounty_owner.is_some() && claimer.is_none(),
-      "Bounty owner is required and Claimer is not required"
-    );
-    assert!(
-      without_bounty_owner && bounty_owner.is_none() && claimer.is_some(),
-      "Claimer is required and Bounty owner is not required"
-    );
-    assert!(
-      !without_claimer && !without_bounty_owner && bounty_owner.is_some() && claimer.is_some(),
-      "Claimer and bounty owner required"
-    );
+    if without_claimer {
+      assert!(
+        bounty_owner.is_some() && claimer.is_none(),
+        "Bounty owner is required and Claimer is not required"
+      );
+    }
+    if without_bounty_owner {
+      assert!(
+        bounty_owner.is_none() && claimer.is_some(),
+        "Claimer is required and Bounty owner is not required"
+      );
+    }
+    if !without_claimer && !without_bounty_owner {
+      assert!(
+        bounty_owner.is_some() && claimer.is_some(),
+        "Claimer and bounty owner required"
+      );
+    }
 
-    let claimer = claimer.unwrap();
-    let bounty_owner = bounty_owner.unwrap();
-    let mut claimer_metrics = self.claimers_entries.get(&claimer).unwrap_or_default();
-    let mut bounty_owner_metrics = self.bounty_owners_entries.get(&bounty_owner).unwrap_or_default();
+    let mut claimer_metrics = if claimer.is_some() {
+      self.claimers_entries.get(&claimer.clone().unwrap()).unwrap_or_default()
+    } else {
+      ClaimerMetrics::default()
+    };
+    let mut bounty_owner_metrics = if bounty_owner.is_some() {
+      self.bounty_owners_entries.get(&bounty_owner.clone().unwrap()).unwrap_or_default()
+    } else {
+      BountyOwnerMetrics::default()
+    };
 
     match action_kind {
       ActionKind::BountyCreated => {
@@ -270,10 +284,10 @@ impl ReputationContract {
     }
 
     if !without_claimer {
-      self.claimers_entries.insert(&claimer, &claimer_metrics);
+      self.claimers_entries.insert(&claimer.unwrap(), &claimer_metrics);
     }
     if !without_bounty_owner {
-      self.bounty_owners_entries.insert(&bounty_owner, &bounty_owner_metrics);
+      self.bounty_owners_entries.insert(&bounty_owner.unwrap(), &bounty_owner_metrics);
     }
   }
 }
