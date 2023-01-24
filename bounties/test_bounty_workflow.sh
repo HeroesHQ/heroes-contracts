@@ -30,9 +30,9 @@ export COUNCIL='["'$BASE_ACCOUNT'"]'
 near call $DAO_CONTRACT_ID new '{"config": {"name": "genesis2", "purpose": "test", "metadata": ""}, "policy": '$COUNCIL'}' --accountId $DAO_CONTRACT_ID
 
 # Add a bounty under the control of the validators DAO
-near call usdn.testnet ft_transfer_call '{"receiver_id":"'$BOUNTY_CONTRACT_ID'","amount":"1000000000000000000","msg":"{\"description\":\"Test bounty description\",\"bounty_type\":\"MarketingServices\",\"max_deadline\":\"604800000000000\",\"validators_dao\":{\"account_id\":\"'$DAO_CONTRACT_ID'\",\"add_proposal_bond\":\"1000000000000000000000000\"}}"}' --accountId $BASE_ACCOUNT --depositYocto 1 --gas 300000000000000
+near call usdn.testnet ft_transfer_call '{"receiver_id":"'$BOUNTY_CONTRACT_ID'","amount":"1000000000000000000","msg":"{\"metadata\":{\"title\":\"Test bounty title\",\"description\":\"Test bounty description\",\"bounty_type\":\"Design\"},\"deadline\":{\"MaxDeadline\":{\"max_deadline\":\"604800000000000\"}},\"validators_dao\":{\"account_id\":\"'$DAO_CONTRACT_ID'\",\"add_proposal_bond\":\"1000000000000000000000000\"}}"}' --accountId $BASE_ACCOUNT --depositYocto 1 --gas 300000000000000
 # Add a bounty under the control of the project owner
-#near call usdn.testnet ft_transfer_call '{"receiver_id":"'$BOUNTY_CONTRACT_ID'","amount":"1000000000000000000","msg":"{\"description\":\"Test bounty description\",\"bounty_type\":\"MarketingServices\",\"max_deadline\":\"604800000000000\"}"}' --accountId $BASE_ACCOUNT --depositYocto 1 --gas 300000000000000
+#near call usdn.testnet ft_transfer_call '{"receiver_id":"'$BOUNTY_CONTRACT_ID'","amount":"1000000000000000000","msg":"{\"metadata\":{\"title\":\"Test bounty title\",\"description\":\"Test bounty description\",\"bounty_type\":\"Design\"},\"deadline\":{\"MaxDeadline\":{\"max_deadline\":\"604800000000000\"}}}"}' --accountId $BASE_ACCOUNT --depositYocto 1 --gas 300000000000000
 
 # Verify
 near view usdn.testnet ft_balance_of '{"account_id":"'$BOUNTY_CONTRACT_ID'"}'
@@ -68,10 +68,10 @@ near view $BOUNTY_CONTRACT_ID get_bounty_claims_by_id '{"id":0}'
 near view $BOUNTY_CONTRACT_ID get_bounty '{"id":0}'
 
 # Claim is approved by validators DAO
-near call $DAO_CONTRACT_ID act_proposal '{"id": 0, "action": "VoteApprove"}' --accountId $BASE_ACCOUNT --gas 85000000000000
+near call $DAO_CONTRACT_ID act_proposal '{"id": 0, "action": "VoteApprove"}' --accountId $BASE_ACCOUNT --gas 150000000000000
 #near call $DAO_CONTRACT_ID act_proposal '{"id": 0, "action": "VoteReject"}' --accountId $BASE_ACCOUNT --gas 25000000000000
 # Claim is approved by project owner
-#near call $BOUNTY_CONTRACT_ID bounty_action '{"id":0,"action":{"ClaimApproved":{"receiver_id": "'$FREELANCER_ACCOUNT'"}}}' --accountId $BASE_ACCOUNT --depositYocto 1 --gas 60000000000000
+#near call $BOUNTY_CONTRACT_ID bounty_action '{"id":0,"action":{"ClaimApproved":{"receiver_id": "'$FREELANCER_ACCOUNT'"}}}' --accountId $BASE_ACCOUNT --depositYocto 1 --gas 150000000000000
 # Claim was rejected by project owner
 #near call $BOUNTY_CONTRACT_ID bounty_action '{"id":0,"action":{"ClaimRejected":{"receiver_id": "'$FREELANCER_ACCOUNT'"}}}' --accountId $BASE_ACCOUNT --depositYocto 1 --gas 25000000000000
 
