@@ -499,6 +499,19 @@ async fn get_bounty(
   Ok(bounty)
 }
 
+async fn get_bounties_by_ids(
+  bounties: &Contract,
+  bounty_ids: Vec<u64>,
+) -> anyhow::Result<Vec<(u64, Bounty)>> {
+  let result = bounties
+    .call("get_bounties_by_ids")
+    .args_json((bounty_ids,))
+    .view()
+    .await?
+    .json()?;
+  Ok(result)
+}
+
 async fn get_bounty_claims(
   bounties: &Contract,
   freelancer: &Account,
@@ -693,6 +706,10 @@ async fn test_create_bounty(
 
   let bounty = get_bounty(bounties, bounty_id).await?;
   assert_eq!(bounty_indexes[0].1, bounty);
+  let bounty_set = get_bounties_by_ids(bounties, vec![bounty_id]).await?;
+  assert_eq!(bounty_set.len(), 1);
+  assert_eq!(bounty_set[0].0, bounty_id);
+  assert_eq!(bounty_set[0].1, bounty);
 
   assert_eq!(
     bounty,

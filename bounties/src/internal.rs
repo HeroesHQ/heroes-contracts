@@ -15,9 +15,16 @@ impl BountiesContract {
     );
   }
 
-  pub(crate) fn internal_add_bounty(&mut self, bounty: &Bounty) -> BountyIndex {
+  pub(crate) fn assert_bounty_type_is_correct(&self, bounty_type: String) {
+    assert!(
+      self.config.bounty_types.contains(&bounty_type),
+      "Invalid bounty type"
+    );
+  }
+
+  pub(crate) fn internal_add_bounty(&mut self, bounty: Bounty) -> BountyIndex {
     let id = self.last_bounty_id;
-    self.bounties.insert(&id, bounty);
+    self.bounties.insert(&id, &VersionedBounty::Current(bounty.clone()));
     let mut indices = self
       .account_bounties
       .get(&bounty.owner)
@@ -77,10 +84,14 @@ impl BountiesContract {
     id: BountyIndex,
     sender_id: &AccountId
   ) -> (Vec<BountyClaim>, usize) {
-    let claims = self
+    let versioned_claims= self
       .bounty_claimers
       .get(&sender_id)
       .expect("No claimer found");
+    let claims: Vec<BountyClaim> = versioned_claims
+      .into_iter()
+      .map(|c| c.into())
+      .collect();
     let claim_idx = self
       .internal_find_claim(id, &claims)
       .expect("No bounty claim found");
@@ -92,10 +103,14 @@ impl BountiesContract {
     account_id: &AccountId,
     claims: &Vec<BountyClaim>,
   ) {
+    let versioned_claims = claims
+      .into_iter()
+      .map(|c| c.clone().into())
+      .collect();
     if claims.is_empty() {
       self.bounty_claimers.remove(account_id);
     } else {
-      self.bounty_claimers.insert(account_id, claims);
+      self.bounty_claimers.insert(account_id, &versioned_claims);
     }
   }
 
@@ -127,7 +142,7 @@ impl BountiesContract {
     claims: &mut Vec<BountyClaim>
   ) {
     bounty.status = BountyStatus::New;
-    self.bounties.insert(&id, &bounty);
+    self.bounties.insert(&id, &VersionedBounty::Current(bounty.clone()));
     let with_dispute = matches!(claims[claim_idx].status, ClaimStatus::Disputed);
     claims[claim_idx].status = ClaimStatus::NotCompleted;
     self.internal_save_claims(receiver_id, &claims);
@@ -148,14 +163,14 @@ impl BountiesContract {
     &mut self,
     id: BountyIndex,
     receiver_id: &AccountId,
-    bounty: &mut Bounty,
+    mut bounty: Bounty,
     claim_idx: usize,
     claims: &mut Vec<BountyClaim>
   ) {
     claims[claim_idx].status = ClaimStatus::Expired;
     self.internal_save_claims(receiver_id, &claims);
     bounty.status = BountyStatus::New;
-    self.bounties.insert(&id, &bounty);
+    self.bounties.insert(&id, &VersionedBounty::Current(bounty));
     self.internal_update_statistic(
       Some(receiver_id.clone()),
       None,
@@ -247,11 +262,11 @@ impl BountiesContract {
     claims: &mut Vec<BountyClaim>,
     description: String,
   ) -> PromiseOrValue<()> {
-    let dao = bounty.validators_dao.clone().unwrap();
-    Promise::new(dao.account_id)
-      .function_call(
-        "add_proposal".to_string(),
-        json!({
+    if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
+      Promise::new(validators_dao.account_id)
+        .function_call(
+          "add_proposal".to_string(),
+          json!({
               "proposal": {
                 "description": description,
                 "kind": {
@@ -272,24 +287,27 @@ impl BountiesContract {
                           .into_bytes()
                           .to_vec()),
                         "deposit": "1",
-                        "gas": dao.gas_for_claim_approval,
+                        "gas": validators_dao.gas_for_claim_approval,
                       }
                     ],
                   }
                 }
               }
             })
-          .to_string()
-          .into_bytes(),
-        dao.add_proposal_bond.0,
-        Gas(dao.gas_for_add_proposal.0),
-      )
-      .then(
-        Self::ext(env::current_account_id())
-          .with_static_gas(GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK)
-          .on_added_proposal_callback(sender_id, claims.as_mut(), claim_idx)
-      )
-      .into()
+              .to_string()
+              .into_bytes(),
+          validators_dao.add_proposal_bond.0,
+          Gas(validators_dao.gas_for_add_proposal.0),
+        )
+        .then(
+          Self::ext(env::current_account_id())
+            .with_static_gas(GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK)
+            .on_added_proposal_callback(sender_id, claims.as_mut(), claim_idx)
+        )
+        .into()
+    } else {
+      unreachable!();
+    }
   }
 
   pub(crate) fn internal_get_proposal(
@@ -300,21 +318,24 @@ impl BountiesContract {
     claim_idx: usize,
     claims: &mut Vec<BountyClaim>,
   ) -> PromiseOrValue<()> {
-    let dao = bounty.validators_dao.clone().unwrap();
-    let proposal_id = claims[claim_idx].proposal_id.unwrap();
-    Promise::new(dao.account_id)
-      .function_call(
-        "get_proposal".to_string(),
-        json!({"id": proposal_id.0}).to_string().into_bytes(),
-        NO_DEPOSIT,
-        GAS_FOR_CHECK_PROPOSAL,
-      )
-      .then(
-        Self::ext(env::current_account_id())
-          .with_static_gas(GAS_FOR_AFTER_CHECK_PROPOSAL)
-          .after_get_proposal(id, receiver_id, bounty, claims, claim_idx)
-      )
-      .into()
+    if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
+      let proposal_id = claims[claim_idx].proposal_id.unwrap();
+      Promise::new(validators_dao.account_id)
+        .function_call(
+          "get_proposal".to_string(),
+          json!({"id": proposal_id.0}).to_string().into_bytes(),
+          NO_DEPOSIT,
+          GAS_FOR_CHECK_PROPOSAL,
+        )
+        .then(
+          Self::ext(env::current_account_id())
+            .with_static_gas(GAS_FOR_AFTER_CHECK_PROPOSAL)
+            .after_get_proposal(id, receiver_id, bounty, claims, claim_idx)
+        )
+        .into()
+    } else {
+      unreachable!();
+    }
   }
 
   pub(crate) fn internal_create_dispute(
@@ -326,11 +347,7 @@ impl BountiesContract {
     claims: &mut Vec<BountyClaim>,
     description: String,
   ) -> PromiseOrValue<()> {
-    let project_owner_delegate = if bounty.validators_dao.is_some() {
-      bounty.validators_dao.unwrap().account_id
-    } else {
-      bounty.owner.clone()
-    };
+    let project_owner_delegate = bounty.get_bounty_owner_delegate();
     let dispute_create = DisputeCreate {
       bounty_id: id.clone(),
       description,

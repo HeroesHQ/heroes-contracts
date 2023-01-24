@@ -39,7 +39,7 @@ impl BountiesContract {
       claims[claim_idx].status = ClaimStatus::Approved;
       self.internal_save_claims(&receiver_id, &claims);
       bounty.status = BountyStatus::Completed;
-      self.bounties.insert(&id, &bounty);
+      self.bounties.insert(&id, &VersionedBounty::Current(bounty.clone()));
       self.internal_update_statistic(
         Some(receiver_id.clone()),
         Some(bounty.owner.clone()),

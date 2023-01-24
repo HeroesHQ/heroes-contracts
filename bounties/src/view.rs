@@ -41,13 +41,13 @@ impl BountiesContract {
       .get(&account_id)
       .unwrap_or_default()
       .into_iter()
-      .map(|id| (id, self.bounties.get(&id).unwrap()))
+      .map(|id| (id, self.bounties.get(&id).unwrap().into()))
       .collect()
   }
 
   pub fn get_bounty(&self, id: BountyIndex) -> Bounty {
     let bounty = self.bounties.get(&id).expect("Bounty not found");
-    bounty
+    bounty.into()
   }
 
   pub fn get_last_bounty_id(&self) -> BountyIndex {
@@ -57,7 +57,7 @@ impl BountiesContract {
   pub fn get_bounties_by_ids(&self, ids: Vec<BountyIndex>) -> Vec<(BountyIndex, Bounty)> {
     ids
       .into_iter()
-      .filter_map(|id| self.bounties.get(&id).map(|bounty| (id, bounty)))
+      .filter_map(|id| self.bounties.get(&id).map(|bounty| (id, bounty.into())))
       .collect()
   }
 
@@ -69,13 +69,18 @@ impl BountiesContract {
     let from_index = from_index.unwrap_or(0);
     let limit = limit.unwrap_or(self.last_bounty_id);
     (from_index..std::cmp::min(from_index + limit, self.last_bounty_id))
-      .filter_map(|id| self.bounties.get(&id).map(|bounty| (id, bounty)))
+      .filter_map(|id| self.bounties.get(&id).map(|bounty| (id, bounty.into())))
       .collect()
   }
 
   /// Get bounty claims for given user.
   pub fn get_bounty_claims(&self, account_id: AccountId) -> Vec<BountyClaim> {
-    self.bounty_claimers.get(&account_id).unwrap_or_default()
+    self.bounty_claimers
+      .get(&account_id)
+      .unwrap_or_default()
+      .into_iter()
+      .map(|c| c.into())
+      .collect()
   }
 
   /// Get claims for bounty id.

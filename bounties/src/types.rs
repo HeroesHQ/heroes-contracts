@@ -23,6 +23,7 @@ pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 *
 pub const DEFAULT_PERIOD_FOR_OPENING_DISPUTE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 10);
 
 pub const NO_DEPOSIT: Balance = 0;
+pub const INITIAL_BOUNTY_TYPES: [&str; 4] = ["Marketing", "Development", "Design", "Other"];
 
 #[ext_contract(ext_ft_contract)]
 trait ExtFtContract {
@@ -82,11 +83,49 @@ pub enum BountyStatus {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub enum BountyType {
-  MarketingServices,
-  SoftwareDevelopment,
-  Other,
-  // etc.
+pub enum Deadline {
+  DueDate {due_date: U64},
+  MaxDeadline {max_deadline: U64},
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum Reviewers {
+  ValidatorsDao {validators_dao: ValidatorsDao},
+  MoreReviewers {more_reviewers: Vec<AccountId>},
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum Experience {
+  Beginner,
+  Intermediate,
+  Advanced,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum KnowledgeLevel {
+  Beginner,
+  Advanced,
+  Competent,
+  Proficient,
+  Expert
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyMetadata {
+  pub title: String,
+  pub description: String,
+  pub bounty_type: String,
+  pub attachments: Option<Vec<String>>,
+  pub experience: Option<Experience>,
+  pub knowledge_level: Option<KnowledgeLevel>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -120,26 +159,29 @@ impl ValidatorsDaoParams {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct BountyCreate {
-  pub description: String,
-  pub bounty_type: BountyType,
-  pub max_deadline: U64,
+  pub metadata: BountyMetadata,
+  pub deadline: Deadline,
   pub validators_dao: Option<ValidatorsDaoParams>,
+  pub more_reviewers: Option<Vec<AccountId>>,
 }
 
 impl BountyCreate {
   pub fn to_bounty(&self, payer_id: &AccountId, token_id: &AccountId, amount: U128) -> Bounty {
-    let mut validators_dao: Option<ValidatorsDao> = None;
-    if self.validators_dao.is_some() {
-      validators_dao = Some(self.validators_dao.clone().unwrap().to_validators_dao());
-    }
+    let reviewers = if let Some(validators_dao) = self.validators_dao.clone() {
+      let validators_dao = validators_dao.to_validators_dao();
+      Some(Reviewers::ValidatorsDao { validators_dao })
+    } else if let Some(more_reviewers) = self.more_reviewers.clone() {
+      Some(Reviewers::MoreReviewers { more_reviewers })
+    } else {
+      None
+    };
 
     Bounty {
-      description: self.description.clone(),
       token: token_id.clone(),
       amount: amount.clone(),
-      bounty_type: self.bounty_type.clone(),
-      max_deadline: self.max_deadline.clone(),
-      validators_dao,
+      metadata: self.metadata.clone(),
+      deadline: self.deadline.clone(),
+      reviewers,
       owner: payer_id.clone(),
       status: BountyStatus::New,
     }
@@ -160,12 +202,11 @@ pub struct ValidatorsDao {
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Bounty {
-  pub description: String,
   pub token: AccountId,
   pub amount: U128,
-  pub bounty_type: BountyType,
-  pub max_deadline: U64,
-  pub validators_dao: Option<ValidatorsDao>,
+  pub metadata: BountyMetadata,
+  pub deadline: Deadline,
+  pub reviewers: Option<Reviewers>,
   pub owner: AccountId,
   pub status: BountyStatus,
 }
@@ -173,18 +214,148 @@ pub struct Bounty {
 impl Bounty {
   pub fn assert_new_valid(&self) {
     assert!(
-      !self.description.is_empty(),
+      !self.metadata.title.is_empty(),
+      "The title cannot be empty"
+    );
+    assert!(
+      !self.metadata.description.is_empty(),
       "The description cannot be empty"
     );
+    assert!(
+      !self.metadata.bounty_type.is_empty(),
+      "The bounty type cannot be empty"
+    );
+    if self.metadata.attachments.is_some() {
+      assert!(
+        self.metadata.attachments.clone().unwrap().len() > 0,
+        "The expected number of attachments is greater than zero"
+      );
+    }
     let bounty_amount = self.amount.0;
     assert!(
       bounty_amount > 0,
       "Expected bounty amount to be positive",
     );
-    assert!(
-      self.max_deadline.0 > 0,
-      "The deadline is wrong"
-    );
+    match self.deadline {
+      Deadline::DueDate {due_date} =>
+        assert!(
+          due_date.0 > env::block_timestamp(),
+          "Incorrect due date",
+        ),
+      Deadline::MaxDeadline {max_deadline} =>
+        assert!(
+          max_deadline.0 > 0,
+          "The max deadline is incorrect"
+        ),
+    }
+    if self.reviewers.clone().is_some() {
+      match self.reviewers.clone().unwrap() {
+        Reviewers::MoreReviewers {more_reviewers} =>
+          assert!(
+            more_reviewers.len() > 0,
+            "The expected number of reviewers is greater than zero",
+          ),
+        _ => (),
+      }
+    }
+  }
+
+  pub fn check_access_rights(&self) {
+    let sender_id = env::predecessor_account_id();
+    if self.reviewers.is_some() {
+      match self.reviewers.clone().unwrap() {
+        Reviewers::ValidatorsDao {validators_dao} =>
+          assert_eq!(
+            validators_dao.account_id,
+            sender_id,
+            "This method can only call DAO validators"
+          ),
+        Reviewers::MoreReviewers {more_reviewers} => {
+          let mut all_reviewers = more_reviewers;
+          all_reviewers.push(self.owner.clone());
+          assert!(
+            all_reviewers.contains(&sender_id),
+            "This method can only be called by one of the reviewers"
+          );
+        }
+      }
+    } else {
+      assert_eq!(
+        self.owner,
+        sender_id,
+        "Only the owner of the bounty can call this method"
+      );
+    }
+  }
+
+  pub fn assert_validators_dao_account_id(&self, account_id: AccountId) {
+    if self.reviewers.is_some() {
+      match self.reviewers.clone().unwrap() {
+        Reviewers::ValidatorsDao {validators_dao} => {
+          assert_eq!(
+            validators_dao.account_id,
+            account_id,
+            "DAO account ID does not match"
+          );
+          return;
+        }
+        _ => (),
+      }
+    }
+    env::panic_str("Validators DAO are not used");
+  }
+
+  pub fn is_claim_deadline_correct(&self, deadline: U64) -> bool {
+    match self.deadline {
+      Deadline::DueDate {due_date} => env::block_timestamp() + deadline.0 <= due_date.0,
+      Deadline::MaxDeadline {max_deadline} => deadline.0 <= max_deadline.0,
+    }
+  }
+
+  pub fn is_validators_dao_used(&self) -> bool {
+    self.reviewers.is_some() && match self.reviewers.clone().unwrap() {
+      Reviewers::ValidatorsDao {validators_dao: _validators_dao} => true,
+      _ => false
+    }
+  }
+
+  pub fn get_bounty_owner_delegate(&self) -> AccountId {
+    if self.reviewers.is_some() {
+      match self.reviewers.clone().unwrap() {
+        Reviewers::ValidatorsDao {validators_dao} => validators_dao.account_id,
+        _ => self.clone().owner,
+      }
+    } else {
+      self.clone().owner
+    }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub enum VersionedBounty {
+  Current(Bounty),
+}
+
+impl VersionedBounty {
+  pub fn to_bounty(self) -> Bounty {
+    match self {
+      VersionedBounty::Current(bounty) => bounty,
+    }
+  }
+}
+
+impl From<VersionedBounty> for Bounty {
+  fn from(value: VersionedBounty) -> Self {
+    match value {
+      VersionedBounty::Current(bounty) => bounty,
+    }
+  }
+}
+
+impl From<Bounty> for VersionedBounty {
+  fn from(value: Bounty) -> Self {
+    VersionedBounty::Current(value)
   }
 }
 
@@ -230,6 +401,34 @@ impl BountyClaim {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+pub enum VersionedBountyClaim {
+  Current(BountyClaim),
+}
+
+impl VersionedBountyClaim {
+  pub fn to_bounty_claim(self) -> BountyClaim {
+    match self {
+      VersionedBountyClaim::Current(bounty_claim) => bounty_claim,
+    }
+  }
+}
+
+impl From<VersionedBountyClaim> for BountyClaim {
+  fn from(value: VersionedBountyClaim) -> Self {
+    match value {
+      VersionedBountyClaim::Current(claim) => claim,
+    }
+  }
+}
+
+impl From<BountyClaim> for VersionedBountyClaim {
+  fn from(value: BountyClaim) -> Self {
+    VersionedBountyClaim::Current(value)
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
 pub enum BountyAction {
   ClaimApproved { receiver_id: AccountId },
   ClaimRejected { receiver_id: AccountId },
@@ -239,10 +438,39 @@ pub enum BountyAction {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct ConfigCreate {
+  pub bounty_claim_bond: U128,
+  pub bounty_forgiveness_period: U64,
+  pub period_for_opening_dispute: U64,
+}
+
+impl ConfigCreate {
+  pub fn to_config(&self, config: Config) -> Config {
+    Config {
+      bounty_claim_bond: self.bounty_claim_bond,
+      bounty_forgiveness_period: self.bounty_forgiveness_period,
+      period_for_opening_dispute: self.period_for_opening_dispute,
+      bounty_types: config.bounty_types,
+    }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Config {
   pub bounty_claim_bond: U128,
   pub bounty_forgiveness_period: U64,
   pub period_for_opening_dispute: U64,
+  pub bounty_types: Vec<String>,
+}
+
+impl Config {
+  fn default_bounty_types() -> Vec<String> {
+    let mut bounty_types_set = vec![];
+    bounty_types_set.extend(INITIAL_BOUNTY_TYPES.into_iter().map(|t| t.into()));
+    bounty_types_set
+  }
 }
 
 impl Default for Config {
@@ -251,6 +479,7 @@ impl Default for Config {
       bounty_claim_bond: DEFAULT_BOUNTY_CLAIM_BOND,
       bounty_forgiveness_period: DEFAULT_BOUNTY_FORGIVENESS_PERIOD,
       period_for_opening_dispute: DEFAULT_PERIOD_FOR_OPENING_DISPUTE,
+      bounty_types: Config::default_bounty_types(),
     }
   }
 }
