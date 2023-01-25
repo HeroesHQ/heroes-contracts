@@ -145,20 +145,38 @@ impl BountiesContract {
     self.config = config_create.to_config(self.config.clone());
   }
 
-  pub fn update_bounty_types(
+  #[payable]
+  pub fn update_configuration_dictionary_entries(
     &mut self,
-    bounty_type: Option<String>,
-    bounty_types: Option<Vec<String>>
+    dict: ReferenceType,
+    entry: Option<String>,
+    entries: Option<Vec<String>>
   ) {
     assert_one_yocto();
     self.assert_admin_whitelist(&env::predecessor_account_id());
-    let bounty_types = if let Some(bounty_types) = bounty_types {
-      bounty_types
-    } else {
-      vec![bounty_type.expect("Expected either bounty_type or bounty_types")]
-    };
-    for bounty_type in bounty_types {
-      self.config.bounty_types.push(bounty_type);
+    let (reference, entries) = self.get_configuration_dictionary(dict, entry, entries);
+
+    for entry in entries {
+      reference.push(entry);
+    }
+  }
+
+  #[payable]
+  pub fn remove_configuration_dictionary_entries(
+    &mut self,
+    dict: ReferenceType,
+    entry: Option<String>,
+    entries: Option<Vec<String>>
+  ) {
+    assert_one_yocto();
+    self.assert_admin_whitelist(&env::predecessor_account_id());
+    let (reference, entries) = self.get_configuration_dictionary(dict, entry, entries);
+
+    for entry in entries {
+      let index = reference.iter().position(|e| e.clone() == entry);
+      if index.is_some() {
+        reference.remove(index.unwrap());
+      }
     }
   }
 
@@ -478,10 +496,12 @@ mod tests {
       metadata: BountyMetadata {
         title: "test".to_string(),
         description: "test".to_string(),
-        bounty_type: "Other".to_string(),
+        category: "Other".to_string(),
         attachments: None,
         experience: None,
-        knowledge_level: None,
+        tags: None,
+        acceptance_criteria: None,
+        contact_details: None,
       },
       deadline: Deadline::MaxDeadline {max_deadline: MAX_DEADLINE},
       reviewers: if validators_dao.is_some() {

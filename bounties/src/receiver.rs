@@ -24,7 +24,10 @@ impl FungibleTokenReceiver for BountiesContract {
       FtMessage::BountyCreate(bounty_create) => {
         let bounty = bounty_create.to_bounty(&sender_id, token_id, amount);
         bounty.assert_new_valid();
-        self.assert_bounty_type_is_correct(bounty.clone().metadata.bounty_type);
+        self.assert_bounty_category_is_correct(bounty.clone().metadata.category);
+        if bounty.clone().metadata.tags.is_some() {
+          self.assert_bounty_tags_are_correct(bounty.clone().metadata.tags.unwrap());
+        }
         let index = self.internal_add_bounty(bounty);
         log!(
           "Created new bounty for {} with index {}",

@@ -15,11 +15,20 @@ impl BountiesContract {
     );
   }
 
-  pub(crate) fn assert_bounty_type_is_correct(&self, bounty_type: String) {
+  pub(crate) fn assert_bounty_category_is_correct(&self, category: String) {
     assert!(
-      self.config.bounty_types.contains(&bounty_type),
+      self.config.categories.contains(&category),
       "Invalid bounty type"
     );
+  }
+
+  pub(crate) fn assert_bounty_tags_are_correct(&self, tags: Vec<String>) {
+    tags.into_iter().for_each(|t| {
+      assert!(
+        self.config.tags.contains(&t),
+        "Invalid bounty tag"
+      );
+    });
   }
 
   pub(crate) fn internal_add_bounty(&mut self, bounty: Bounty) -> BountyIndex {
@@ -438,5 +447,26 @@ impl BountiesContract {
     } else {
       PromiseOrValue::Value(())
     }
+  }
+
+  pub(crate) fn get_configuration_dictionary(
+    &mut self,
+    dict: ReferenceType,
+    entry: Option<String>,
+    entries: Option<Vec<String>>
+  ) -> (&mut Vec<String>, Vec<String>) {
+    let (name_entry, name_entries, reference) = match dict {
+      ReferenceType::Categories => { ("category", "categories", self.config.categories.as_mut()) },
+      _ => { ("tag", "tags", self.config.tags.as_mut()) },
+    };
+
+    let entries = if let Some(entries) = entries {
+      entries
+    } else {
+      assert!(entry.is_some(), "Expected either {} or {}", name_entry, name_entries);
+      vec![entry.unwrap()]
+    };
+
+    (reference, entries)
   }
 }

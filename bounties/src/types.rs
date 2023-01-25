@@ -23,7 +23,10 @@ pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 *
 pub const DEFAULT_PERIOD_FOR_OPENING_DISPUTE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 10);
 
 pub const NO_DEPOSIT: Balance = 0;
-pub const INITIAL_BOUNTY_TYPES: [&str; 4] = ["Marketing", "Development", "Design", "Other"];
+pub const INITIAL_CATEGORIES: [&str; 4] = ["Marketing", "Development", "Design", "Other"];
+pub const INITIAL_TAGS: [&str; 18] = ["API", "Blockchain", "Community", "CSS", "DAO", "dApp",
+  "DeFi", "Design", "Documentation", "HTML", "Javascript", "NFT", "React", "Rust", "Smart contract",
+  "Typescript", "UI/UX", "web3"];
 
 #[ext_contract(ext_ft_contract)]
 trait ExtFtContract {
@@ -86,6 +89,7 @@ pub enum BountyStatus {
 pub enum Deadline {
   DueDate {due_date: U64},
   MaxDeadline {max_deadline: U64},
+  WithoutDeadline,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -108,12 +112,19 @@ pub enum Experience {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub enum KnowledgeLevel {
-  Beginner,
-  Advanced,
-  Competent,
-  Proficient,
-  Expert
+pub enum ContactType {
+  Discord,
+  Telegram,
+  Twitter,
+  Email,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct ContactDetails {
+  pub contact: String,
+  pub contact_type: ContactType,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -122,10 +133,12 @@ pub enum KnowledgeLevel {
 pub struct BountyMetadata {
   pub title: String,
   pub description: String,
-  pub bounty_type: String,
+  pub category: String,
   pub attachments: Option<Vec<String>>,
   pub experience: Option<Experience>,
-  pub knowledge_level: Option<KnowledgeLevel>,
+  pub tags: Option<Vec<String>>,
+  pub acceptance_criteria: Option<String>,
+  pub contact_details: Option<ContactDetails>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -222,7 +235,7 @@ impl Bounty {
       "The description cannot be empty"
     );
     assert!(
-      !self.metadata.bounty_type.is_empty(),
+      !self.metadata.category.is_empty(),
       "The bounty type cannot be empty"
     );
     if self.metadata.attachments.is_some() {
@@ -247,6 +260,7 @@ impl Bounty {
           max_deadline.0 > 0,
           "The max deadline is incorrect"
         ),
+      Deadline::WithoutDeadline => ()
     }
     if self.reviewers.clone().is_some() {
       match self.reviewers.clone().unwrap() {
@@ -309,6 +323,7 @@ impl Bounty {
     match self.deadline {
       Deadline::DueDate {due_date} => env::block_timestamp() + deadline.0 <= due_date.0,
       Deadline::MaxDeadline {max_deadline} => deadline.0 <= max_deadline.0,
+      Deadline::WithoutDeadline => true,
     }
   }
 
@@ -435,6 +450,13 @@ pub enum BountyAction {
   Finalize,
 }
 
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub enum ReferenceType {
+  Categories,
+  Tags,
+}
+
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
@@ -450,7 +472,8 @@ impl ConfigCreate {
       bounty_claim_bond: self.bounty_claim_bond,
       bounty_forgiveness_period: self.bounty_forgiveness_period,
       period_for_opening_dispute: self.period_for_opening_dispute,
-      bounty_types: config.bounty_types,
+      categories: config.categories,
+      tags: config.tags,
     }
   }
 }
@@ -462,14 +485,21 @@ pub struct Config {
   pub bounty_claim_bond: U128,
   pub bounty_forgiveness_period: U64,
   pub period_for_opening_dispute: U64,
-  pub bounty_types: Vec<String>,
+  pub categories: Vec<String>,
+  pub tags: Vec<String>,
 }
 
 impl Config {
-  fn default_bounty_types() -> Vec<String> {
-    let mut bounty_types_set = vec![];
-    bounty_types_set.extend(INITIAL_BOUNTY_TYPES.into_iter().map(|t| t.into()));
-    bounty_types_set
+  fn default_categories() -> Vec<String> {
+    let mut categories_set = vec![];
+    categories_set.extend(INITIAL_CATEGORIES.into_iter().map(|t| t.into()));
+    categories_set
+  }
+
+  fn default_tags() -> Vec<String> {
+    let mut tags_set = vec![];
+    tags_set.extend(INITIAL_TAGS.into_iter().map(|t| t.into()));
+    tags_set
   }
 }
 
@@ -479,7 +509,8 @@ impl Default for Config {
       bounty_claim_bond: DEFAULT_BOUNTY_CLAIM_BOND,
       bounty_forgiveness_period: DEFAULT_BOUNTY_FORGIVENESS_PERIOD,
       period_for_opening_dispute: DEFAULT_PERIOD_FOR_OPENING_DISPUTE,
-      bounty_types: Config::default_bounty_types(),
+      categories: Config::default_categories(),
+      tags: Config::default_tags(),
     }
   }
 }
