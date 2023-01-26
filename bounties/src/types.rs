@@ -140,6 +140,15 @@ pub enum TimeCommitment {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum Approval {
+  ApprovalRequired,
+  AutoApprove,
+  WithoutApproval,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct BountyMetadata {
   pub title: String,
   pub description: String,
@@ -185,6 +194,7 @@ impl ValidatorsDaoParams {
 pub struct BountyCreate {
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
+  pub approval: Approval,
   pub validators_dao: Option<ValidatorsDaoParams>,
   pub more_reviewers: Option<Vec<AccountId>>,
 }
@@ -205,6 +215,7 @@ impl BountyCreate {
       amount: amount.clone(),
       metadata: self.metadata.clone(),
       deadline: self.deadline.clone(),
+      approval: self.approval.clone(),
       reviewers,
       owner: payer_id.clone(),
       status: BountyStatus::New,
@@ -230,6 +241,7 @@ pub struct Bounty {
   pub amount: U128,
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
+  pub approval: Approval,
   pub reviewers: Option<Reviewers>,
   pub owner: AccountId,
   pub status: BountyStatus,

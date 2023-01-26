@@ -465,9 +465,7 @@ mod tests {
   use near_sdk::test_utils::{accounts, VMContextBuilder};
   use near_sdk::json_types::{U128, U64};
   use near_sdk::{testing_env, AccountId, Balance};
-  use crate::{BountiesContract, Bounty, BountyAction, BountyClaim, BountyIndex, BountyMetadata,
-              BountyStatus, ClaimStatus, Config, ConfigCreate, Deadline, Reviewers, ValidatorsDao,
-              ValidatorsDaoParams};
+  use crate::{Approval, BountiesContract, Bounty, BountyAction, BountyClaim, BountyIndex, BountyMetadata, BountyStatus, ClaimStatus, Config, ConfigCreate, Deadline, Reviewers, ValidatorsDao, ValidatorsDaoParams};
 
   pub const TOKEN_DECIMALS: u8 = 18;
   pub const MAX_DEADLINE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
@@ -505,6 +503,7 @@ mod tests {
         time_commitment: None,
       },
       deadline: Deadline::MaxDeadline {max_deadline: MAX_DEADLINE},
+      approval: Approval::ApprovalRequired,
       reviewers: if validators_dao.is_some() {
         Some(Reviewers::ValidatorsDao {validators_dao: validators_dao.unwrap()})
       } else {
