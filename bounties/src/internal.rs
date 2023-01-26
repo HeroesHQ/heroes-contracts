@@ -16,18 +16,12 @@ impl BountiesContract {
   }
 
   pub(crate) fn assert_bounty_category_is_correct(&self, category: String) {
-    assert!(
-      self.config.categories.contains(&category),
-      "Invalid bounty type"
-    );
+    assert!(self.config.categories.contains(&category), "Invalid bounty type {}", category);
   }
 
   pub(crate) fn assert_bounty_tags_are_correct(&self, tags: Vec<String>) {
     tags.into_iter().for_each(|t| {
-      assert!(
-        self.config.tags.contains(&t),
-        "Invalid bounty tag"
-      );
+      assert!(self.config.tags.contains(&t), "Invalid bounty tag {}", t);
     });
   }
 
