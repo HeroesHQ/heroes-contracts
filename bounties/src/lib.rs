@@ -40,11 +40,11 @@ pub struct BountiesContract {
   pub locked_amount: Balance,
 
   /// account ids that can perform all actions:
-  /// - manage admin_whitelist
+  /// - manage admins_whitelist
   /// - add new ft-token types
   /// - change contract config
   /// - etc.
-  pub admin_whitelist: UnorderedSet<AccountId>,
+  pub admins_whitelist: UnorderedSet<AccountId>,
 
   /// Bounty contract configuration.
   pub config: Config,
@@ -54,6 +54,10 @@ pub struct BountiesContract {
 
   /// Dispute contract (optional)
   pub dispute_contract: Option<AccountId>,
+
+  /// Whitelist accounts for which claims do not require approval.
+  /// Map of whitelists for each bounty owner account.
+  pub claimers_whitelist: LookupMap<AccountId, Vec<AccountId>>,
 }
 
 #[near_bindgen]
@@ -61,19 +65,19 @@ impl BountiesContract {
   #[init]
   pub fn new(
     token_account_ids: Vec<AccountId>,
-    admin_whitelist: Vec<AccountId>,
+    admins_whitelist: Vec<AccountId>,
     config: Option<Config>,
     reputation_contract: Option<AccountId>,
     dispute_contract: Option<AccountId>,
   ) -> Self {
     assert!(
-      admin_whitelist.len() > 0,
+      admins_whitelist.len() > 0,
       "Admin whitelist must contain at least one account"
     );
     let mut token_account_ids_set = UnorderedSet::new(StorageKey::TokenAccountIds);
     token_account_ids_set.extend(token_account_ids.into_iter().map(|a| a.into()));
-    let mut admin_whitelist_set = UnorderedSet::new(StorageKey::AdminWhitelist);
-    admin_whitelist_set.extend(admin_whitelist.into_iter().map(|a| a.into()));
+    let mut admins_whitelist_set = UnorderedSet::new(StorageKey::AdminWhitelist);
+    admins_whitelist_set.extend(admins_whitelist.into_iter().map(|a| a.into()));
 
     Self {
       token_account_ids: token_account_ids_set,
@@ -83,57 +87,92 @@ impl BountiesContract {
       bounty_claimers: LookupMap::new(StorageKey::BountyClaimers),
       bounty_claimer_accounts: LookupMap::new(StorageKey::BountyClaimerAccounts),
       locked_amount: 0,
-      admin_whitelist: admin_whitelist_set,
+      admins_whitelist: admins_whitelist_set,
       config: config.unwrap_or_default(),
       reputation_contract,
       dispute_contract,
+      claimers_whitelist: LookupMap::new(StorageKey::ClaimersWhitelist),
     }
   }
 
   #[payable]
-  pub fn add_to_admin_whitelist(
+  pub fn add_to_admins_whitelist(
     &mut self,
     account_id: Option<AccountId>,
     account_ids: Option<Vec<AccountId>>,
   ) {
     assert_one_yocto();
-    self.assert_admin_whitelist(&env::predecessor_account_id());
+    self.assert_admins_whitelist(&env::predecessor_account_id());
     let account_ids = if let Some(account_ids) = account_ids {
       account_ids
     } else {
       vec![account_id.expect("Expected either account_id or account_ids")]
     };
     for account_id in &account_ids {
-      self.admin_whitelist.insert(account_id);
+      self.admins_whitelist.insert(account_id);
     }
   }
 
   #[payable]
-  pub fn remove_from_admin_whitelist(
+  pub fn remove_from_admins_whitelist(
     &mut self,
     account_id: Option<AccountId>,
     account_ids: Option<Vec<AccountId>>,
   ) {
     assert_one_yocto();
-    self.assert_admin_whitelist(&env::predecessor_account_id());
+    self.assert_admins_whitelist(&env::predecessor_account_id());
     let account_ids = if let Some(account_ids) = account_ids {
       account_ids
     } else {
       vec![account_id.expect("Expected either account_id or account_ids")]
     };
     for account_id in &account_ids {
-      self.admin_whitelist.remove(&account_id);
+      self.admins_whitelist.remove(&account_id);
     }
     assert!(
-      !self.admin_whitelist.is_empty(),
+      !self.admins_whitelist.is_empty(),
       "Cannot remove all accounts from admin whitelist",
     );
   }
 
   #[payable]
+  pub fn add_to_claimers_whitelist(
+    &mut self,
+    claimer: AccountId,
+  ) {
+    assert_one_yocto();
+    let owner = env::predecessor_account_id();
+    self.account_bounties.get(&owner).expect("No bounties found");
+    let mut whitelist = self.claimers_whitelist.get(&owner).unwrap_or_default();
+    if !whitelist.contains(&claimer) {
+      whitelist.push(claimer);
+      self.claimers_whitelist.insert(&owner, &whitelist);
+    }
+  }
+
+  #[payable]
+  pub fn remove_from_claimers_whitelist(
+    &mut self,
+    claimer: AccountId,
+  ) {
+    assert_one_yocto();
+    let owner = env::predecessor_account_id();
+    let mut whitelist = self.claimers_whitelist.get(&owner).expect("Not a bounty owner");
+    let index = whitelist.iter().position(|c| c.clone() == claimer);
+    if index.is_some() {
+      whitelist.remove(index.unwrap());
+      if whitelist.is_empty() {
+        self.claimers_whitelist.remove(&owner);
+      } else {
+        self.claimers_whitelist.insert(&owner, &whitelist);
+      }
+    }
+  }
+
+  #[payable]
   pub fn add_token_id(&mut self, token_id: AccountId) {
     assert_one_yocto();
-    self.assert_admin_whitelist(&env::predecessor_account_id());
+    self.assert_admins_whitelist(&env::predecessor_account_id());
     // TODO: Check if the account contains a ft contract
     self.token_account_ids.insert(&token_id);
   }
@@ -141,7 +180,7 @@ impl BountiesContract {
   #[payable]
   pub fn change_config(&mut self, config_create: ConfigCreate) {
     assert_one_yocto();
-    self.assert_admin_whitelist(&env::predecessor_account_id());
+    self.assert_admins_whitelist(&env::predecessor_account_id());
     self.config = config_create.to_config(self.config.clone());
   }
 
@@ -153,7 +192,7 @@ impl BountiesContract {
     entries: Option<Vec<String>>
   ) {
     assert_one_yocto();
-    self.assert_admin_whitelist(&env::predecessor_account_id());
+    self.assert_admins_whitelist(&env::predecessor_account_id());
     let (reference, entries) = self.get_configuration_dictionary(dict, entry, entries);
 
     for entry in entries {
@@ -169,7 +208,7 @@ impl BountiesContract {
     entries: Option<Vec<String>>
   ) {
     assert_one_yocto();
-    self.assert_admin_whitelist(&env::predecessor_account_id());
+    self.assert_admins_whitelist(&env::predecessor_account_id());
     let (reference, entries) = self.get_configuration_dictionary(dict, entry, entries);
 
     for entry in entries {
@@ -184,7 +223,7 @@ impl BountiesContract {
   /// Bond must be attached to the claim.
   #[payable]
   pub fn bounty_claim(&mut self, id: BountyIndex, deadline: U64) {
-    let mut bounty = self.get_bounty(id.clone());
+    let bounty = self.get_bounty(id.clone());
 
     assert_eq!(
       env::attached_deposit(),
@@ -200,20 +239,36 @@ impl BountiesContract {
       "Bounty wrong deadline"
     );
 
-    bounty.status = BountyStatus::Claimed;
-    self.bounties.insert(&id, &VersionedBounty::Current(bounty.clone()));
-
+    let need_approval = match bounty.claimer_approval {
+      ClaimerApproval::WithoutApproval => false,
+      _ => true,
+    };
     let sender_id = env::predecessor_account_id();
     let mut claims = self.get_bounty_claims(sender_id.clone());
-    let bounty_claim = BountyClaim {
+    let created_at = U64::from(env::block_timestamp());
+    let mut bounty_claim = BountyClaim {
       bounty_id: id,
-      start_time: U64::from(env::block_timestamp()),
+      created_at: created_at.clone(),
+      start_time: if need_approval { None } else { Some(created_at) },
       deadline,
-      status: ClaimStatus::New,
+      status: if need_approval { ClaimStatus::New } else { ClaimStatus::InProgress },
       proposal_id: None,
       rejected_timestamp: None,
       dispute_id: None,
     };
+
+    match bounty.claimer_approval {
+      ClaimerApproval::ApprovalWithWhitelist => {
+        if self.is_claimer_whitelisted(bounty.clone().owner, &sender_id) {
+          self.internal_claimer_approval(id, bounty.clone(), &mut bounty_claim);
+        }
+      }
+      ClaimerApproval::WithoutApproval => {
+        self.internal_change_status_and_save_bounty(&id, bounty.clone(), BountyStatus::Claimed);
+      }
+      _ => ()
+    }
+
     self.internal_add_claim(id, &mut claims, bounty_claim);
     self.internal_save_claims(&sender_id, &claims);
     self.internal_add_bounty_claimer_account(id, sender_id.clone());
@@ -223,6 +278,32 @@ impl BountiesContract {
       Some(bounty.owner.clone()),
       ReputationActionKind::ClaimCreated
     );
+  }
+
+  #[payable]
+  pub fn decision_on_claim(&mut self, id: BountyIndex, claimer: AccountId, approve: bool) {
+    assert_one_yocto();
+    let bounty = self.get_bounty(id.clone());
+    assert!(
+      matches!(bounty.status, BountyStatus::New),
+      "Bounty status does not allow to make a decision on a claim"
+    );
+    bounty.check_access_rights();
+    let mut claims = self.get_bounty_claims(claimer.clone());
+    let claim_idx = self.internal_find_claim(id, &mut claims).expect("No claims found");
+    let mut bounty_claim= claims[claim_idx].clone();
+    assert!(
+      matches!(bounty_claim.status, ClaimStatus::New),
+      "Claim status does not allow a decision to be made"
+    );
+    if approve {
+      self.internal_claimer_approval(id, bounty, &mut bounty_claim);
+    } else {
+      bounty_claim.status = ClaimStatus::NotHired;
+      self.internal_return_bonds(&claimer);
+    }
+    claims.insert(claim_idx, bounty_claim);
+    self.internal_save_claims(&claimer, &claims);
   }
 
   /// Report that bounty is done. Creates a proposal to vote for paying out the bounty,
@@ -241,7 +322,7 @@ impl BountiesContract {
     let sender_id = &env::predecessor_account_id();
     let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), sender_id);
     assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::New),
+      matches!(claims[claim_idx].status, ClaimStatus::InProgress),
       "The claim status does not allow to complete the bounty"
     );
 
@@ -267,7 +348,7 @@ impl BountiesContract {
   pub fn bounty_give_up(&mut self, id: u64) -> PromiseOrValue<()> {
     assert_one_yocto();
 
-    let mut bounty = self.get_bounty(id.clone());
+    let bounty = self.get_bounty(id.clone());
     assert!(
       matches!(bounty.status, BountyStatus::Claimed),
       "Bounty status does not allow to give up"
@@ -276,12 +357,14 @@ impl BountiesContract {
     let sender_id = env::predecessor_account_id();
     let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
     assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::New),
+      matches!(claims[claim_idx].status, ClaimStatus::New)
+        || matches!(claims[claim_idx].status, ClaimStatus::InProgress),
       "The claim status does not allow to give up the bounty"
     );
 
-    let result = if env::block_timestamp() - claims[claim_idx].start_time.0
-      > self.config.bounty_forgiveness_period.0
+    let result = if matches!(claims[claim_idx].status, ClaimStatus::InProgress) &&
+      env::block_timestamp() - claims[claim_idx].start_time.unwrap().0 >
+        self.config.bounty_forgiveness_period.0
     {
       // If user over the forgiveness period.
       PromiseOrValue::Value(())
@@ -292,8 +375,7 @@ impl BountiesContract {
 
     claims[claim_idx].status = ClaimStatus::Canceled;
     self.internal_save_claims(&sender_id, &claims);
-    bounty.status = BountyStatus::New;
-    self.bounties.insert(&id, &bounty.into());
+    self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::New);
     self.internal_update_statistic(
       Some(sender_id),
       None,
@@ -336,7 +418,7 @@ impl BountiesContract {
       BountyAction::Finalize => {
         let (receiver_id, mut claims, claim_idx) = self.internal_find_active_claim(id.clone());
 
-        let result = if matches!(claims[claim_idx].status, ClaimStatus::New) &&
+        let result = if matches!(claims[claim_idx].status, ClaimStatus::InProgress) &&
           claims[claim_idx].is_claim_expired()
         {
           self.internal_set_claim_expiry_status(id, &receiver_id, bounty, claim_idx, &mut claims);
@@ -465,7 +547,9 @@ mod tests {
   use near_sdk::test_utils::{accounts, VMContextBuilder};
   use near_sdk::json_types::{U128, U64};
   use near_sdk::{testing_env, AccountId, Balance};
-  use crate::{Approval, BountiesContract, Bounty, BountyAction, BountyClaim, BountyIndex, BountyMetadata, BountyStatus, ClaimStatus, Config, ConfigCreate, Deadline, Reviewers, ValidatorsDao, ValidatorsDaoParams};
+  use crate::{BountiesContract, Bounty, BountyAction, BountyClaim, BountyIndex, BountyMetadata,
+              BountyStatus, ClaimerApproval, ClaimStatus, Config, ConfigCreate, Deadline, Reviewers,
+              ValidatorsDao, ValidatorsDaoParams};
 
   pub const TOKEN_DECIMALS: u8 = 18;
   pub const MAX_DEADLINE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
@@ -503,7 +587,7 @@ mod tests {
         time_commitment: None,
       },
       deadline: Deadline::MaxDeadline {max_deadline: MAX_DEADLINE},
-      approval: Approval::ApprovalRequired,
+      claimer_approval: ClaimerApproval::WithoutApproval,
       reviewers: if validators_dao.is_some() {
         Some(Reviewers::ValidatorsDao {validators_dao: validators_dao.unwrap()})
       } else {
@@ -589,7 +673,7 @@ mod tests {
   }
 
   #[test]
-  fn test_add_to_admin_whitelist() {
+  fn test_add_to_admins_whitelist() {
     let mut context = VMContextBuilder::new();
     testing_env!(context
       .predecessor_account_id(accounts(0))
@@ -603,18 +687,18 @@ mod tests {
       None
     );
     let account_ids: Vec<AccountId> = vec![accounts(1), accounts(2)];
-    contract.add_to_admin_whitelist(None, Some(account_ids.clone()));
-    assert_eq!(contract.get_admin_whitelist(), vec![accounts(0), accounts(1), accounts(2)]);
+    contract.add_to_admins_whitelist(None, Some(account_ids.clone()));
+    assert_eq!(contract.get_admins_whitelist(), vec![accounts(0), accounts(1), accounts(2)]);
 
-    contract.add_to_admin_whitelist(Some(accounts(3)), None);
+    contract.add_to_admins_whitelist(Some(accounts(3)), None);
     assert_eq!(
-      contract.get_admin_whitelist(),
+      contract.get_admins_whitelist(),
       vec![accounts(0), accounts(1), accounts(2), accounts(3)]
     );
   }
 
   #[test]
-  fn test_remove_from_admin_whitelist() {
+  fn test_remove_from_admins_whitelist() {
     let mut context = VMContextBuilder::new();
     testing_env!(context
       .predecessor_account_id(accounts(0))
@@ -627,15 +711,15 @@ mod tests {
       None,
       None
     );
-    contract.add_to_admin_whitelist(
+    contract.add_to_admins_whitelist(
       None,
       Some(vec![accounts(1), accounts(2), accounts(3)])
     );
 
-    contract.remove_from_admin_whitelist(Some(accounts(3)), None);
-    assert_eq!(contract.get_admin_whitelist(), vec![accounts(0), accounts(1), accounts(2)]);
-    contract.remove_from_admin_whitelist(None, Some(vec![accounts(1), accounts(2)]));
-    assert_eq!(contract.get_admin_whitelist(), vec![accounts(0)]);
+    contract.remove_from_admins_whitelist(Some(accounts(3)), None);
+    assert_eq!(contract.get_admins_whitelist(), vec![accounts(0), accounts(1), accounts(2)]);
+    contract.remove_from_admins_whitelist(None, Some(vec![accounts(1), accounts(2)]));
+    assert_eq!(contract.get_admins_whitelist(), vec![accounts(0)]);
   }
 
   #[test]
@@ -653,12 +737,12 @@ mod tests {
       None,
       None
     );
-    contract.add_to_admin_whitelist(None, None);
+    contract.add_to_admins_whitelist(None, None);
   }
 
   #[test]
   #[should_panic(expected = "Requires attached deposit of exactly 1 yoctoNEAR")]
-  fn test_add_to_admin_whitelist_without_deposit() {
+  fn test_add_to_admins_whitelist_without_deposit() {
     let mut context = VMContextBuilder::new();
     testing_env!(context.predecessor_account_id(accounts(0)).build());
     let mut contract = BountiesContract::new(
@@ -668,12 +752,12 @@ mod tests {
       None,
       None
     );
-    contract.add_to_admin_whitelist(Some(accounts(1)), None);
+    contract.add_to_admins_whitelist(Some(accounts(1)), None);
   }
 
   #[test]
   #[should_panic(expected = "Not in admin whitelist")]
-  fn test_add_to_admin_whitelist_by_other_user() {
+  fn test_add_to_admins_whitelist_by_other_user() {
     let mut context = VMContextBuilder::new();
     testing_env!(context.predecessor_account_id(accounts(0)).build());
     let mut contract = BountiesContract::new(
@@ -684,12 +768,12 @@ mod tests {
       None
     );
     testing_env!(context.predecessor_account_id(accounts(1)).attached_deposit(1).build());
-    contract.add_to_admin_whitelist(Some(accounts(1)), None);
+    contract.add_to_admins_whitelist(Some(accounts(1)), None);
   }
 
   #[test]
   #[should_panic(expected = "Cannot remove all accounts from admin whitelist")]
-  fn test_remove_from_admin_whitelist_all_members() {
+  fn test_remove_from_admins_whitelist_all_members() {
     let mut context = VMContextBuilder::new();
     testing_env!(context
       .predecessor_account_id(accounts(0))
@@ -702,7 +786,7 @@ mod tests {
       None,
       None
     );
-    contract.remove_from_admin_whitelist(Some(accounts(0)), None);
+    contract.remove_from_admins_whitelist(Some(accounts(0)), None);
   }
 
   #[test]
@@ -775,9 +859,10 @@ mod tests {
       contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim(),
       BountyClaim {
         bounty_id: id.clone(),
-        start_time: U64(0),
+        created_at: U64(0),
+        start_time: Some(U64(0)),
         deadline: U64(1_000_000_000 * 60 * 60 * 24 * 2),
-        status: ClaimStatus::New,
+        status: ClaimStatus::InProgress,
         proposal_id: None,
         rejected_timestamp: None,
         dispute_id: None,

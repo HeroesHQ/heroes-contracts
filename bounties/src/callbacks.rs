@@ -38,8 +38,7 @@ impl BountiesContract {
       let with_dispute = matches!(claims[claim_idx].status, ClaimStatus::Disputed);
       claims[claim_idx].status = ClaimStatus::Approved;
       self.internal_save_claims(&receiver_id, &claims);
-      bounty.status = BountyStatus::Completed;
-      self.bounties.insert(&id, &VersionedBounty::Current(bounty.clone()));
+      self.internal_change_status_and_save_bounty(&id, bounty.clone(), BountyStatus::Completed);
       self.internal_update_statistic(
         Some(receiver_id.clone()),
         Some(bounty.owner.clone()),

@@ -140,9 +140,9 @@ pub enum TimeCommitment {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub enum Approval {
-  ApprovalRequired,
-  AutoApprove,
+pub enum ClaimerApproval {
+  ApprovalWithWhitelist,
+  MultipleClaims,
   WithoutApproval,
 }
 
@@ -194,29 +194,19 @@ impl ValidatorsDaoParams {
 pub struct BountyCreate {
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
-  pub approval: Approval,
-  pub validators_dao: Option<ValidatorsDaoParams>,
-  pub more_reviewers: Option<Vec<AccountId>>,
+  pub claimer_approval: ClaimerApproval,
+  pub reviewers: Option<Reviewers>,
 }
 
 impl BountyCreate {
   pub fn to_bounty(&self, payer_id: &AccountId, token_id: &AccountId, amount: U128) -> Bounty {
-    let reviewers = if let Some(validators_dao) = self.validators_dao.clone() {
-      let validators_dao = validators_dao.to_validators_dao();
-      Some(Reviewers::ValidatorsDao { validators_dao })
-    } else if let Some(more_reviewers) = self.more_reviewers.clone() {
-      Some(Reviewers::MoreReviewers { more_reviewers })
-    } else {
-      None
-    };
-
     Bounty {
       token: token_id.clone(),
       amount: amount.clone(),
       metadata: self.metadata.clone(),
       deadline: self.deadline.clone(),
-      approval: self.approval.clone(),
-      reviewers,
+      claimer_approval: self.claimer_approval.clone(),
+      reviewers: self.reviewers.clone(),
       owner: payer_id.clone(),
       status: BountyStatus::New,
     }
@@ -241,7 +231,7 @@ pub struct Bounty {
   pub amount: U128,
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
-  pub approval: Approval,
+  pub claimer_approval: ClaimerApproval,
   pub reviewers: Option<Reviewers>,
   pub owner: AccountId,
   pub status: BountyStatus,
@@ -402,6 +392,7 @@ impl From<Bounty> for VersionedBounty {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum ClaimStatus {
   New,
+  InProgress,
   Completed,
   Approved,
   Rejected,
@@ -409,6 +400,7 @@ pub enum ClaimStatus {
   Expired,
   Disputed,
   NotCompleted,
+  NotHired,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -417,8 +409,10 @@ pub enum ClaimStatus {
 pub struct BountyClaim {
   /// Bounty id that was claimed.
   pub bounty_id: BountyIndex,
+  /// When a claim is created.
+  pub created_at: U64,
   /// Start time of the claim.
-  pub start_time: U64,
+  pub start_time: Option<U64>,
   /// Deadline specified by claimer.
   pub deadline: U64,
   /// status
@@ -433,7 +427,7 @@ pub struct BountyClaim {
 
 impl BountyClaim {
   pub fn is_claim_expired(&self) -> bool {
-    env::block_timestamp() > self.start_time.0 + self.deadline.0
+    env::block_timestamp() > self.start_time.unwrap().0 + self.deadline.0
   }
 }
 
@@ -546,4 +540,5 @@ pub(crate) enum StorageKey {
   BountyClaimers,
   AdminWhitelist,
   TokenAccountIds,
+  ClaimersWhitelist,
 }

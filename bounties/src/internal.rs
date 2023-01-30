@@ -8,11 +8,20 @@ impl BountiesContract {
     );
   }
 
-  pub(crate) fn assert_admin_whitelist(&self, account_id: &AccountId) {
+  pub(crate) fn assert_admins_whitelist(&self, account_id: &AccountId) {
     assert!(
-      self.admin_whitelist.contains(account_id),
+      self.admins_whitelist.contains(account_id),
       "Not in admin whitelist"
     );
+  }
+
+  pub(crate) fn is_claimer_whitelisted(
+    &self,
+    bounty_owner: AccountId,
+    claimer: &AccountId
+  ) -> bool {
+    let claimers_whitelist = self.claimers_whitelist.get(&bounty_owner);
+    claimers_whitelist.is_some() && claimers_whitelist.unwrap().contains(claimer)
   }
 
   pub(crate) fn assert_bounty_category_is_correct(&self, category: String) {
@@ -27,7 +36,7 @@ impl BountiesContract {
 
   pub(crate) fn internal_add_bounty(&mut self, bounty: Bounty) -> BountyIndex {
     let id = self.last_bounty_id;
-    self.bounties.insert(&id, &VersionedBounty::Current(bounty.clone()));
+    self.bounties.insert(&id, &bounty.clone().into());
     let mut indices = self
       .account_bounties
       .get(&bounty.owner)
@@ -144,8 +153,7 @@ impl BountiesContract {
     claim_idx: usize,
     claims: &mut Vec<BountyClaim>
   ) {
-    bounty.status = BountyStatus::New;
-    self.bounties.insert(&id, &VersionedBounty::Current(bounty.clone()));
+    self.internal_change_status_and_save_bounty(&id, bounty.clone(), BountyStatus::New);
     let with_dispute = matches!(claims[claim_idx].status, ClaimStatus::Disputed);
     claims[claim_idx].status = ClaimStatus::NotCompleted;
     self.internal_save_claims(receiver_id, &claims);
@@ -166,19 +174,28 @@ impl BountiesContract {
     &mut self,
     id: BountyIndex,
     receiver_id: &AccountId,
-    mut bounty: Bounty,
+    bounty: Bounty,
     claim_idx: usize,
     claims: &mut Vec<BountyClaim>
   ) {
     claims[claim_idx].status = ClaimStatus::Expired;
     self.internal_save_claims(receiver_id, &claims);
-    bounty.status = BountyStatus::New;
-    self.bounties.insert(&id, &VersionedBounty::Current(bounty));
+    self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::New);
     self.internal_update_statistic(
       Some(receiver_id.clone()),
       None,
       ReputationActionKind::ClaimExpired
     );
+  }
+
+  pub(crate) fn internal_change_status_and_save_bounty(
+    &mut self,
+    id: &BountyIndex,
+    mut bounty: Bounty,
+    status: BountyStatus,
+  ) {
+    bounty.status = status;
+    self.bounties.insert(&id, &bounty.into());
   }
 
   pub(crate) fn internal_find_active_claim(
@@ -201,7 +218,7 @@ impl BountiesContract {
       let claims = self.get_bounty_claims(account_id.clone());
       let index = self.internal_find_claim(id, &claims).unwrap();
       let claim = claims[index].clone();
-      if matches!(claim.status, ClaimStatus::New)
+      if matches!(claim.status, ClaimStatus::InProgress)
         || matches!(claim.status, ClaimStatus::Completed)
         || matches!(claim.status, ClaimStatus::Rejected)
         || matches!(claim.status, ClaimStatus::Disputed)
@@ -462,5 +479,16 @@ impl BountiesContract {
     };
 
     (reference, entries)
+  }
+
+  pub(crate) fn internal_claimer_approval(
+    &mut self,
+    id: BountyIndex,
+    bounty: Bounty,
+    claim: &mut BountyClaim,
+  ) {
+    self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::Claimed);
+    claim.start_time = Some(U64::from(env::block_timestamp()));
+    claim.status = ClaimStatus::InProgress;
   }
 }

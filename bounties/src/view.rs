@@ -6,8 +6,12 @@ impl BountiesContract {
     self.token_account_ids.to_vec()
   }
 
-  pub fn get_admin_whitelist(&self) -> Vec<AccountId> {
-    self.admin_whitelist.to_vec()
+  pub fn get_admins_whitelist(&self) -> Vec<AccountId> {
+    self.admins_whitelist.to_vec()
+  }
+
+  pub fn get_claimers_whitelist(&self, account_id: AccountId) -> Vec<AccountId> {
+    self.claimers_whitelist.get(&account_id).unwrap_or_default()
   }
 
   pub fn get_reputation_contract_account_id(&self) -> Option<AccountId> {
