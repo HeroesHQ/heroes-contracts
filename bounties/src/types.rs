@@ -191,11 +191,29 @@ impl ValidatorsDaoParams {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+pub enum ReviewersParams {
+  ValidatorsDao {validators_dao: ValidatorsDaoParams},
+  MoreReviewers {more_reviewers: Vec<AccountId>},
+}
+
+impl ReviewersParams {
+  pub fn to_reviewers(&self) -> Reviewers {
+    match self.clone() {
+      Self::ValidatorsDao { validators_dao } =>
+        Reviewers::ValidatorsDao { validators_dao: validators_dao.to_validators_dao() },
+      Self::MoreReviewers { more_reviewers } =>
+        Reviewers::MoreReviewers { more_reviewers },
+    }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
 pub struct BountyCreate {
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
   pub claimer_approval: ClaimerApproval,
-  pub reviewers: Option<Reviewers>,
+  pub reviewers: Option<ReviewersParams>,
 }
 
 impl BountyCreate {
@@ -206,7 +224,11 @@ impl BountyCreate {
       metadata: self.metadata.clone(),
       deadline: self.deadline.clone(),
       claimer_approval: self.claimer_approval.clone(),
-      reviewers: self.reviewers.clone(),
+      reviewers: if self.reviewers.is_some() {
+        Some(self.reviewers.clone().unwrap().to_reviewers())
+      } else {
+        None
+      },
       owner: payer_id.clone(),
       status: BountyStatus::New,
     }
