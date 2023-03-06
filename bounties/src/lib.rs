@@ -248,7 +248,14 @@ impl BountiesContract {
       _ => true,
     };
     let sender_id = env::predecessor_account_id();
+    bounty.assert_account_is_not_owner_or_reviewer(sender_id.clone());
+
     let mut claims = self.get_bounty_claims(sender_id.clone());
+    assert!(
+      !self.already_have_new_claim(id, &claims),
+      "There is already a claim with status 'New' for this account"
+    );
+
     let created_at = U64::from(env::block_timestamp());
     let mut bounty_claim = BountyClaim {
       bounty_id: id,

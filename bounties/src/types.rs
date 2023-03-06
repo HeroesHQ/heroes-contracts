@@ -381,6 +381,25 @@ impl Bounty {
       self.clone().owner
     }
   }
+
+  pub fn assert_account_is_not_owner_or_reviewer(&self, account_id: AccountId) {
+    assert_ne!(self.owner, account_id, "The predecessor cannot be a bounty owner");
+    if self.reviewers.clone().is_some() {
+      match self.reviewers.clone().unwrap() {
+        Reviewers::MoreReviewers {more_reviewers} =>
+          assert!(
+            !more_reviewers.contains(&account_id),
+            "The predecessor cannot be one of the reviewers"
+          ),
+        Reviewers::ValidatorsDao {validators_dao} =>
+          assert_ne!(
+            validators_dao.account_id,
+            account_id,
+            "The predecessor cannot be a validators DAO"
+          ),
+      }
+    }
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]

@@ -115,13 +115,13 @@ impl BountiesContract {
     account_id: &AccountId,
     claims: &Vec<BountyClaim>,
   ) {
-    let versioned_claims = claims
-      .into_iter()
-      .map(|c| c.clone().into())
-      .collect();
     if claims.is_empty() {
       self.bounty_claimers.remove(account_id);
     } else {
+      let versioned_claims = claims
+        .into_iter()
+        .map(|c| c.clone().into())
+        .collect();
       self.bounty_claimers.insert(account_id, &versioned_claims);
     }
   }
@@ -198,8 +198,22 @@ impl BountiesContract {
     self.bounties.insert(&id, &bounty.into());
   }
 
+  pub(crate) fn already_have_new_claim(&self, id: BountyIndex, claims: &Vec<BountyClaim>) -> bool {
+    claims
+      .into_iter()
+      .find(|&c| c.bounty_id == id && matches!(c.status, ClaimStatus::New))
+      .is_some()
+  }
+
+  pub(crate) fn is_claim_active(&self, claim: &BountyClaim) -> bool {
+    matches!(claim.status, ClaimStatus::InProgress)
+      || matches!(claim.status, ClaimStatus::Completed)
+      || matches!(claim.status, ClaimStatus::Rejected)
+      || matches!(claim.status, ClaimStatus::Disputed)
+  }
+
   pub(crate) fn internal_find_active_claim(
-    &mut self,
+    &self,
     id: BountyIndex,
   ) -> (AccountId, Vec<BountyClaim>, usize) {
     let bounty = self.get_bounty(id.clone());
@@ -213,16 +227,11 @@ impl BountiesContract {
       .get(&id)
       .expect("No claims found");
 
-    for i in 0..account_ids.len() {
-      let account_id = account_ids[i].clone();
+    for account_id in account_ids {
       let claims = self.get_bounty_claims(account_id.clone());
       let index = self.internal_find_claim(id, &claims).unwrap();
       let claim = claims[index].clone();
-      if matches!(claim.status, ClaimStatus::InProgress)
-        || matches!(claim.status, ClaimStatus::Completed)
-        || matches!(claim.status, ClaimStatus::Rejected)
-        || matches!(claim.status, ClaimStatus::Disputed)
-      {
+      if self.is_claim_active(&claim) {
         return (account_id, claims, index);
       }
     }
@@ -399,9 +408,9 @@ impl BountiesContract {
     id: BountyIndex,
   ) -> Option<AccountId> {
     let claims = self.get_bounty_claims_by_id(id.clone());
-    for i in 0..claims.len() {
-      if matches!(claims[i].1.status, ClaimStatus::Disputed) {
-        return Some(claims[i].0.clone())
+    for claim in claims {
+      if matches!(claim.1.status, ClaimStatus::Disputed) {
+        return Some(claim.0.clone())
       }
     }
     None
