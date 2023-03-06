@@ -439,6 +439,8 @@ pub struct BountyClaim {
   pub start_time: Option<U64>,
   /// Deadline specified by claimer.
   pub deadline: U64,
+  /// Sescription
+  pub description: String,
   /// status
   pub status: ClaimStatus,
   /// Bounty payout proposal ID

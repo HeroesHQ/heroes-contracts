@@ -222,7 +222,7 @@ impl BountiesContract {
   /// Claim given bounty by caller with given expected duration to execute.
   /// Bond must be attached to the claim.
   #[payable]
-  pub fn bounty_claim(&mut self, id: BountyIndex, deadline: U64) {
+  pub fn bounty_claim(&mut self, id: BountyIndex, deadline: U64, description: String) {
     let bounty = self.get_bounty(id.clone());
 
     assert_eq!(
@@ -238,6 +238,10 @@ impl BountiesContract {
       bounty.is_claim_deadline_correct(deadline),
       "Bounty wrong deadline"
     );
+    assert!(
+      !description.is_empty(),
+      "The description cannot be empty"
+    );
 
     let need_approval = match bounty.claimer_approval {
       ClaimerApproval::WithoutApproval => false,
@@ -251,6 +255,7 @@ impl BountiesContract {
       created_at: created_at.clone(),
       start_time: if need_approval { None } else { Some(created_at) },
       deadline,
+      description,
       status: if need_approval { ClaimStatus::New } else { ClaimStatus::InProgress },
       proposal_id: None,
       rejected_timestamp: None,
@@ -614,7 +619,11 @@ mod tests {
       .attached_deposit(bond.clone())
       .block_timestamp(0)
       .build());
-    contract.bounty_claim(id, U64(1_000_000_000 * 60 * 60 * 24 * 2));
+    contract.bounty_claim(
+      id,
+      U64(1_000_000_000 * 60 * 60 * 24 * 2),
+      "Test description".to_string()
+    );
   }
 
   fn bounty_done(
@@ -867,6 +876,7 @@ mod tests {
         proposal_id: None,
         rejected_timestamp: None,
         dispute_id: None,
+        description: "Test description".to_string(),
       }
     );
     assert_eq!(contract.bounty_claimer_accounts.get(&id).unwrap()[0], claimer);
@@ -891,7 +901,11 @@ mod tests {
     testing_env!(context
       .predecessor_account_id(accounts(2))
       .build());
-    contract.bounty_claim(id, U64(1_000_000_000 * 60 * 60 * 24 * 2));
+    contract.bounty_claim(
+      id,
+      U64(1_000_000_000 * 60 * 60 * 24 * 2),
+      "Test description".to_string()
+    );
   }
 
   #[test]
@@ -913,7 +927,11 @@ mod tests {
       .predecessor_account_id(accounts(3))
       .attached_deposit(Config::default().bounty_claim_bond.0)
       .build());
-    contract.bounty_claim(id, U64(1_000_000_000 * 60 * 60 * 24 * 2));
+    contract.bounty_claim(
+      id,
+      U64(1_000_000_000 * 60 * 60 * 24 * 2),
+      "Test description".to_string()
+    );
   }
 
   #[test]
@@ -934,7 +952,11 @@ mod tests {
       .predecessor_account_id(accounts(2))
       .attached_deposit(Config::default().bounty_claim_bond.0)
       .build());
-    contract.bounty_claim(id, U64(MAX_DEADLINE.0 + 1));
+    contract.bounty_claim(
+      id,
+      U64(MAX_DEADLINE.0 + 1),
+      "Test description".to_string()
+    );
   }
 
   #[test]
@@ -955,7 +977,11 @@ mod tests {
       .predecessor_account_id(accounts(2))
       .attached_deposit(Config::default().bounty_claim_bond.0)
       .build());
-    contract.bounty_claim(id + 1, MAX_DEADLINE);
+    contract.bounty_claim(
+      id + 1,
+      MAX_DEADLINE,
+      "Test description".to_string()
+    );
   }
 
   #[test]
