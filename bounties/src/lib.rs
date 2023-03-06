@@ -595,6 +595,7 @@ mod tests {
       },
       owner: owner.clone(),
       status: BountyStatus::New,
+      created_at: U64::from(0),
     }.into());
     contract.account_bounties.insert(owner, &vec![bounty_index]);
     contract.last_bounty_id = bounty_index.clone() + 1;

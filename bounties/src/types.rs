@@ -231,6 +231,7 @@ impl BountyCreate {
       },
       owner: payer_id.clone(),
       status: BountyStatus::New,
+      created_at: U64::from(env::block_timestamp()),
     }
   }
 }
@@ -257,6 +258,7 @@ pub struct Bounty {
   pub reviewers: Option<Reviewers>,
   pub owner: AccountId,
   pub status: BountyStatus,
+  pub created_at: U64,
 }
 
 impl Bounty {
