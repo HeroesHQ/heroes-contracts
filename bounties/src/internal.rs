@@ -263,6 +263,27 @@ impl BountiesContract {
       .into()
   }
 
+  pub(crate) fn internal_refund_bounty_amount(
+    &mut self,
+    id: BountyIndex,
+    bounty: Bounty,
+  ) -> PromiseOrValue<()> {
+    ext_ft_contract::ext(bounty.token.clone())
+      .with_attached_deposit(ONE_YOCTO)
+      .with_static_gas(GAS_FOR_FT_TRANSFER)
+      .ft_transfer(
+        bounty.owner.clone(),
+        bounty.amount.clone(),
+        Some(format!("Returning amount of bounty {} to {}", id, bounty.owner)),
+      )
+      .then(
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_AFTER_FT_REFUND)
+          .after_refund_bounty_amount(id, bounty)
+      )
+      .into()
+  }
+
   pub(crate) fn internal_reject_claim(
     &mut self,
     id: BountyIndex,

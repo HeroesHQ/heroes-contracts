@@ -397,6 +397,24 @@ impl BountiesContract {
     result
   }
 
+  /// Cancel the bounty and return the funds to the owner.
+  /// Only the owner of the bounty can call this method.
+  #[payable]
+  pub fn bounty_cancel(&mut self, id: u64) -> PromiseOrValue<()> {
+    assert_one_yocto();
+
+    let bounty = self.get_bounty(id.clone());
+    assert!(
+      matches!(bounty.status, BountyStatus::New),
+      "Bounty status does not allow cancellation"
+    );
+
+    let sender_id = env::predecessor_account_id();
+    assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
+
+    self.internal_refund_bounty_amount(id, bounty)
+  }
+
   #[payable]
   pub fn bounty_action(&mut self, id: BountyIndex, action: BountyAction) -> PromiseOrValue<()> {
     assert_one_yocto();

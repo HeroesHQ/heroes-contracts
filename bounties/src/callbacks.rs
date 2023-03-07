@@ -50,6 +50,21 @@ impl BountiesContract {
   }
 
   #[private]
+  pub fn after_refund_bounty_amount(
+    &mut self,
+    id: BountyIndex,
+    bounty: Bounty,
+  ) -> bool {
+    if !is_promise_success() {
+      env::log_str("Bounty refund failed");
+      false
+    } else {
+      self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::Canceled);
+      true
+    }
+  }
+
+  #[private]
   pub fn after_get_proposal(
     &mut self,
     #[callback_result] result: Result<Proposal, PromiseError>,
