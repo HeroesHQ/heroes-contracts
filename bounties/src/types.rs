@@ -158,16 +158,6 @@ pub struct ContactDetails {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub enum TimeCommitment {
-  Hours,
-  Days,
-  Weeks,
-  Months,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum ClaimerApproval {
   ApprovalWithWhitelist,
   MultipleClaims,
@@ -186,7 +176,6 @@ pub struct BountyMetadata {
   pub tags: Option<Vec<String>>,
   pub acceptance_criteria: Option<String>,
   pub contact_details: Option<ContactDetails>,
-  pub time_commitment: Option<TimeCommitment>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]

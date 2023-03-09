@@ -714,7 +714,6 @@ mod tests {
         tags: None,
         acceptance_criteria: None,
         contact_details: None,
-        time_commitment: None,
       },
       deadline: Deadline::MaxDeadline {max_deadline: MAX_DEADLINE},
       claimer_approval: ClaimerApproval::WithoutApproval,
