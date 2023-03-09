@@ -198,13 +198,6 @@ impl BountiesContract {
     self.bounties.insert(&id, &bounty.into());
   }
 
-  pub(crate) fn already_have_new_claim(&self, id: BountyIndex, claims: &Vec<BountyClaim>) -> bool {
-    claims
-      .into_iter()
-      .find(|&c| c.bounty_id == id && matches!(c.status, ClaimStatus::New))
-      .is_some()
-  }
-
   pub(crate) fn is_claim_active(&self, claim: &BountyClaim) -> bool {
     matches!(claim.status, ClaimStatus::InProgress)
       || matches!(claim.status, ClaimStatus::Completed)

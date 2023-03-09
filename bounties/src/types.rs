@@ -70,8 +70,8 @@ pub enum ReputationActionKind {
   ClaimCreated,
   ClaimCancelled,
   ClaimExpired,
-  SuccessfulClaim {with_dispute: bool},
-  UnsuccessfulClaim {with_dispute: bool},
+  SuccessfulClaim { with_dispute: bool },
+  UnsuccessfulClaim { with_dispute: bool },
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -88,17 +88,44 @@ pub enum BountyStatus {
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum Deadline {
-  DueDate {due_date: U64},
-  MaxDeadline {max_deadline: U64},
+  DueDate { due_date: U64 },
+  MaxDeadline { max_deadline: U64 },
   WithoutDeadline,
+}
+
+impl Deadline {
+  pub fn get_deadline_type(&self) -> u8 {
+    match self.clone() {
+      Self::DueDate { due_date: _due_date } => 1,
+      Self::MaxDeadline { max_deadline: _max_deadline } => 2,
+      _ => 3
+    }
+  }
+
+  pub fn get_deadline_value(&self) -> U64 {
+    match self.clone() {
+      Self::DueDate { due_date } => due_date,
+      Self::MaxDeadline { max_deadline } => max_deadline,
+      _ => env::panic_str("No value")
+    }
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum Reviewers {
-  ValidatorsDao {validators_dao: ValidatorsDao},
-  MoreReviewers {more_reviewers: Vec<AccountId>},
+  ValidatorsDao { validators_dao: ValidatorsDao },
+  MoreReviewers { more_reviewers: Vec<AccountId> },
+}
+
+impl Reviewers {
+  pub fn get_more_reviewers(&self) -> Vec<AccountId> {
+    match self.clone() {
+      Self::MoreReviewers { more_reviewers } => more_reviewers,
+      _ => env::panic_str("There are no other reviewers")
+    }
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -193,8 +220,8 @@ impl ValidatorsDaoParams {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub enum ReviewersParams {
-  ValidatorsDao {validators_dao: ValidatorsDaoParams},
-  MoreReviewers {more_reviewers: Vec<AccountId>},
+  ValidatorsDao { validators_dao: ValidatorsDaoParams },
+  MoreReviewers { more_reviewers: Vec<AccountId> },
 }
 
 impl ReviewersParams {
@@ -204,6 +231,13 @@ impl ReviewersParams {
         Reviewers::ValidatorsDao { validators_dao: validators_dao.to_validators_dao() },
       Self::MoreReviewers { more_reviewers } =>
         Reviewers::MoreReviewers { more_reviewers },
+    }
+  }
+
+  pub fn get_more_reviewers(&self) -> Vec<AccountId> {
+    match self.clone() {
+      Self::MoreReviewers { more_reviewers } => more_reviewers,
+      _ => env::panic_str("There are no other reviewers")
     }
   }
 }
@@ -235,6 +269,15 @@ impl BountyCreate {
       created_at: U64::from(env::block_timestamp()),
     }
   }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub struct BountyUpdate {
+  pub metadata: Option<BountyMetadata>,
+  pub deadline: Option<Deadline>,
+  pub claimer_approval: Option<ClaimerApproval>,
+  pub reviewers: Option<ReviewersParams>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -288,12 +331,12 @@ impl Bounty {
       "Expected bounty amount to be positive",
     );
     match self.deadline {
-      Deadline::DueDate {due_date} =>
+      Deadline::DueDate { due_date } =>
         assert!(
           due_date.0 > env::block_timestamp(),
           "Incorrect due date",
         ),
-      Deadline::MaxDeadline {max_deadline} =>
+      Deadline::MaxDeadline { max_deadline } =>
         assert!(
           max_deadline.0 > 0,
           "The max deadline is incorrect"
@@ -302,7 +345,7 @@ impl Bounty {
     }
     if self.reviewers.clone().is_some() {
       match self.reviewers.clone().unwrap() {
-        Reviewers::MoreReviewers {more_reviewers} =>
+        Reviewers::MoreReviewers { more_reviewers } =>
           assert!(
             more_reviewers.len() > 0,
             "The expected number of reviewers is greater than zero",
@@ -316,13 +359,13 @@ impl Bounty {
     let sender_id = env::predecessor_account_id();
     if self.reviewers.is_some() {
       match self.reviewers.clone().unwrap() {
-        Reviewers::ValidatorsDao {validators_dao} =>
+        Reviewers::ValidatorsDao { validators_dao } =>
           assert_eq!(
             validators_dao.account_id,
             sender_id,
             "This method can only call DAO validators"
           ),
-        Reviewers::MoreReviewers {more_reviewers} => {
+        Reviewers::MoreReviewers { more_reviewers } => {
           let mut all_reviewers = more_reviewers;
           all_reviewers.push(self.owner.clone());
           assert!(
@@ -343,7 +386,7 @@ impl Bounty {
   pub fn assert_validators_dao_account_id(&self, account_id: AccountId) {
     if self.reviewers.is_some() {
       match self.reviewers.clone().unwrap() {
-        Reviewers::ValidatorsDao {validators_dao} => {
+        Reviewers::ValidatorsDao { validators_dao } => {
           assert_eq!(
             validators_dao.account_id,
             account_id,
@@ -359,15 +402,15 @@ impl Bounty {
 
   pub fn is_claim_deadline_correct(&self, deadline: U64) -> bool {
     match self.deadline {
-      Deadline::DueDate {due_date} => env::block_timestamp() + deadline.0 <= due_date.0,
-      Deadline::MaxDeadline {max_deadline} => deadline.0 <= max_deadline.0,
+      Deadline::DueDate { due_date } => env::block_timestamp() + deadline.0 <= due_date.0,
+      Deadline::MaxDeadline { max_deadline } => deadline.0 <= max_deadline.0,
       Deadline::WithoutDeadline => true,
     }
   }
 
   pub fn is_validators_dao_used(&self) -> bool {
     self.reviewers.is_some() && match self.reviewers.clone().unwrap() {
-      Reviewers::ValidatorsDao {validators_dao: _validators_dao} => true,
+      Reviewers::ValidatorsDao { validators_dao: _validators_dao } => true,
       _ => false
     }
   }
@@ -375,7 +418,7 @@ impl Bounty {
   pub fn get_bounty_owner_delegate(&self) -> AccountId {
     if self.reviewers.is_some() {
       match self.reviewers.clone().unwrap() {
-        Reviewers::ValidatorsDao {validators_dao} => validators_dao.account_id,
+        Reviewers::ValidatorsDao { validators_dao } => validators_dao.account_id,
         _ => self.clone().owner,
       }
     } else {
@@ -387,12 +430,12 @@ impl Bounty {
     assert_ne!(self.owner, account_id, "The predecessor cannot be a bounty owner");
     if self.reviewers.clone().is_some() {
       match self.reviewers.clone().unwrap() {
-        Reviewers::MoreReviewers {more_reviewers} =>
+        Reviewers::MoreReviewers { more_reviewers } =>
           assert!(
             !more_reviewers.contains(&account_id),
             "The predecessor cannot be one of the reviewers"
           ),
-        Reviewers::ValidatorsDao {validators_dao} =>
+        Reviewers::ValidatorsDao { validators_dao } =>
           assert_ne!(
             validators_dao.account_id,
             account_id,

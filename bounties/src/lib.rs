@@ -251,8 +251,12 @@ impl BountiesContract {
     bounty.assert_account_is_not_owner_or_reviewer(sender_id.clone());
 
     let mut claims = self.get_bounty_claims(sender_id.clone());
+    let found_claim = claims.clone()
+      .into_iter()
+      .find(|c| c.bounty_id == id && matches!(c.status, ClaimStatus::New))
+      .is_some();
     assert!(
-      !self.already_have_new_claim(id, &claims),
+      !found_claim,
       "There is already a claim with status 'New' for this account"
     );
 
@@ -479,6 +483,102 @@ impl BountiesContract {
         result
       }
     }
+  }
+
+  #[payable]
+  pub fn bounty_update(&mut self, id: u64, bounty_update: BountyUpdate) {
+    assert_one_yocto();
+
+    let mut bounty = self.get_bounty(id.clone());
+    assert!(
+      matches!(bounty.status, BountyStatus::New),
+      "Bounty status does not allow updating"
+    );
+
+    let sender_id = env::predecessor_account_id();
+    assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
+
+    let claims = self.get_bounty_claims_by_id(id.clone());
+    let found_claim = claims
+      .into_iter()
+      .find(|c| matches!(c.1.status, ClaimStatus::New))
+      .is_some();
+    let mut changed = false;
+
+    if bounty_update.metadata.is_some() {
+      assert!(
+        !found_claim,
+        "Metadata cannot be changed if there are already claims"
+      );
+      bounty.metadata = bounty_update.metadata.unwrap();
+      changed = true;
+    }
+    if bounty_update.claimer_approval.is_some() {
+      assert!(
+        !found_claim,
+        "The approval setting cannot be changed if there are already claims"
+      );
+      bounty.claimer_approval = bounty_update.claimer_approval.unwrap();
+      changed = true;
+    }
+    if bounty_update.deadline.is_some() {
+      if found_claim {
+        assert_ne!(
+          bounty.deadline.get_deadline_type(),
+          3,
+          "The deadline cannot be limited if there are already claims"
+        );
+        if bounty_update.deadline.clone().unwrap().get_deadline_type() != 3 {
+          assert_eq!(
+            bounty.deadline.clone().get_deadline_type(),
+            bounty_update.deadline.clone().unwrap().get_deadline_type(),
+            "The type of deadline cannot be changed if there are already claims"
+          );
+          assert!(
+            bounty_update.deadline.clone().unwrap().get_deadline_value().0 >
+              bounty.deadline.clone().get_deadline_value().0,
+            "The deadline can be increased only in the upward direction"
+          );
+        }
+      }
+      bounty.deadline = bounty_update.deadline.unwrap();
+      changed = true;
+    }
+    if bounty_update.reviewers.is_some() {
+      assert!(
+        bounty.reviewers.is_none() ||
+          match bounty.reviewers.clone().unwrap() {
+            Reviewers::MoreReviewers { more_reviewers: _more_reviewers } => true,
+            _ => false
+          },
+        "Validators DAO settings cannot be changed"
+      );
+      assert!(
+        match bounty_update.reviewers.clone().unwrap() {
+          ReviewersParams::MoreReviewers { more_reviewers: _more_reviewers } => true,
+          _ => false
+        },
+        "It is not possible to start using Validators DAO after creating a bounty"
+      );
+      let more_reviewers = bounty_update.reviewers.clone().unwrap().get_more_reviewers();
+      if bounty.reviewers.is_some() {
+        let prev_more_reviewers = bounty.reviewers.clone().unwrap().get_more_reviewers();
+        assert_ne!(
+          more_reviewers,
+          prev_more_reviewers,
+          "The list of reviewers has not changed"
+        );
+      }
+      bounty.reviewers = if more_reviewers.len() > 0 {
+        Some(bounty_update.reviewers.unwrap().to_reviewers())
+      } else {
+        None
+      };
+      changed = true;
+    }
+
+    assert!(changed, "No changes found");
+    self.bounties.insert(&id, &bounty.into());
   }
 
   #[payable]
