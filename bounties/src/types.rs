@@ -10,7 +10,7 @@ pub const GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK: Gas = Gas(10_000_000_000_000);
 pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(70_000_000_000_000);
 pub const GAS_FOR_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(40_000_000_000_000);
-pub const GAS_FOR_AFTER_FT_REFUND: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_AFTER_FT_TRANSACT: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_CHECK_PROPOSAL: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(70_000_000_000_000);
 pub const GAS_FOR_CREATE_DISPUTE: Gas = Gas(15_000_000_000_000);
@@ -22,6 +22,10 @@ pub const GAS_FOR_UPDATE_STATISTIC: Gas = Gas(15_000_000_000_000);
 pub const DEFAULT_BOUNTY_CLAIM_BOND: U128 = U128(ONE_NEAR);
 pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24);
 pub const DEFAULT_PERIOD_FOR_OPENING_DISPUTE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 10);
+pub const DEFAULT_PLATFORM_FEE_PERCENTAGE: u32 = 10_000;
+pub const DEFAULT_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 10_000;
+pub const DEFAULT_PENALTY_PLATFORM_FEE_PERCENTAGE: u32 = 0;
+pub const DEFAULT_PENALTY_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 0;
 
 pub const NO_DEPOSIT: Balance = 0;
 pub const INITIAL_CATEGORIES: [&str; 4] = ["Marketing", "Development", "Design", "Other"];
@@ -241,10 +245,24 @@ pub struct BountyCreate {
 }
 
 impl BountyCreate {
-  pub fn to_bounty(&self, payer_id: &AccountId, token_id: &AccountId, amount: U128) -> Bounty {
+  pub fn to_bounty(&self, payer_id: &AccountId, token_id: &AccountId, amount: U128, config: Config) -> Bounty {
+    let percentage_platform: u128 = config.platform_fee_percentage.into();
+    let percentage_dao: u128 = if self.reviewers.is_some() {
+      match self.reviewers.clone().unwrap() {
+        ReviewersParams::ValidatorsDao { validators_dao: _validators_dao } =>
+          config.validators_dao_fee_percentage.into(),
+        _ => 0
+      }
+    } else { 0 };
+    let bounty_amount = amount.0 * 100_000 / (100_000 + percentage_platform + percentage_dao );
+    let platform_fee = bounty_amount * percentage_platform / 100_000;
+    let dao_fee = amount.0 - bounty_amount - platform_fee;
+
     Bounty {
       token: token_id.clone(),
-      amount: amount.clone(),
+      amount: U128(bounty_amount),
+      platform_fee: U128(platform_fee),
+      dao_fee: U128(dao_fee),
       metadata: self.metadata.clone(),
       deadline: self.deadline.clone(),
       claimer_approval: self.claimer_approval.clone(),
@@ -285,6 +303,8 @@ pub struct ValidatorsDao {
 pub struct Bounty {
   pub token: AccountId,
   pub amount: U128,
+  pub platform_fee: U128,
+  pub dao_fee: U128,
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
   pub claimer_approval: ClaimerApproval,
@@ -559,6 +579,10 @@ pub struct ConfigCreate {
   pub bounty_claim_bond: U128,
   pub bounty_forgiveness_period: U64,
   pub period_for_opening_dispute: U64,
+  pub platform_fee_percentage: u32,
+  pub validators_dao_fee_percentage: u32,
+  pub penalty_platform_fee_percentage: u32,
+  pub penalty_validators_dao_fee_percentage: u32,
 }
 
 impl ConfigCreate {
@@ -567,6 +591,10 @@ impl ConfigCreate {
       bounty_claim_bond: self.bounty_claim_bond,
       bounty_forgiveness_period: self.bounty_forgiveness_period,
       period_for_opening_dispute: self.period_for_opening_dispute,
+      platform_fee_percentage: self.platform_fee_percentage,
+      validators_dao_fee_percentage: self.validators_dao_fee_percentage,
+      penalty_platform_fee_percentage: self.penalty_platform_fee_percentage,
+      penalty_validators_dao_fee_percentage: self.penalty_validators_dao_fee_percentage,
       categories: config.categories,
       tags: config.tags,
     }
@@ -582,6 +610,10 @@ pub struct Config {
   pub period_for_opening_dispute: U64,
   pub categories: Vec<String>,
   pub tags: Vec<String>,
+  pub platform_fee_percentage: u32,
+  pub validators_dao_fee_percentage: u32,
+  pub penalty_platform_fee_percentage: u32,
+  pub penalty_validators_dao_fee_percentage: u32,
 }
 
 impl Config {
@@ -606,6 +638,89 @@ impl Default for Config {
       period_for_opening_dispute: DEFAULT_PERIOD_FOR_OPENING_DISPUTE,
       categories: Config::default_categories(),
       tags: Config::default_tags(),
+      platform_fee_percentage: DEFAULT_PLATFORM_FEE_PERCENTAGE,
+      validators_dao_fee_percentage: DEFAULT_VALIDATORS_DAO_FEE_PERCENTAGE,
+      penalty_platform_fee_percentage: DEFAULT_PENALTY_PLATFORM_FEE_PERCENTAGE,
+      penalty_validators_dao_fee_percentage: DEFAULT_PENALTY_VALIDATORS_DAO_FEE_PERCENTAGE,
+    }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct FeeStats {
+  pub balance: U128,
+  pub locked_balance: U128,
+  pub amount_received: U128,
+  pub amount_withdrawn: U128,
+  pub refunded_amount: U128,
+  pub penalty_amount: U128,
+}
+
+impl FeeStats {
+  pub fn new() -> Self {
+    Self {
+      balance: U128(0),
+      locked_balance: U128(0),
+      amount_received: U128(0),
+      amount_withdrawn: U128(0),
+      refunded_amount: U128(0),
+      penalty_amount: U128(0),
+    }
+  }
+
+  pub fn receiving_commission(&mut self, amount: &U128) {
+    self.balance = U128(self.balance.0 + amount.0);
+    self.locked_balance = U128(self.locked_balance.0 + amount.0);
+    self.amount_received = U128(self.amount_received.0 + amount.0);
+  }
+
+  pub fn get_available_balance(&self) -> U128 {
+    U128(self.balance.0 - self.locked_balance.0)
+  }
+
+  pub fn withdrawal_of_commission(&mut self, amount: &U128) {
+    self.balance = U128(self.balance.0 - amount.0);
+    self.amount_withdrawn = U128(self.amount_withdrawn.0 + amount.0);
+  }
+
+  pub fn assert_locked_amount_greater_than_or_equal_transaction_amount(&self, amount: &U128) {
+    assert!(
+      self.locked_balance.0 >= amount.0,
+      "The locked amount cannot be less than the transaction amount"
+    );
+  }
+
+  pub fn commission_unlocking(&mut self, amount: &U128) {
+    self.locked_balance = U128(self.locked_balance.0 - amount.0);
+  }
+
+  pub fn refund_commission(&mut self, amount: &U128, full_percentage: u32, penalty_percentage: u32) {
+    if full_percentage == 0 {
+      return;
+    }
+    self.balance = U128(self.balance.0 - amount.0);
+    self.locked_balance = U128(self.locked_balance.0 - amount.0);
+    let penalty_amount: u128 = amount.0 * penalty_percentage as u128 / full_percentage as u128;
+    self.refunded_amount = U128(self.refunded_amount.0 + amount.0 - penalty_amount);
+    self.penalty_amount = U128(self.penalty_amount.0 + penalty_amount);
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct DaoFeeStats {
+  pub token_id: AccountId,
+  pub fee_stats: FeeStats,
+}
+
+impl DaoFeeStats {
+  pub fn new(token_id: AccountId) -> Self {
+    Self {
+      token_id,
+      fee_stats: FeeStats::new(),
     }
   }
 }
@@ -613,10 +728,12 @@ impl Default for Config {
 #[derive(BorshStorageKey, BorshSerialize)]
 pub(crate) enum StorageKey {
   AccountBounties,
+  AdminWhitelist,
   Bounties,
   BountyClaimerAccounts,
   BountyClaimers,
-  AdminWhitelist,
-  TokenAccountIds,
   ClaimersWhitelist,
+  TokenAccountIds,
+  TotalFees,
+  TotalValidatorsDaoFees,
 }

@@ -58,6 +58,15 @@ pub struct BountiesContract {
   /// Whitelist accounts for which claims do not require approval.
   /// Map of whitelists for each bounty owner account.
   pub claimers_whitelist: LookupMap<AccountId, Vec<AccountId>>,
+
+  /// Total platform fees map per token ID
+  pub total_fees: LookupMap<AccountId, FeeStats>,
+
+  /// Total validators DAO fees per DAO account ID
+  pub total_validators_dao_fees: LookupMap<AccountId, Vec<DaoFeeStats>>,
+
+  /// Recipient of platform fee (optional)
+  pub recipient_of_platform_fee: Option<AccountId>,
 }
 
 #[near_bindgen]
@@ -69,15 +78,18 @@ impl BountiesContract {
     config: Option<Config>,
     reputation_contract: Option<AccountId>,
     dispute_contract: Option<AccountId>,
+    recipient_of_platform_fee: Option<AccountId>,
   ) -> Self {
     assert!(
       admins_whitelist.len() > 0,
       "Admin whitelist must contain at least one account"
     );
     let mut token_account_ids_set = UnorderedSet::new(StorageKey::TokenAccountIds);
-    token_account_ids_set.extend(token_account_ids.into_iter().map(|a| a.into()));
+    token_account_ids_set.extend(token_account_ids.clone().into_iter().map(|a| a.into()));
     let mut admins_whitelist_set = UnorderedSet::new(StorageKey::AdminWhitelist);
     admins_whitelist_set.extend(admins_whitelist.into_iter().map(|a| a.into()));
+    let mut total_fees_map = LookupMap::new(StorageKey::TotalFees);
+    total_fees_map.extend(token_account_ids.into_iter().map(|t| (t, FeeStats::new())));
 
     Self {
       token_account_ids: token_account_ids_set,
@@ -92,6 +104,9 @@ impl BountiesContract {
       reputation_contract,
       dispute_contract,
       claimers_whitelist: LookupMap::new(StorageKey::ClaimersWhitelist),
+      total_fees: total_fees_map,
+      total_validators_dao_fees: LookupMap::new(StorageKey::TotalValidatorsDaoFees),
+      recipient_of_platform_fee,
     }
   }
 
@@ -174,6 +189,11 @@ impl BountiesContract {
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     // TODO: Check if the account contains a ft contract
+    assert!(
+      !self.token_account_ids.contains(&token_id),
+      "The token already exists"
+    );
+    self.total_fees.insert(&token_id, &FeeStats::new());
     self.token_account_ids.insert(&token_id);
   }
 
@@ -217,6 +237,13 @@ impl BountiesContract {
         reference.remove(index.unwrap());
       }
     }
+  }
+
+  #[payable]
+  pub fn change_recipient_of_platform_fee(&mut self, recipient_of_platform_fee: AccountId) {
+    assert_one_yocto();
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+    self.recipient_of_platform_fee = Some(recipient_of_platform_fee);
   }
 
   /// Claim given bounty by caller with given expected duration to execute.
@@ -285,7 +312,7 @@ impl BountiesContract {
       _ => ()
     }
 
-    self.internal_add_claim(id, &mut claims, bounty_claim);
+    Self::internal_add_claim(id, &mut claims, bounty_claim);
     self.internal_save_claims(&sender_id, &claims);
     self.internal_add_bounty_claimer_account(id, sender_id.clone());
     self.locked_amount += env::attached_deposit();
@@ -306,7 +333,7 @@ impl BountiesContract {
     );
     bounty.check_access_rights();
     let mut claims = self.get_bounty_claims(claimer.clone());
-    let claim_idx = self.internal_find_claim(id, &mut claims).expect("No claims found");
+    let claim_idx = Self::internal_find_claim(id, &mut claims).expect("No claims found");
     let mut bounty_claim= claims[claim_idx].clone();
     assert!(
       matches!(bounty_claim.status, ClaimStatus::New),
@@ -348,7 +375,7 @@ impl BountiesContract {
 
     } else {
       if bounty.is_validators_dao_used() {
-        self.internal_add_proposal(id, sender_id, &mut bounty, claim_idx, &mut claims, description)
+        Self::internal_add_proposal(id, sender_id, &mut bounty, claim_idx, &mut claims, description)
       } else {
         claims[claim_idx].status = ClaimStatus::Completed;
         self.internal_save_claims(sender_id, &claims);
@@ -366,7 +393,9 @@ impl BountiesContract {
 
     let bounty = self.get_bounty(id.clone());
     assert!(
-      matches!(bounty.status, BountyStatus::Claimed),
+      matches!(bounty.status, BountyStatus::New) ||
+        matches!(bounty.status, BountyStatus::Claimed) ||
+        matches!(bounty.status, BountyStatus::Canceled),
       "Bounty status does not allow to give up"
     );
 
@@ -391,7 +420,9 @@ impl BountiesContract {
 
     claims[claim_idx].status = ClaimStatus::Canceled;
     self.internal_save_claims(&sender_id, &claims);
-    self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::New);
+    if matches!(bounty.status, BountyStatus::Claimed) {
+      self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::New);
+    }
     self.internal_update_statistic(
       Some(sender_id),
       None,
@@ -462,7 +493,7 @@ impl BountiesContract {
         else if matches!(claims[claim_idx].status, ClaimStatus::Completed) &&
           bounty.is_validators_dao_used()
         {
-          self.internal_get_proposal(id, receiver_id, &mut bounty, claim_idx, &mut claims)
+          Self::internal_get_proposal(id, receiver_id, &mut bounty, claim_idx, &mut claims)
         }
 
         else if matches!(claims[claim_idx].status, ClaimStatus::Rejected) &&
@@ -579,6 +610,46 @@ impl BountiesContract {
 
     assert!(changed, "No changes found");
     self.bounties.insert(&id, &bounty.into());
+  }
+
+  #[payable]
+  pub fn withdraw_platform_fee(&mut self, token_id: AccountId) -> PromiseOrValue<()> {
+    assert_one_yocto();
+    assert_eq!(
+      self.recipient_of_platform_fee
+        .clone().expect("The recipient of the platform fee is not specified"),
+      env::predecessor_account_id(),
+      "This account does not have permission to perform this action"
+    );
+    let balance = self.internal_get_unlocked_platform_fee_amount(token_id.clone());
+    assert!(balance.0 > 0, "The available balance of commission is zero");
+
+    Self::internal_fees_payout(
+      token_id,
+      balance,
+      env::predecessor_account_id(),
+      "Bounties platform fee transfer",
+      true,
+    )
+  }
+
+  #[payable]
+  pub fn withdraw_validators_dao_fee(&mut self, token_id: AccountId) -> PromiseOrValue<()> {
+    assert_one_yocto();
+    let dao_account_id = env::predecessor_account_id();
+    let balance = self.internal_get_unlocked_validators_dao_fee_amount(
+      dao_account_id.clone(),
+      token_id.clone()
+    );
+    assert!(balance.0 > 0, "The available balance of commission is zero");
+
+    Self::internal_fees_payout(
+      token_id,
+      balance,
+      dao_account_id,
+      "Bounties validators DAO fee transfer",
+      false,
+    )
   }
 
   #[payable]
@@ -702,9 +773,13 @@ mod tests {
     validators_dao: Option<ValidatorsDao>
   ) -> BountyIndex {
     let bounty_index: BountyIndex = 0;
-    contract.bounties.insert(&bounty_index, &Bounty {
+    let bounty = Bounty {
       token: get_token_id(),
       amount: U128(d(2_000, TOKEN_DECIMALS)),
+      platform_fee: U128(d(200, TOKEN_DECIMALS)),
+      dao_fee: if validators_dao.is_some() {
+        U128(d(200, TOKEN_DECIMALS))
+      } else { U128(0) },
       metadata: BountyMetadata {
         title: "test".to_string(),
         description: "test".to_string(),
@@ -725,9 +800,12 @@ mod tests {
       owner: owner.clone(),
       status: BountyStatus::New,
       created_at: U64::from(0),
-    }.into());
+    };
+    contract.bounties.insert(&bounty_index, &bounty.clone().into());
     contract.account_bounties.insert(owner, &vec![bounty_index]);
     contract.last_bounty_id = bounty_index.clone() + 1;
+    contract.internal_total_fees_receiving_funds(&bounty);
+
     bounty_index
   }
 
@@ -802,6 +880,7 @@ mod tests {
       vec![],
       None,
       None,
+      None,
       None
     );
   }
@@ -816,6 +895,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None
@@ -841,6 +921,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None
@@ -869,6 +950,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
       None,
+      None,
       None
     );
     contract.add_to_admins_whitelist(None, None);
@@ -884,6 +966,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
       None,
+      None,
       None
     );
     contract.add_to_admins_whitelist(Some(accounts(1)), None);
@@ -897,6 +980,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None
@@ -918,6 +1002,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
       None,
+      None,
       None
     );
     contract.remove_from_admins_whitelist(Some(accounts(0)), None);
@@ -933,6 +1018,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None
@@ -957,6 +1043,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
       None,
+      None,
       None
     );
 
@@ -964,6 +1051,10 @@ mod tests {
       bounty_claim_bond: U128::from(2_000_000_000_000_000_000_000_000),
       bounty_forgiveness_period: U64::from(1_000_000_000 * 60 * 60 * 24 * 7),
       period_for_opening_dispute: U64::from(1_000_000_000 * 60 * 60 * 24 * 20),
+      platform_fee_percentage: 7_000,
+      validators_dao_fee_percentage: 5_000,
+      penalty_platform_fee_percentage: 500,
+      penalty_validators_dao_fee_percentage: 500,
     };
     contract.change_config(config_create.clone());
     let config = contract.get_config();
@@ -971,6 +1062,10 @@ mod tests {
       bounty_claim_bond: config.bounty_claim_bond,
       bounty_forgiveness_period: config.bounty_forgiveness_period,
       period_for_opening_dispute: config.period_for_opening_dispute,
+      platform_fee_percentage: config.platform_fee_percentage,
+      validators_dao_fee_percentage: config.validators_dao_fee_percentage,
+      penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
+      penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
     });
   }
 
@@ -981,6 +1076,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None
@@ -1018,6 +1114,7 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
+      None,
       None
     );
     let id = add_bounty(&mut contract, &accounts(1), None);
@@ -1040,6 +1137,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None
@@ -1068,6 +1166,7 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
+      None,
       None
     );
     let id = add_bounty(&mut contract, &accounts(1), None);
@@ -1091,6 +1190,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None
@@ -1117,6 +1217,7 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
+      None,
       None
     );
     let id = add_bounty(&mut contract, &accounts(1), None);
@@ -1141,6 +1242,7 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
+      None,
       None
     );
     let id = add_bounty(&mut contract, &accounts(1), None);
@@ -1157,6 +1259,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None
@@ -1176,6 +1279,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None
@@ -1204,6 +1308,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None
@@ -1254,10 +1359,15 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
+      None,
       None
     );
     let id = add_bounty(&mut contract, &accounts(1), None);
     let claimer = accounts(2);
+    // Change bounty status
+    let mut bounty = contract.bounties.get(&id).unwrap().to_bounty();
+    bounty.status = BountyStatus::Completed;
+    contract.bounties.insert(&id, &bounty.into());
 
     bounty_give_up(
       &mut context,
@@ -1276,6 +1386,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None
@@ -1301,6 +1412,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None
@@ -1349,6 +1461,7 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
+      None,
       None
     );
     let project_owner = accounts(1);
@@ -1382,6 +1495,7 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
+      None,
       None
     );
     let project_owner = accounts(1);
@@ -1405,6 +1519,7 @@ mod tests {
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None
@@ -1451,6 +1566,7 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
+      None,
       None
     );
     let project_owner = accounts(1);
@@ -1484,7 +1600,8 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
-      Some(get_disputes_contract())
+      Some(get_disputes_contract()),
+      None
     );
     let project_owner = accounts(1);
     let id = add_bounty(&mut contract, &project_owner, None);
@@ -1506,7 +1623,8 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
-      Some(get_disputes_contract())
+      Some(get_disputes_contract()),
+      None
     );
     let project_owner = accounts(1);
     let id = add_bounty(&mut contract, &project_owner, None);
@@ -1543,7 +1661,8 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
-      Some(get_disputes_contract())
+      Some(get_disputes_contract()),
+      None
     );
     let project_owner = accounts(1);
     let id = add_bounty(&mut contract, &project_owner, None);
@@ -1568,7 +1687,8 @@ mod tests {
       vec![accounts(0)],
       None,
       None,
-      Some(get_disputes_contract())
+      Some(get_disputes_contract()),
+      None
     );
 
     testing_env!(context
@@ -1580,6 +1700,10 @@ mod tests {
       bounty_claim_bond: config.bounty_claim_bond,
       period_for_opening_dispute: U64(10),
       bounty_forgiveness_period: config.bounty_forgiveness_period,
+      platform_fee_percentage: config.platform_fee_percentage,
+      validators_dao_fee_percentage: config.validators_dao_fee_percentage,
+      penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
+      penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
     });
 
     let project_owner = accounts(1);

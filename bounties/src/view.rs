@@ -99,12 +99,22 @@ impl BountiesContract {
       .map(|account_id|
         {
           let claims = self.get_bounty_claims(account_id.clone());
-          let index = self.internal_find_claim(id, &claims).unwrap();
+          let index = Self::internal_find_claim(id, &claims).unwrap();
           (
             account_id,
             claims[index].clone()
           )
         }
       ).collect()
+  }
+
+  pub fn get_total_fees(&self, token_id: AccountId) -> FeeStats {
+    self.total_fees.get(&token_id).expect("Token not found")
+  }
+
+  pub fn get_total_validators_dao_fees(&self, dao_account_id: AccountId) -> Vec<DaoFeeStats> {
+    self.total_validators_dao_fees
+      .get(&dao_account_id)
+      .unwrap_or_default()
   }
 }

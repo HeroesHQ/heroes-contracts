@@ -37,6 +37,7 @@ impl BountiesContract {
     } else {
       let with_dispute = matches!(claims[claim_idx].status, ClaimStatus::Disputed);
       claims[claim_idx].status = ClaimStatus::Approved;
+      self.internal_total_fees_unlocking_funds(&bounty);
       self.internal_save_claims(&receiver_id, &claims);
       self.internal_change_status_and_save_bounty(&id, bounty.clone(), BountyStatus::Completed);
       self.internal_update_statistic(
@@ -59,7 +60,29 @@ impl BountiesContract {
       env::log_str("Bounty refund failed");
       false
     } else {
+      self.internal_total_fees_refunding_funds(&bounty);
       self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::Canceled);
+      true
+    }
+  }
+
+  #[private]
+  pub fn after_fees_payout(
+    &mut self,
+    token_id: AccountId,
+    amount: U128,
+    is_platform_fee: bool,
+    account_id: AccountId,
+  ) -> bool {
+    if !is_promise_success() {
+      env::log_str("Fees payout failed");
+      false
+    } else {
+      if is_platform_fee {
+        self.internal_platform_fee_withdraw(token_id, amount);
+      } else {
+        self.internal_validators_dao_fee_withdraw(account_id, token_id, amount);
+      }
       true
     }
   }

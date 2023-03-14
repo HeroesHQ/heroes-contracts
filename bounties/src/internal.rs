@@ -44,12 +44,176 @@ impl BountiesContract {
     indices.push(id);
     self.internal_save_account_bounties(&bounty.owner, indices);
     self.last_bounty_id += 1;
+    self.internal_total_fees_receiving_funds(&bounty);
     self.internal_update_statistic(
       None,
       Some(bounty.owner.clone()),
       ReputationActionKind::BountyCreated
     );
     id
+  }
+
+  pub(crate) fn internal_total_fees_receiving_funds(
+    &mut self,
+    bounty: &Bounty,
+  ) {
+    let mut total_fees = self.total_fees.get(&bounty.token).unwrap();
+    total_fees.receiving_commission(&bounty.platform_fee);
+    self.total_fees.insert(&bounty.token, &total_fees);
+
+    let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
+    if dao_fee_stats.is_some() {
+      let (dao_account_id, mut stats, stats_idx) = dao_fee_stats.unwrap();
+      stats[stats_idx].fee_stats.receiving_commission(&bounty.dao_fee);
+      self.total_validators_dao_fees.insert(&dao_account_id, &stats);
+    }
+  }
+
+  pub(crate) fn internal_get_dao_fee_stats(
+    &self,
+    bounty: &Bounty,
+  ) -> Option<(AccountId, Vec<DaoFeeStats>, usize)> {
+    if bounty.reviewers.is_some() {
+      match bounty.reviewers.clone().unwrap() {
+        Reviewers::ValidatorsDao { validators_dao } => {
+          let mut stats = self.get_total_validators_dao_fees(validators_dao.clone().account_id);
+          let stats_idx = Self::internal_find_dao_fee_stats(bounty.clone().token, &mut stats);
+          return Some((validators_dao.account_id, stats, stats_idx));
+        },
+        _ => {}
+      }
+    };
+    None
+  }
+
+  pub(crate) fn internal_find_dao_fee_stats(
+    token_id: AccountId,
+    stats: &mut Vec<DaoFeeStats>
+  ) -> usize {
+    let stats_size = stats.len();
+    for i in 0..stats_size {
+      if stats[i].token_id == token_id {
+        return i;
+      }
+    }
+    stats.push(DaoFeeStats::new(token_id));
+    stats_size
+  }
+
+  pub(crate) fn internal_get_unlocked_platform_fee_amount(&self, token_id: AccountId) -> U128 {
+    self.total_fees
+      .get(&token_id)
+      .expect("No platform fees found")
+      .get_available_balance()
+  }
+
+  pub(crate) fn internal_platform_fee_withdraw(
+    &mut self,
+    token_id: AccountId,
+    amount: U128,
+  ) {
+    let mut total_fees = self.total_fees.get(&token_id).unwrap();
+    total_fees.withdrawal_of_commission(&amount);
+    self.total_fees.insert(&token_id, &total_fees);
+  }
+
+  pub(crate) fn internal_get_unlocked_validators_dao_fee_amount(
+    &self,
+    dao_account_id: AccountId,
+    token_id: AccountId
+  ) -> U128 {
+    let mut stats = self.total_validators_dao_fees
+      .get(&dao_account_id)
+      .expect("No validators DAO fees found");
+    let stats_idx = Self::internal_find_dao_fee_stats(token_id, &mut stats);
+    stats[stats_idx].fee_stats.get_available_balance()
+  }
+
+  pub(crate) fn internal_validators_dao_fee_withdraw(
+    &mut self,
+    dao_account_id: AccountId,
+    token_id: AccountId,
+    amount: U128,
+  ) {
+    let mut stats = self.total_validators_dao_fees
+      .get(&dao_account_id)
+      .expect("No validators DAO fees found");
+    let stats_idx = Self::internal_find_dao_fee_stats(token_id, &mut stats);
+    stats[stats_idx].fee_stats.withdrawal_of_commission(&amount);
+    self.total_validators_dao_fees.insert(&dao_account_id, &stats);
+  }
+
+  pub(crate) fn assert_locked_amount_greater_than_or_equal_transaction_amount(
+    &self,
+    bounty: &Bounty,
+  ) {
+    let total_fees = self.total_fees.get(&bounty.token).unwrap();
+    total_fees.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty.platform_fee);
+    let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
+    if dao_fee_stats.is_some() {
+      let (_, stats, stats_idx) = dao_fee_stats.unwrap();
+      stats[stats_idx].fee_stats
+        .assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty.dao_fee);
+    }
+  }
+
+  pub(crate) fn internal_total_fees_refunding_funds(
+    &mut self,
+    bounty: &Bounty,
+  ) {
+    let mut total_fees = self.total_fees.get(&bounty.token).unwrap();
+    total_fees.refund_commission(
+      &bounty.platform_fee,
+      self.config.platform_fee_percentage,
+      self.config.penalty_platform_fee_percentage
+    );
+    self.total_fees.insert(&bounty.token, &total_fees);
+
+    let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
+    if dao_fee_stats.is_some() {
+      let (dao_account_id, mut stats, stats_idx) = dao_fee_stats.unwrap();
+      stats[stats_idx].fee_stats.refund_commission(
+        &bounty.dao_fee,
+        self.config.validators_dao_fee_percentage,
+        self.config.penalty_validators_dao_fee_percentage
+      );
+      self.total_validators_dao_fees.insert(&dao_account_id, &stats);
+    }
+  }
+
+  pub(crate) fn internal_total_fees_unlocking_funds(
+    &mut self,
+    bounty: &Bounty,
+  ) {
+    let mut total_fees = self.total_fees.get(&bounty.token).unwrap();
+    total_fees.commission_unlocking(&bounty.platform_fee);
+    self.total_fees.insert(&bounty.token, &total_fees);
+
+    let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
+    if dao_fee_stats.is_some() {
+      let (dao_account_id, mut stats, stats_idx) = dao_fee_stats.unwrap();
+      stats[stats_idx].fee_stats.commission_unlocking(&bounty.dao_fee);
+      self.total_validators_dao_fees.insert(&dao_account_id, &stats);
+    }
+  }
+
+  pub(crate) fn internal_get_full_bounty_amount(
+    &self,
+    bounty: &Bounty,
+  ) -> U128 {
+    let penalty_platform_fee: u128 = if self.config.platform_fee_percentage != 0 {
+      bounty.platform_fee.0 *
+        self.config.penalty_platform_fee_percentage as u128 /
+        self.config.platform_fee_percentage as u128
+    } else { 0 };
+    let penalty_validators_dao_fee: u128 = if self.config.validators_dao_fee_percentage != 0 {
+      bounty.dao_fee.0 *
+        self.config.penalty_validators_dao_fee_percentage as u128 /
+        self.config.platform_fee_percentage as u128
+    } else { 0 };
+    let amount = bounty.amount.0 + bounty.platform_fee.0 - penalty_platform_fee +
+      bounty.dao_fee.0 - penalty_validators_dao_fee;
+    U128(amount)
   }
 
   pub(crate) fn internal_save_account_bounties(
@@ -65,7 +229,6 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_find_claim(
-    &self,
     id: BountyIndex,
     claims: &[BountyClaim]
   ) -> Option<usize> {
@@ -78,12 +241,11 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_add_claim(
-    &self,
     id: BountyIndex,
     claims: &mut Vec<BountyClaim>,
     new_claim: BountyClaim
   ) {
-    let claim_idx = self.internal_find_claim(id, claims);
+    let claim_idx = Self::internal_find_claim(id, claims);
     if claim_idx.is_some() {
       claims.insert(claim_idx.unwrap(), new_claim);
     } else {
@@ -104,8 +266,7 @@ impl BountiesContract {
       .into_iter()
       .map(|c| c.into())
       .collect();
-    let claim_idx = self
-      .internal_find_claim(id, &claims)
+    let claim_idx = Self::internal_find_claim(id, &claims)
       .expect("No bounty claim found");
     (claims, claim_idx)
   }
@@ -198,7 +359,7 @@ impl BountiesContract {
     self.bounties.insert(&id, &bounty.into());
   }
 
-  pub(crate) fn is_claim_active(&self, claim: &BountyClaim) -> bool {
+  pub(crate) fn is_claim_active(claim: &BountyClaim) -> bool {
     matches!(claim.status, ClaimStatus::InProgress)
       || matches!(claim.status, ClaimStatus::Completed)
       || matches!(claim.status, ClaimStatus::Rejected)
@@ -222,9 +383,9 @@ impl BountiesContract {
 
     for account_id in account_ids {
       let claims = self.get_bounty_claims(account_id.clone());
-      let index = self.internal_find_claim(id, &claims).unwrap();
+      let index = Self::internal_find_claim(id, &claims).unwrap();
       let claim = claims[index].clone();
-      if self.is_claim_active(&claim) {
+      if Self::is_claim_active(&claim) {
         return (account_id, claims, index);
       }
     }
@@ -233,13 +394,14 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_bounty_payout(
-    &mut self,
+    &self,
     id: BountyIndex,
     receiver_id: AccountId,
     bounty: &mut Bounty,
     claim_idx: usize,
     claims: &mut Vec<BountyClaim>,
   ) -> PromiseOrValue<()> {
+    self.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty);
     ext_ft_contract::ext(bounty.token.clone())
       .with_attached_deposit(ONE_YOCTO)
       .with_static_gas(GAS_FOR_FT_TRANSFER)
@@ -257,22 +419,48 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_refund_bounty_amount(
-    &mut self,
+    &self,
     id: BountyIndex,
     bounty: Bounty,
   ) -> PromiseOrValue<()> {
+    self.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty);
+    let full_amount = self.internal_get_full_bounty_amount(&bounty);
+
     ext_ft_contract::ext(bounty.token.clone())
       .with_attached_deposit(ONE_YOCTO)
       .with_static_gas(GAS_FOR_FT_TRANSFER)
       .ft_transfer(
         bounty.owner.clone(),
-        bounty.amount.clone(),
+        full_amount,
         Some(format!("Returning amount of bounty {} to {}", id, bounty.owner)),
       )
       .then(
         Self::ext(env::current_account_id())
-          .with_static_gas(GAS_FOR_AFTER_FT_REFUND)
+          .with_static_gas(GAS_FOR_AFTER_FT_TRANSACT)
           .after_refund_bounty_amount(id, bounty)
+      )
+      .into()
+  }
+
+  pub(crate) fn internal_fees_payout(
+    token_id: AccountId,
+    amount: U128,
+    receiver: AccountId,
+    msg: &str,
+    is_platform_fee: bool,
+  ) -> PromiseOrValue<()> {
+    ext_ft_contract::ext(token_id.clone())
+      .with_attached_deposit(ONE_YOCTO)
+      .with_static_gas(GAS_FOR_FT_TRANSFER)
+      .ft_transfer(
+        receiver.clone(),
+        amount.clone(),
+        Some(format!("{} to {}", msg, receiver.clone())),
+      )
+      .then(
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_AFTER_FT_TRANSACT)
+          .after_fees_payout(token_id, amount, is_platform_fee, receiver)
       )
       .into()
   }
@@ -297,7 +485,6 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_add_proposal(
-    &mut self,
     id: BountyIndex,
     sender_id: &AccountId,
     bounty: &mut Bounty,
@@ -354,7 +541,6 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_get_proposal(
-    &mut self,
     id: BountyIndex,
     receiver_id: AccountId,
     bounty: &mut Bounty,
@@ -382,7 +568,7 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_create_dispute(
-    &mut self,
+    &self,
     id: BountyIndex,
     receiver_id: &AccountId,
     bounty: Bounty,
@@ -431,7 +617,7 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_get_dispute(
-    &mut self,
+    &self,
     id: BountyIndex,
     receiver_id: AccountId,
     bounty: &mut Bounty,

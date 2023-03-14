@@ -22,7 +22,7 @@ impl FungibleTokenReceiver for BountiesContract {
     let ft_message: FtMessage = serde_json::from_str(&msg).unwrap();
     match ft_message {
       FtMessage::BountyCreate(bounty_create) => {
-        let bounty = bounty_create.to_bounty(&sender_id, token_id, amount);
+        let bounty = bounty_create.to_bounty(&sender_id, token_id, amount, self.config.clone());
         bounty.assert_new_valid();
         self.assert_bounty_category_is_correct(bounty.clone().metadata.category);
         if bounty.clone().metadata.tags.is_some() {
