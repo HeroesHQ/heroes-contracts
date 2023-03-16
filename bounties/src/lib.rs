@@ -1,6 +1,6 @@
 use near_contract_standards::fungible_token::receiver::FungibleTokenReceiver;
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{LookupMap, UnorderedSet};
+use near_sdk::collections::{LookupMap, UnorderedMap, UnorderedSet};
 use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::serde_json::json;
 use near_sdk::serde::{Deserialize, Serialize};
@@ -19,7 +19,7 @@ pub mod view;
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct BountiesContract {
   /// Token types allowed for use
-  pub token_account_ids: UnorderedSet<AccountId>,
+  pub tokens: UnorderedMap<AccountId, TokenDetails>,
 
   /// Last available id for the bounty.
   pub last_bounty_id: BountyIndex,
@@ -55,6 +55,9 @@ pub struct BountiesContract {
   /// Dispute contract (optional)
   pub dispute_contract: Option<AccountId>,
 
+  /// KYC whitelist contract (optional)
+  pub kyc_whitelist_contract: Option<AccountId>,
+
   /// Whitelist accounts for which claims do not require approval.
   /// Map of whitelists for each bounty owner account.
   pub claimers_whitelist: LookupMap<AccountId, Vec<AccountId>>,
@@ -73,26 +76,22 @@ pub struct BountiesContract {
 impl BountiesContract {
   #[init]
   pub fn new(
-    token_account_ids: Vec<AccountId>,
     admins_whitelist: Vec<AccountId>,
     config: Option<Config>,
     reputation_contract: Option<AccountId>,
     dispute_contract: Option<AccountId>,
+    kyc_whitelist_contract: Option<AccountId>,
     recipient_of_platform_fee: Option<AccountId>,
   ) -> Self {
     assert!(
       admins_whitelist.len() > 0,
       "Admin whitelist must contain at least one account"
     );
-    let mut token_account_ids_set = UnorderedSet::new(StorageKey::TokenAccountIds);
-    token_account_ids_set.extend(token_account_ids.clone().into_iter().map(|a| a.into()));
     let mut admins_whitelist_set = UnorderedSet::new(StorageKey::AdminWhitelist);
     admins_whitelist_set.extend(admins_whitelist.into_iter().map(|a| a.into()));
-    let mut total_fees_map = LookupMap::new(StorageKey::TotalFees);
-    total_fees_map.extend(token_account_ids.into_iter().map(|t| (t, FeeStats::new())));
 
     Self {
-      token_account_ids: token_account_ids_set,
+      tokens: UnorderedMap::new(StorageKey::Tokens),
       last_bounty_id: 0,
       bounties: LookupMap::new(StorageKey::Bounties),
       account_bounties: LookupMap::new(StorageKey::AccountBounties),
@@ -103,8 +102,9 @@ impl BountiesContract {
       config: config.unwrap_or_default(),
       reputation_contract,
       dispute_contract,
+      kyc_whitelist_contract,
       claimers_whitelist: LookupMap::new(StorageKey::ClaimersWhitelist),
-      total_fees: total_fees_map,
+      total_fees: LookupMap::new(StorageKey::TotalFees),
       total_validators_dao_fees: LookupMap::new(StorageKey::TotalValidatorsDaoFees),
       recipient_of_platform_fee,
     }
@@ -185,16 +185,36 @@ impl BountiesContract {
   }
 
   #[payable]
-  pub fn add_token_id(&mut self, token_id: AccountId) {
+  pub fn add_token_id(
+    &mut self,
+    token_id: AccountId,
+    min_amount_for_kyc: Option<U128>
+  ) -> PromiseOrValue<()> {
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
-    // TODO: Check if the account contains a ft contract
     assert!(
-      !self.token_account_ids.contains(&token_id),
+      self.tokens.get(&token_id).is_none(),
       "The token already exists"
     );
-    self.total_fees.insert(&token_id, &FeeStats::new());
-    self.token_account_ids.insert(&token_id);
+    self.internal_get_ft_metadata(token_id, min_amount_for_kyc)
+  }
+
+  #[payable]
+  pub fn update_token(&mut self, token_id: AccountId, token_details: TokenDetails) {
+    assert_one_yocto();
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+    assert!(
+      self.tokens.get(&token_id).is_some(),
+      "No token found"
+    );
+    self.tokens.insert(&token_id, &token_details);
+  }
+
+  #[payable]
+  pub fn update_kyc_whitelist_contract(&mut self, kyc_whitelist_contract: Option<AccountId>) {
+    assert_one_yocto();
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+    self.kyc_whitelist_contract = kyc_whitelist_contract;
   }
 
   #[payable]
@@ -249,7 +269,12 @@ impl BountiesContract {
   /// Claim given bounty by caller with given expected duration to execute.
   /// Bond must be attached to the claim.
   #[payable]
-  pub fn bounty_claim(&mut self, id: BountyIndex, deadline: U64, description: String) {
+  pub fn bounty_claim(
+    &mut self,
+    id: BountyIndex,
+    deadline: U64,
+    description: String
+  ) -> PromiseOrValue<()> {
     let bounty = self.get_bounty(id.clone());
 
     assert_eq!(
@@ -270,10 +295,6 @@ impl BountiesContract {
       "The description cannot be empty"
     );
 
-    let need_approval = match bounty.claimer_approval {
-      ClaimerApproval::WithoutApproval => false,
-      _ => true,
-    };
     let sender_id = env::predecessor_account_id();
     bounty.assert_account_is_not_owner_or_reviewer(sender_id.clone());
 
@@ -287,40 +308,18 @@ impl BountiesContract {
       "There is already a claim with status 'New' for this account"
     );
 
-    let created_at = U64::from(env::block_timestamp());
-    let mut bounty_claim = BountyClaim {
-      bounty_id: id,
-      created_at: created_at.clone(),
-      start_time: if need_approval { None } else { Some(created_at) },
-      deadline,
-      description,
-      status: if need_approval { ClaimStatus::New } else { ClaimStatus::InProgress },
-      proposal_id: None,
-      rejected_timestamp: None,
-      dispute_id: None,
-    };
-
-    match bounty.claimer_approval {
-      ClaimerApproval::ApprovalWithWhitelist => {
-        if self.is_claimer_whitelisted(bounty.clone().owner, &sender_id) {
-          self.internal_claimer_approval(id, bounty.clone(), &mut bounty_claim);
-        }
-      }
-      ClaimerApproval::WithoutApproval => {
-        self.internal_change_status_and_save_bounty(&id, bounty.clone(), BountyStatus::Claimed);
-      }
-      _ => ()
+    let token_details = self.tokens.get(&bounty.token).unwrap();
+    if self.kyc_whitelist_contract.is_some() &&
+      (
+        token_details.min_amount_for_kyc.is_none() ||
+          bounty.amount.0 >= token_details.min_amount_for_kyc.unwrap().0
+      )
+    {
+      self.is_claimer_in_kyc_whitelist(id, bounty, &mut claims, sender_id, deadline, description)
+    } else {
+      self.internal_create_claim(id, bounty, &mut claims, sender_id, deadline, description);
+      PromiseOrValue::Value(())
     }
-
-    Self::internal_add_claim(id, &mut claims, bounty_claim);
-    self.internal_save_claims(&sender_id, &claims);
-    self.internal_add_bounty_claimer_account(id, sender_id.clone());
-    self.locked_amount += env::attached_deposit();
-    self.internal_update_statistic(
-      Some(sender_id),
-      Some(bounty.owner.clone()),
-      ReputationActionKind::ClaimCreated
-    );
   }
 
   #[payable]
@@ -749,8 +748,8 @@ mod tests {
   use near_sdk::json_types::{U128, U64};
   use near_sdk::{testing_env, AccountId, Balance};
   use crate::{BountiesContract, Bounty, BountyAction, BountyClaim, BountyIndex, BountyMetadata,
-              BountyStatus, ClaimerApproval, ClaimStatus, Config, ConfigCreate, Deadline, Reviewers,
-              ValidatorsDao, ValidatorsDaoParams};
+              BountyStatus, ClaimerApproval, ClaimStatus, Config, ConfigCreate, Deadline, FeeStats,
+              Reviewers, TokenDetails, ValidatorsDao, ValidatorsDaoParams};
 
   pub const TOKEN_DECIMALS: u8 = 18;
   pub const MAX_DEADLINE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
@@ -804,9 +803,20 @@ mod tests {
     contract.bounties.insert(&bounty_index, &bounty.clone().into());
     contract.account_bounties.insert(owner, &vec![bounty_index]);
     contract.last_bounty_id = bounty_index.clone() + 1;
+    add_token(contract);
     contract.internal_total_fees_receiving_funds(&bounty);
 
     bounty_index
+  }
+
+  fn add_token(
+    contract: &mut BountiesContract,
+  ) {
+    contract.total_fees.insert(&get_token_id(), &FeeStats::new());
+    contract.tokens.insert(&get_token_id(), &TokenDetails {
+      enabled: true,
+      min_amount_for_kyc: None,
+    });
   }
 
   fn bounty_claim(
@@ -876,8 +886,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.predecessor_account_id(accounts(0)).build());
     BountiesContract::new(
-      vec![get_token_id()],
       vec![],
+      None,
       None,
       None,
       None,
@@ -893,8 +903,8 @@ mod tests {
       .attached_deposit(1)
       .build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None,
@@ -919,8 +929,8 @@ mod tests {
       .attached_deposit(1)
       .build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None,
@@ -946,8 +956,8 @@ mod tests {
       .attached_deposit(1)
       .build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None,
@@ -962,8 +972,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.predecessor_account_id(accounts(0)).build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None,
@@ -978,8 +988,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.predecessor_account_id(accounts(0)).build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None,
@@ -998,8 +1008,8 @@ mod tests {
       .attached_deposit(1)
       .build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None,
@@ -1016,18 +1026,68 @@ mod tests {
       .attached_deposit(1)
       .build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None,
       None
     );
 
-    contract.add_token_id("new_token".parse().unwrap());
+    contract.add_token_id(get_token_id(), None);
+    // For the unit test, the list of tokens has not changed.
+    // The action is performed in the promise callback function (see simulation test).
+  }
+
+  #[test]
+  #[should_panic(expected = "The token already exists")]
+  fn test_token_already_exists() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context
+      .predecessor_account_id(accounts(0))
+      .attached_deposit(1)
+      .build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0).into()],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    add_token(&mut contract);
+
+    contract.add_token_id(get_token_id(), None);
+  }
+
+  #[test]
+  fn test_get_tokens() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context
+      .predecessor_account_id(accounts(0))
+      .attached_deposit(1)
+      .build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0).into()],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    add_token(&mut contract);
+
     assert_eq!(
-      contract.get_token_account_ids(),
-      vec!["token_id".parse().unwrap(), "new_token".parse().unwrap()]
+      contract.get_tokens(),
+      [
+        (
+          get_token_id(),
+          TokenDetails {
+            enabled: true,
+            min_amount_for_kyc: None
+          }
+        )
+      ]
     );
   }
 
@@ -1039,8 +1099,8 @@ mod tests {
       .attached_deposit(1)
       .build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0).into()],
+      None,
       None,
       None,
       None,
@@ -1075,7 +1135,7 @@ mod tests {
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
       vec![get_token_id()],
-      vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1110,8 +1170,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1135,8 +1195,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1162,8 +1222,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1188,8 +1248,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1213,8 +1273,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1238,8 +1298,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1257,8 +1317,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1277,8 +1337,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1306,8 +1366,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1355,8 +1415,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1384,8 +1444,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1410,8 +1470,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1457,8 +1517,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1491,8 +1551,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1517,8 +1577,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1562,8 +1622,8 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
+      None,
       None,
       None,
       None,
@@ -1596,11 +1656,11 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
       None,
       None,
       Some(get_disputes_contract()),
+      None,
       None
     );
     let project_owner = accounts(1);
@@ -1619,11 +1679,11 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
       None,
       None,
       Some(get_disputes_contract()),
+      None,
       None
     );
     let project_owner = accounts(1);
@@ -1657,11 +1717,11 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
       None,
       None,
       Some(get_disputes_contract()),
+      None,
       None
     );
     let project_owner = accounts(1);
@@ -1683,11 +1743,11 @@ mod tests {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
-      vec![get_token_id()],
       vec![accounts(0)],
       None,
       None,
       Some(get_disputes_contract()),
+      None,
       None
     );
 

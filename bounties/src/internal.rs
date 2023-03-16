@@ -2,9 +2,14 @@ use crate::*;
 
 impl BountiesContract {
   pub(crate) fn assert_that_caller_is_allowed(&self, account_id: &AccountId) {
+    let token_details = self.tokens.get(account_id);
     assert!(
-      self.token_account_ids.contains(account_id),
-      "Predecessor Account ID is not an allowed FT contract"
+      token_details.is_some(),
+      "Predecessor account ID is not an allowed FT contract"
+    );
+    assert!(
+      token_details.unwrap().enabled,
+      "Creating a bounty using this token is not currently supported"
     );
   }
 
@@ -699,5 +704,104 @@ impl BountiesContract {
     self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::Claimed);
     claim.start_time = Some(U64::from(env::block_timestamp()));
     claim.status = ClaimStatus::InProgress;
+  }
+
+  pub(crate) fn internal_get_ft_metadata(
+    &self,
+    token_id: AccountId,
+    min_amount_for_kyc: Option<U128>,
+  ) -> PromiseOrValue<()> {
+    Promise::new(token_id.clone())
+      .function_call(
+        "ft_metadata".to_string(),
+        json!({}).to_string().into_bytes(),
+        NO_DEPOSIT,
+        GAS_FOR_GET_FT_METADATA,
+      )
+      .then(
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_AFTER_GET_FT_METADATA)
+          .after_get_ft_metadata(token_id, min_amount_for_kyc)
+      )
+      .into()
+  }
+
+  pub(crate) fn internal_create_claim(
+    &mut self,
+    id: BountyIndex,
+    bounty: Bounty,
+    claims: &mut Vec<BountyClaim>,
+    claimer: AccountId,
+    deadline: U64,
+    description: String,
+  ) {
+    let need_approval = match bounty.claimer_approval {
+      ClaimerApproval::WithoutApproval => false,
+      _ => true,
+    };
+    let created_at = U64::from(env::block_timestamp());
+    let mut bounty_claim = BountyClaim {
+      bounty_id: id,
+      created_at: created_at.clone(),
+      start_time: if need_approval { None } else { Some(created_at) },
+      deadline,
+      description,
+      status: if need_approval { ClaimStatus::New } else { ClaimStatus::InProgress },
+      proposal_id: None,
+      rejected_timestamp: None,
+      dispute_id: None,
+    };
+
+    match bounty.claimer_approval {
+      ClaimerApproval::ApprovalWithWhitelist => {
+        if self.is_claimer_whitelisted(bounty.clone().owner, &claimer) {
+          self.internal_claimer_approval(id, bounty.clone(), &mut bounty_claim);
+        }
+      }
+      ClaimerApproval::WithoutApproval => {
+        self.internal_change_status_and_save_bounty(&id, bounty.clone(), BountyStatus::Claimed);
+      }
+      _ => ()
+    }
+
+    Self::internal_add_claim(id, claims, bounty_claim);
+    self.internal_save_claims(&claimer, &claims);
+    self.internal_add_bounty_claimer_account(id, claimer.clone());
+    self.locked_amount += env::attached_deposit();
+    self.internal_update_statistic(
+      Some(claimer.clone()),
+      Some(bounty.owner.clone()),
+      ReputationActionKind::ClaimCreated
+    );
+
+    log!("Created new claim for bounty {} by applicant {}", id, claimer);
+  }
+
+  pub(crate) fn is_claimer_in_kyc_whitelist(
+    &self,
+    id: BountyIndex,
+    bounty: Bounty,
+    claims: &mut Vec<BountyClaim>,
+    claimer: AccountId,
+    deadline: U64,
+    description: String,
+  ) -> PromiseOrValue<()> {
+    Promise::new(self.kyc_whitelist_contract.clone().unwrap())
+      .function_call(
+        "is_whitelisted".to_string(),
+        json!({
+          "account_id": claimer.clone(),
+        })
+          .to_string()
+          .into_bytes(),
+        NO_DEPOSIT,
+        GAS_FOR_CHECK_IF_WHITELISTED,
+      )
+      .then(
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_AFTER_CHECK_IF_WHITELISTED)
+          .after_check_if_whitelisted(id, bounty, claims, claimer, deadline, description)
+      )
+      .into()
   }
 }

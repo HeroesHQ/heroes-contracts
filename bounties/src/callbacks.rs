@@ -114,6 +114,7 @@ impl BountiesContract {
     }
   }
 
+  #[private]
   pub fn after_create_dispute(
     &mut self,
     #[callback_result] result: Result<u64, PromiseError>,
@@ -133,6 +134,7 @@ impl BountiesContract {
     }
   }
 
+  #[private]
   pub fn after_get_dispute(
     &mut self,
     #[callback_result] result: Result<Dispute, PromiseError>,
@@ -153,6 +155,51 @@ impl BountiesContract {
         PromiseOrValue::Value(())
       } else {
         env::panic_str("The dispute status is not being processed");
+      }
+    }
+  }
+
+  #[private]
+  pub fn after_get_ft_metadata(
+    &mut self,
+    #[callback_result] result: Result<(), PromiseError>,
+    token_id: AccountId,
+    min_amount_for_kyc: Option<U128>,
+  ) -> bool {
+    if !is_promise_success() || result.is_err() {
+      env::log_str("Error getting token metadata");
+      false
+    } else {
+      self.total_fees.insert(&token_id, &FeeStats::new());
+      self.tokens.insert(&token_id, &TokenDetails {
+        enabled: true,
+        min_amount_for_kyc,
+      });
+      true
+    }
+  }
+
+  #[private]
+  pub fn after_check_if_whitelisted(
+    &mut self,
+    #[callback_result] result: Result<bool, PromiseError>,
+    id: BountyIndex,
+    bounty: Bounty,
+    claims: &mut Vec<BountyClaim>,
+    claimer: AccountId,
+    deadline: U64,
+    description: String,
+  ) -> bool {
+    if !is_promise_success() || result.is_err() {
+      env::log_str("Error determining the claimer's KYC status");
+      false
+    } else {
+      let is_whitelisted = result.unwrap();
+      if is_whitelisted {
+        self.internal_create_claim(id, bounty, claims, claimer, deadline, description);
+        true
+      } else {
+        env::panic_str("The claimer is not whitelisted");
       }
     }
   }

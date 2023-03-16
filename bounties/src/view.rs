@@ -2,8 +2,13 @@ use crate::*;
 
 #[near_bindgen]
 impl BountiesContract {
-  pub fn get_token_account_ids(&self) -> Vec<AccountId> {
-    self.token_account_ids.to_vec()
+  pub fn get_tokens(&self) -> Vec<(AccountId, TokenDetails)> {
+    self.tokens
+      .keys_as_vector()
+      .to_vec()
+      .into_iter()
+      .map(|token_id| (token_id.clone(), self.tokens.get(&token_id).unwrap().into()))
+      .collect()
   }
 
   pub fn get_admins_whitelist(&self) -> Vec<AccountId> {
@@ -20,6 +25,10 @@ impl BountiesContract {
 
   pub fn get_dispute_contract_account_id(&self) -> Option<AccountId> {
     self.dispute_contract.clone()
+  }
+
+  pub fn get_kyc_whitelist_contract_id(&self) -> Option<AccountId> {
+    self.kyc_whitelist_contract.clone()
   }
 
   pub fn get_config(&self) -> Config {

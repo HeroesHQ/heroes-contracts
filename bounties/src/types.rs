@@ -18,6 +18,10 @@ pub const GAS_FOR_AFTER_CREATE_DISPUTE: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_CHECK_DISPUTE: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_AFTER_CHECK_DISPUTE: Gas = Gas(70_000_000_000_000);
 pub const GAS_FOR_UPDATE_STATISTIC: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_GET_FT_METADATA: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_AFTER_GET_FT_METADATA: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_CHECK_IF_WHITELISTED: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_IF_WHITELISTED: Gas = Gas(15_000_000_000_000);
 
 pub const DEFAULT_BOUNTY_CLAIM_BOND: U128 = U128(ONE_NEAR);
 pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24);
@@ -486,6 +490,14 @@ impl From<Bounty> for VersionedBounty {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct TokenDetails {
+  pub enabled: bool,
+  pub min_amount_for_kyc: Option<U128>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum ClaimStatus {
   New,
   InProgress,
@@ -733,7 +745,7 @@ pub(crate) enum StorageKey {
   BountyClaimerAccounts,
   BountyClaimers,
   ClaimersWhitelist,
-  TokenAccountIds,
+  Tokens,
   TotalFees,
   TotalValidatorsDaoFees,
 }
