@@ -19,6 +19,7 @@ pkg-config = "0.3.1"
 bounties = { path = "bounties" }
 disputes = { path = "disputes" }
 reputation = { path = "reputation" }
+kyc-whitelist = { path = "kyc-whitelist" }
 
 [profile.release]
 codegen-units=1
@@ -32,7 +33,8 @@ overflow-checks = true
 members = [
     "bounties",
     "disputes",
-    "reputation"
+    "reputation",
+    "kyc-whitelist"
 ]
 
 [[example]]
