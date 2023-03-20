@@ -1,5 +1,5 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::json_types::{U128, U64};
+use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, ext_contract, AccountId, Balance, BorshStorageKey, Gas, ONE_NEAR};
 
@@ -45,6 +45,20 @@ trait ExtFtContract {
     amount: U128,
     memo: Option<String>
   );
+
+  fn ft_metadata(&self) -> FungibleTokenMetadata;
+}
+
+#[derive(Deserialize)]
+#[serde(crate = "near_sdk::serde")]
+pub struct FungibleTokenMetadata {
+  pub spec: String,
+  pub name: String,
+  pub symbol: String,
+  pub icon: Option<String>,
+  pub reference: Option<String>,
+  pub reference_hash: Option<Base64VecU8>,
+  pub decimals: u8,
 }
 
 #[derive(Deserialize)]

@@ -711,13 +711,9 @@ impl BountiesContract {
     token_id: AccountId,
     min_amount_for_kyc: Option<U128>,
   ) -> PromiseOrValue<()> {
-    Promise::new(token_id.clone())
-      .function_call(
-        "ft_metadata".to_string(),
-        json!({}).to_string().into_bytes(),
-        NO_DEPOSIT,
-        GAS_FOR_GET_FT_METADATA,
-      )
+    ext_ft_contract::ext(token_id.clone())
+      .with_static_gas(GAS_FOR_GET_FT_METADATA)
+      .ft_metadata()
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_GET_FT_METADATA)

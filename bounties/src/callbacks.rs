@@ -162,7 +162,7 @@ impl BountiesContract {
   #[private]
   pub fn after_get_ft_metadata(
     &mut self,
-    #[callback_result] result: Result<(), PromiseError>,
+    #[callback_result] result: Result<FungibleTokenMetadata, PromiseError>,
     token_id: AccountId,
     min_amount_for_kyc: Option<U128>,
   ) -> bool {
