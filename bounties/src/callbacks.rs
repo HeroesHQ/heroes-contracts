@@ -16,8 +16,36 @@ impl BountiesContract {
     } else {
       let proposal_id = result.unwrap();
       claims[claim_idx].status = ClaimStatus::Completed;
-      claims[claim_idx].proposal_id = Some(proposal_id.into());
+      claims[claim_idx].bounty_payout_proposal_id = Some(proposal_id.into());
       self.internal_save_claims(sender_id, &claims);
+      true
+    }
+  }
+
+  #[private]
+  pub fn after_add_proposal(
+    &mut self,
+    #[callback_result] result: Result<u64, PromiseError>,
+    id: BountyIndex,
+    bounty: Bounty,
+    claims: &mut Vec<BountyClaim>,
+    claimer: AccountId,
+    deadline: U64,
+    description: String,
+  ) -> bool {
+    if !is_promise_success() || result.is_err() {
+      env::log_str("Could not create claimer proposal");
+      false
+    } else {
+      self.internal_create_claim(
+        id,
+        bounty,
+        claims,
+        claimer,
+        deadline,
+        description,
+        Some(U64(result.unwrap()))
+      );
       true
     }
   }
@@ -88,7 +116,7 @@ impl BountiesContract {
   }
 
   #[private]
-  pub fn after_get_proposal(
+  pub fn after_check_bounty_payout_proposal(
     &mut self,
     #[callback_result] result: Result<Proposal, PromiseError>,
     id: BountyIndex,
@@ -101,7 +129,7 @@ impl BountiesContract {
       env::panic_str("Error checking proposal status");
     } else {
       let proposal = result.unwrap();
-      assert_eq!(proposal.id, claims[claim_idx].proposal_id.unwrap().0);
+      assert_eq!(proposal.id, claims[claim_idx].bounty_payout_proposal_id.unwrap().0);
       assert_eq!(proposal.proposer, env::current_account_id());
       if proposal.status == "Approved" {
         self.internal_bounty_payout(id, receiver_id, bounty, claim_idx, claims)
@@ -111,6 +139,38 @@ impl BountiesContract {
       } else {
         env::panic_str("The proposal status is not being processed");
       }
+    }
+  }
+
+  #[private]
+  pub fn after_check_approve_claimer_proposal(
+    &mut self,
+    #[callback_result] result: Result<Proposal, PromiseError>,
+    id: BountyIndex,
+    claimer: AccountId,
+    bounty: Bounty,
+    claims: &mut Vec<BountyClaim>,
+    claim_idx: usize,
+  ) -> bool {
+    if !is_promise_success() || result.is_err() {
+      env::log_str("Error checking proposal status");
+      false
+    } else {
+      let proposal = result.unwrap();
+      let mut bounty_claim= claims[claim_idx].clone();
+      assert_eq!(proposal.id, bounty_claim.approve_claimer_proposal_id.unwrap().0);
+      assert_eq!(proposal.proposer, env::current_account_id());
+      if proposal.status == "Approved" {
+        self.internal_claimer_approval(id, bounty, &mut bounty_claim);
+      } else if proposal.status == "Rejected" {
+        bounty_claim.status = ClaimStatus::NotHired;
+        self.internal_return_bonds(&claimer);
+      } else {
+        env::panic_str("The proposal status is not being processed");
+      }
+      claims.insert(claim_idx, bounty_claim);
+      self.internal_save_claims(&claimer, &claims);
+      true
     }
   }
 
@@ -189,15 +249,25 @@ impl BountiesContract {
     claimer: AccountId,
     deadline: U64,
     description: String,
-  ) -> bool {
+  ) -> PromiseOrValue<()> {
     if !is_promise_success() || result.is_err() {
-      env::log_str("Error determining the claimer's KYC status");
-      false
+      env::panic_str("Error determining the claimer's KYC status");
     } else {
       let is_whitelisted = result.unwrap();
       if is_whitelisted {
-        self.internal_create_claim(id, bounty, claims, claimer, deadline, description);
-        true
+        if bounty.is_validators_dao_used() {
+          Self::internal_add_proposal_to_approve_claimer(
+            id,
+            bounty,
+            claims,
+            claimer,
+            deadline,
+            description
+          )
+        } else {
+          self.internal_create_claim(id, bounty, claims, claimer, deadline, description, None);
+          PromiseOrValue::Value(())
+        }
       } else {
         env::panic_str("The claimer is not whitelisted");
       }

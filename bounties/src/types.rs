@@ -7,12 +7,15 @@ pub type BountyIndex = u64;
 
 pub const GAS_FOR_ADD_PROPOSAL: Gas = Gas(25_000_000_000_000);
 pub const GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK: Gas = Gas(10_000_000_000_000);
+pub const GAS_FOR_AFTER_ADD_PROPOSAL: Gas = Gas(30_000_000_000_000);
 pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(70_000_000_000_000);
+pub const GAS_FOR_CLAIMER_APPROVAL: Gas = Gas(30_000_000_000_000);
 pub const GAS_FOR_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(40_000_000_000_000);
 pub const GAS_FOR_AFTER_FT_TRANSACT: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_CHECK_PROPOSAL: Gas = Gas(15_000_000_000_000);
-pub const GAS_FOR_AFTER_CHECK_PROPOSAL: Gas = Gas(70_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_BOUNTY_PAYOUT_PROPOSAL: Gas = Gas(70_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_APPROVE_CLAIMER_PROPOSAL: Gas = Gas(30_000_000_000_000);
 pub const GAS_FOR_CREATE_DISPUTE: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_AFTER_CREATE_DISPUTE: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_CHECK_DISPUTE: Gas = Gas(15_000_000_000_000);
@@ -21,7 +24,7 @@ pub const GAS_FOR_UPDATE_STATISTIC: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_GET_FT_METADATA: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_AFTER_GET_FT_METADATA: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_CHECK_IF_WHITELISTED: Gas = Gas(15_000_000_000_000);
-pub const GAS_FOR_AFTER_CHECK_IF_WHITELISTED: Gas = Gas(15_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_IF_WHITELISTED: Gas = Gas(70_000_000_000_000);
 
 pub const DEFAULT_BOUNTY_CLAIM_BOND: U128 = U128(ONE_NEAR);
 pub const DEFAULT_BOUNTY_FORGIVENESS_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24);
@@ -207,6 +210,7 @@ pub struct ValidatorsDaoParams {
   pub add_proposal_bond: U128,
   pub gas_for_add_proposal: Option<U64>,
   pub gas_for_claim_approval: Option<U64>,
+  pub gas_for_claimer_approval: Option<U64>,
 }
 
 impl ValidatorsDaoParams {
@@ -219,11 +223,16 @@ impl ValidatorsDaoParams {
     if self.gas_for_claim_approval.is_some() {
       gas_for_claim_approval = self.gas_for_claim_approval.unwrap();
     }
+    let mut gas_for_claimer_approval = GAS_FOR_CLAIMER_APPROVAL.0.into();
+    if self.gas_for_claimer_approval.is_some() {
+      gas_for_claimer_approval = self.gas_for_claimer_approval.unwrap();
+    }
     ValidatorsDao {
       account_id: self.account_id.clone(),
       add_proposal_bond: self.add_proposal_bond.clone(),
       gas_for_add_proposal,
       gas_for_claim_approval,
+      gas_for_claimer_approval,
     }
   }
 }
@@ -313,6 +322,7 @@ pub struct ValidatorsDao {
   pub add_proposal_bond: U128,
   pub gas_for_add_proposal: U64,
   pub gas_for_claim_approval: U64,
+  pub gas_for_claimer_approval: U64,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -542,7 +552,9 @@ pub struct BountyClaim {
   /// status
   pub status: ClaimStatus,
   /// Bounty payout proposal ID
-  pub proposal_id: Option<U64>,
+  pub bounty_payout_proposal_id: Option<U64>,
+  /// Proposal ID for applicant approval
+  pub approve_claimer_proposal_id: Option<U64>,
   /// Timestamp when the status is set to rejected
   pub rejected_timestamp: Option<U64>,
   /// Dispute ID

@@ -7,8 +7,7 @@ use serde_json::json;
 use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
-use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyType, ClaimStatus,
-               GAS_FOR_ADD_PROPOSAL, GAS_FOR_CLAIM_APPROVAL, ValidatorsDao};
+use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyType, ClaimStatus, GAS_FOR_ADD_PROPOSAL, GAS_FOR_CLAIM_APPROVAL, GAS_FOR_CLAIMER_APPROVAL, ValidatorsDao};
 use disputes::{Dispute, DisputeStatus, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
@@ -483,7 +482,7 @@ async fn get_claim_proposal_id(
   let bounty_claims = get_bounty_claims_by_id(bounties, bounty_id).await?;
   assert!(bounty_claims.len() > claim_index);
   let bounty_claim = bounty_claims[claim_index].clone().1;
-  Ok(bounty_claim.proposal_id.unwrap())
+  Ok(bounty_claim.bounty_payout_proposal_id.unwrap())
 }
 
 async fn get_bounty(
@@ -725,6 +724,7 @@ async fn test_create_bounty(
           add_proposal_bond: get_proposal_bond(validators_dao).await?,
           gas_for_add_proposal: GAS_FOR_ADD_PROPOSAL.0.into(),
           gas_for_claim_approval: GAS_FOR_CLAIM_APPROVAL.0.into(),
+          gas_for_claimer_approval: GAS_FOR_CLAIMER_APPROVAL.0.into(),
         }
       ),
       owner: project_owner.id().to_string().parse().unwrap(),
@@ -757,7 +757,7 @@ async fn test_bounty_claim(
   assert_eq!(freelancer_claim, bounty_claim);
   assert_eq!(freelancer_claim.bounty_id, bounty_id);
   assert_eq!(freelancer_claim.deadline, U64(1_000_000_000 * 60 * 60 * 24 * 2));
-  assert!(freelancer_claim.proposal_id.is_none());
+  assert!(freelancer_claim.bounty_payout_proposal_id.is_none());
 
   println!("      Passed ✅ Bounty claim");
   Ok(())

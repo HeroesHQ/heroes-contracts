@@ -305,7 +305,7 @@ impl BountiesContract {
       .is_some();
     assert!(
       !found_claim,
-      "There is already a claim with status 'New' for this account"
+      "You already have a claim with the status 'New'"
     );
 
     let token_details = self.tokens.get(&bounty.token).unwrap();
@@ -316,8 +316,19 @@ impl BountiesContract {
       )
     {
       self.is_claimer_in_kyc_whitelist(id, bounty, &mut claims, sender_id, deadline, description)
+
+    } else if bounty.is_validators_dao_used() {
+      Self::internal_add_proposal_to_approve_claimer(
+        id,
+        bounty,
+        &mut claims,
+        sender_id,
+        deadline,
+        description
+      )
+
     } else {
-      self.internal_create_claim(id, bounty, &mut claims, sender_id, deadline, description);
+      self.internal_create_claim(id, bounty, &mut claims, sender_id, deadline, description, None);
       PromiseOrValue::Value(())
     }
   }
@@ -355,7 +366,7 @@ impl BountiesContract {
   pub fn bounty_done(&mut self, id: BountyIndex, description: String) -> PromiseOrValue<()> {
     assert_one_yocto();
 
-    let mut bounty = self.get_bounty(id.clone());
+    let bounty = self.get_bounty(id.clone());
     assert!(
       matches!(bounty.status, BountyStatus::Claimed),
       "Bounty status does not allow to completion"
@@ -374,7 +385,14 @@ impl BountiesContract {
 
     } else {
       if bounty.is_validators_dao_used() {
-        Self::internal_add_proposal(id, sender_id, &mut bounty, claim_idx, &mut claims, description)
+        Self::internal_add_proposal_to_finish_claim(
+          id,
+          sender_id,
+          &bounty,
+          claim_idx,
+          &mut claims,
+          description
+        )
       } else {
         claims[claim_idx].status = ClaimStatus::Completed;
         self.internal_save_claims(sender_id, &claims);
@@ -489,10 +507,28 @@ impl BountiesContract {
           PromiseOrValue::Value(())
         }
 
+        else if matches!(claims[claim_idx].status, ClaimStatus::New) &&
+          bounty.is_validators_dao_used()
+        {
+          Self::internal_check_approve_claimer_proposal(
+            id,
+            receiver_id,
+            bounty,
+            claim_idx,
+            &mut claims
+          )
+        }
+
         else if matches!(claims[claim_idx].status, ClaimStatus::Completed) &&
           bounty.is_validators_dao_used()
         {
-          Self::internal_get_proposal(id, receiver_id, &mut bounty, claim_idx, &mut claims)
+          Self::internal_check_bounty_payout_proposal(
+            id,
+            receiver_id,
+            &mut bounty,
+            claim_idx,
+            &mut claims
+          )
         }
 
         else if matches!(claims[claim_idx].status, ClaimStatus::Rejected) &&
@@ -831,11 +867,24 @@ mod tests {
       .attached_deposit(bond.clone())
       .block_timestamp(0)
       .build());
-    contract.bounty_claim(
-      id,
-      U64(1_000_000_000 * 60 * 60 * 24 * 2),
-      "Test description".to_string()
-    );
+    let deadline = U64(1_000_000_000 * 60 * 60 * 24 * 2);
+    let description = "Test description".to_string();
+
+    contract.bounty_claim(id, deadline, description.clone());
+
+    let bounty = contract.bounties.get(&id).unwrap().to_bounty();
+    if bounty.is_validators_dao_used() {
+      let mut claims = contract.get_bounty_claims(claimer.clone());
+      contract.internal_create_claim(
+        id,
+        bounty,
+        &mut claims,
+        claimer.clone(),
+        deadline,
+        description,
+        Some(U64(1))
+      );
+    }
   }
 
   fn bounty_done(
@@ -1153,7 +1202,8 @@ mod tests {
         start_time: Some(U64(0)),
         deadline: U64(1_000_000_000 * 60 * 60 * 24 * 2),
         status: ClaimStatus::InProgress,
-        proposal_id: None,
+        bounty_payout_proposal_id: None,
+        approve_claimer_proposal_id: None,
         rejected_timestamp: None,
         dispute_id: None,
         description: "Test description".to_string(),
@@ -1530,6 +1580,7 @@ mod tests {
       add_proposal_bond: U128(10u128.pow(24)),
       gas_for_add_proposal: None,
       gas_for_claim_approval: None,
+      gas_for_claimer_approval: None,
     };
     let id = add_bounty(&mut contract, &project_owner, Some(dao_params.to_validators_dao()));
     let claimer = accounts(2);
@@ -1594,6 +1645,7 @@ mod tests {
           add_proposal_bond: U128(10u128.pow(24)),
           gas_for_add_proposal: None,
           gas_for_claim_approval: None,
+          gas_for_claimer_approval: None,
         }
           .to_validators_dao()
       )
@@ -1604,6 +1656,7 @@ mod tests {
       add_proposal_bond: U128(2 * 10u128.pow(24)),
       gas_for_add_proposal: Some(U64(50_000_000_000_000)),
       gas_for_claim_approval: Some(U64(50_000_000_000_000)),
+      gas_for_claimer_approval: Some(U64(25_000_000_000_000)),
     };
     testing_env!(context
       .predecessor_account_id(project_owner)

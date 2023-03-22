@@ -489,63 +489,126 @@ impl BountiesContract {
     }
   }
 
-  pub(crate) fn internal_add_proposal(
+  pub(crate) fn internal_add_proposal_to_finish_claim(
     id: BountyIndex,
     sender_id: &AccountId,
-    bounty: &mut Bounty,
+    bounty: &Bounty,
     claim_idx: usize,
     claims: &mut Vec<BountyClaim>,
     description: String,
   ) -> PromiseOrValue<()> {
     if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
-      Promise::new(validators_dao.account_id)
-        .function_call(
-          "add_proposal".to_string(),
-          json!({
-              "proposal": {
-                "description": description,
-                "kind": {
-                  "FunctionCall" : {
-                    "receiver_id": env::current_account_id(),
-                    "actions": [
-                      {
-                        "method_name": "bounty_action",
-                        "args": Base64VecU8::from(json!({
-                          "id": id.clone(),
-                          "action": {
-                            "ClaimApproved": {
-                              "receiver_id": sender_id.to_string(),
-                            }
-                          }
-                        })
-                          .to_string()
-                          .into_bytes()
-                          .to_vec()),
-                        "deposit": "1",
-                        "gas": validators_dao.gas_for_claim_approval,
+      Self::internal_add_proposal(
+        validators_dao.account_id,
+        json!({
+          "proposal": {
+            "description": description,
+            "kind": {
+              "FunctionCall" : {
+                "receiver_id": env::current_account_id(),
+                "actions": [
+                  {
+                    "method_name": "bounty_action",
+                    "args": Base64VecU8::from(json!({
+                      "id": id.clone(),
+                      "action": {
+                        "ClaimApproved": {
+                          "receiver_id": sender_id.to_string(),
+                        }
                       }
-                    ],
+                    })
+                      .to_string()
+                      .into_bytes()
+                      .to_vec()),
+                    "deposit": "1",
+                    "gas": validators_dao.gas_for_claim_approval,
                   }
-                }
+                ],
               }
-            })
-              .to_string()
-              .into_bytes(),
-          validators_dao.add_proposal_bond.0,
-          Gas(validators_dao.gas_for_add_proposal.0),
-        )
-        .then(
-          Self::ext(env::current_account_id())
-            .with_static_gas(GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK)
-            .on_added_proposal_callback(sender_id, claims.as_mut(), claim_idx)
-        )
-        .into()
+            }
+          }
+        })
+          .to_string()
+          .into_bytes(),
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK)
+          .on_added_proposal_callback(sender_id, claims.as_mut(), claim_idx),
+        validators_dao.add_proposal_bond,
+        validators_dao.gas_for_add_proposal,
+      )
     } else {
       unreachable!();
     }
   }
 
-  pub(crate) fn internal_get_proposal(
+  pub(crate) fn internal_add_proposal_to_approve_claimer(
+    id: BountyIndex,
+    bounty: Bounty,
+    claims: &mut Vec<BountyClaim>,
+    claimer: AccountId,
+    deadline: U64,
+    description: String,
+  ) -> PromiseOrValue<()> {
+    if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
+      Self::internal_add_proposal(
+        validators_dao.account_id,
+        json!({
+          "proposal": {
+            "description": description,
+            "kind": {
+              "FunctionCall" : {
+                "receiver_id": env::current_account_id(),
+                "actions": [
+                  {
+                    "method_name": "decision_on_claim",
+                    "args": Base64VecU8::from(json!({
+                      "id": id.clone(),
+                      "claimer": claimer.clone(),
+                      "approve": true,
+                    })
+                      .to_string()
+                      .into_bytes()
+                      .to_vec()),
+                    "deposit": "1",
+                    "gas": validators_dao.gas_for_claimer_approval,
+                  }
+                ],
+              }
+            }
+          }
+        })
+          .to_string()
+          .into_bytes(),
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_AFTER_ADD_PROPOSAL)
+          .after_add_proposal(id, bounty, claims, claimer, deadline, description),
+        validators_dao.add_proposal_bond,
+        validators_dao.gas_for_add_proposal,
+      )
+    } else {
+      unreachable!();
+    }
+  }
+
+  pub(crate) fn internal_add_proposal(
+    receiver: AccountId,
+    arguments: Vec<u8>,
+    callback: Promise,
+    amount: U128,
+    gas: U64,
+  ) -> PromiseOrValue<()> {
+    Promise::new(receiver)
+      .function_call(
+        "add_proposal".to_string(),
+        arguments,
+        amount.0,
+        Gas(gas.0),
+      )
+      .then(callback)
+      .into()
+  }
+
+  pub(crate) fn internal_check_bounty_payout_proposal(
     id: BountyIndex,
     receiver_id: AccountId,
     bounty: &mut Bounty,
@@ -553,23 +616,54 @@ impl BountiesContract {
     claims: &mut Vec<BountyClaim>,
   ) -> PromiseOrValue<()> {
     if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
-      let proposal_id = claims[claim_idx].proposal_id.unwrap();
-      Promise::new(validators_dao.account_id)
-        .function_call(
-          "get_proposal".to_string(),
-          json!({"id": proposal_id.0}).to_string().into_bytes(),
-          NO_DEPOSIT,
-          GAS_FOR_CHECK_PROPOSAL,
-        )
-        .then(
-          Self::ext(env::current_account_id())
-            .with_static_gas(GAS_FOR_AFTER_CHECK_PROPOSAL)
-            .after_get_proposal(id, receiver_id, bounty, claims, claim_idx)
-        )
-        .into()
+      let proposal_id = claims[claim_idx].bounty_payout_proposal_id.unwrap();
+      Self::internal_check_proposal(
+        validators_dao.account_id,
+        proposal_id,
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_AFTER_CHECK_BOUNTY_PAYOUT_PROPOSAL)
+          .after_check_bounty_payout_proposal(id, receiver_id, bounty, claims, claim_idx)
+      )
     } else {
       unreachable!();
     }
+  }
+
+  pub(crate) fn internal_check_approve_claimer_proposal(
+    id: BountyIndex,
+    claimer: AccountId,
+    bounty: Bounty,
+    claim_idx: usize,
+    claims: &mut Vec<BountyClaim>,
+  ) -> PromiseOrValue<()> {
+    if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
+      let proposal_id = claims[claim_idx].approve_claimer_proposal_id.unwrap();
+      Self::internal_check_proposal(
+        validators_dao.account_id,
+        proposal_id,
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_AFTER_CHECK_APPROVE_CLAIMER_PROPOSAL)
+          .after_check_approve_claimer_proposal(id, claimer, bounty, claims, claim_idx)
+      )
+    } else {
+      unreachable!();
+    }
+  }
+
+  pub(crate) fn internal_check_proposal(
+    receiver: AccountId,
+    proposal_id: U64,
+    callback: Promise,
+  ) -> PromiseOrValue<()> {
+    Promise::new(receiver)
+      .function_call(
+        "get_proposal".to_string(),
+        json!({"id": proposal_id.0}).to_string().into_bytes(),
+        NO_DEPOSIT,
+        GAS_FOR_CHECK_PROPOSAL,
+      )
+      .then(callback)
+      .into()
   }
 
   pub(crate) fn internal_create_dispute(
@@ -730,6 +824,7 @@ impl BountiesContract {
     claimer: AccountId,
     deadline: U64,
     description: String,
+    proposal_id: Option<U64>,
   ) {
     let need_approval = match bounty.claimer_approval {
       ClaimerApproval::WithoutApproval => false,
@@ -743,7 +838,8 @@ impl BountiesContract {
       deadline,
       description,
       status: if need_approval { ClaimStatus::New } else { ClaimStatus::InProgress },
-      proposal_id: None,
+      bounty_payout_proposal_id: None,
+      approve_claimer_proposal_id: proposal_id,
       rejected_timestamp: None,
       dispute_id: None,
     };
