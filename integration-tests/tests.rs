@@ -3,11 +3,13 @@ use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::Deserialize;
 use near_sdk::ONE_YOCTO;
 use near_units::parse_near;
-use serde_json::json;
+use serde_json::{json, Value};
 use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
-use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyType, ClaimStatus, GAS_FOR_ADD_PROPOSAL, GAS_FOR_CLAIM_APPROVAL, GAS_FOR_CLAIMER_APPROVAL, ValidatorsDao};
+use bounties::{Bounty, BountyAction, BountyClaim, BountyMetadata, BountyStatus, ClaimerApproval,
+               ClaimStatus, ContactDetails, ContactType, Deadline, Experience,
+               FungibleTokenMetadata, ReviewersParams, ValidatorsDaoParams};
 use disputes::{Dispute, DisputeStatus, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
@@ -24,6 +26,8 @@ pub const DISPUTES_WASM: &str = "./disputes/res/disputes.wasm";
 pub const REPUTATION_WASM: &str = "./reputation/res/reputation.wasm";
 
 pub const BOUNTY_AMOUNT: U128 = U128(10u128.pow(18));
+pub const PLATFORM_FEE: U128 = U128(10u128.pow(17));
+pub const DAO_FEE: U128 = U128(10u128.pow(17));
 pub const MAX_DEADLINE: U64 = U64(604_800_000_000_000);
 
 #[tokio::main]
@@ -80,14 +84,14 @@ async fn main() -> anyhow::Result<()> {
   res = bounties
     .call("new")
     .args_json(json!({
-      "token_account_ids": vec![test_token.id()],
-      "admin_whitelist": vec![bounties_contract_admin.id()],
+      "admins_whitelist": vec![bounties_contract_admin.id()],
     }))
     .max_gas()
     .transact()
     .await?;
   assert_contract_call_result(res).await?;
   register_user(&test_token, bounties.id()).await?;
+  add_token(&test_token, &bounties).await?;
 
   let validators_dao = worker.dev_deploy(&std::fs::read(SPUTNIK_DAO2_WASM)?).await?;
   res = validators_dao
@@ -166,6 +170,24 @@ async fn register_user(
   Ok(())
 }
 
+async fn add_token(
+  test_token: &Contract,
+  bounties: &Contract,
+) -> anyhow::Result<()> {
+  let metadata: FungibleTokenMetadata = test_token.call("ft_metadata").view().await?.json()?;
+  let res = bounties
+    .call("add_token_id")
+    .args_json(json!({
+      "token_id": test_token.id(),
+      "min_amount_for_kyc": U128(150 * metadata.decimals as u128),
+    }))
+    .max_gas()
+    .transact()
+    .await?;
+  assert_contract_call_result(res).await?;
+  Ok(())
+}
+
 async fn init_bounty_contract_with_dispute_and_reputation(
   worker: &Worker<Sandbox>,
   root: &Account,
@@ -232,8 +254,7 @@ async fn init_bounty_contract_with_dispute_and_reputation(
   res = bounties
     .call("new")
     .args_json(json!({
-      "token_account_ids": vec![test_token.id()],
-      "admin_whitelist": vec![bounties_contract_admin.id()],
+      "admins_whitelist": vec![bounties_contract_admin.id()],
       "config": bounties_config,
       "reputation_contract": reputation_contract.id(),
       "dispute_contract": dispute_contract.id(),
@@ -243,6 +264,7 @@ async fn init_bounty_contract_with_dispute_and_reputation(
     .await?;
   assert_contract_call_result(res).await?;
   register_user(&test_token, bounties.id()).await?;
+  add_token(&test_token, &bounties).await?;
 
   Ok((bounties, dispute_contract, reputation_contract, dispute_dao, dispute_dao_council_member))
 }
@@ -250,25 +272,46 @@ async fn init_bounty_contract_with_dispute_and_reputation(
 async fn add_bounty(
   test_token: &Contract,
   bounties: &Contract,
-  validators_dao: Option<&Contract>,
   project_owner: &Account,
+  deadline: Value,
+  claimer_approval: String,
+  reviewers: Option<ReviewersParams>,
 ) -> anyhow::Result<()> {
+  let metadata = json!({
+    "title": "Test bounty title",
+    "description": "Test bounty description",
+    "category": "Marketing",
+    "attachments": vec!["http://ipfs-url/1", "http://ipfs-url/2"],
+    "experience": "Intermediate",
+    "tags": vec!["Community", "NFT"],
+    "acceptance_criteria": "test acceptance criteria",
+    "contact_details": json!({
+      "contact": "example@domain.net",
+      "contact_type": "Email"
+    }),
+  });
+
+  let mut amount = BOUNTY_AMOUNT.0 + PLATFORM_FEE.0;
+  if reviewers.is_some() {
+    amount += match reviewers.clone().unwrap() {
+      ReviewersParams::ValidatorsDao { validators_dao: _validators_dao } => DAO_FEE.0,
+      _ => 0,
+    };
+  }
+
   let res = project_owner
     .call(test_token.id(), "ft_transfer_call")
     .args_json(json!({
       "receiver_id": bounties.id(),
-      "amount": BOUNTY_AMOUNT,
+      "amount": U128(amount),
       "msg": json!({
-        "description": "Test bounty description",
-        "bounty_type": "MarketingServices",
-        "max_deadline": MAX_DEADLINE,
-        "validators_dao": match validators_dao {
-          Some(d) => json!({
-            "account_id": d.id(),
-            "add_proposal_bond": get_proposal_bond(d).await?,
-          }),
+        "metadata": metadata,
+        "deadline": deadline,
+        "claimer_approval": claimer_approval,
+        "reviewers": match reviewers {
+          Some(r) => json!(r),
           _ => json!(null),
-        }
+        },
       })
         .to_string(),
     }))
@@ -278,6 +321,19 @@ async fn add_bounty(
     .await?;
   assert_contract_call_result(res).await?;
   Ok(())
+}
+
+async fn build_reviewers_params(validators_dao: &Contract) -> anyhow::Result<ReviewersParams> {
+  let reviewers_params = ReviewersParams::ValidatorsDao {
+    validators_dao: ValidatorsDaoParams {
+      account_id: validators_dao.id().to_string().parse().unwrap(),
+      add_proposal_bond: get_proposal_bond(validators_dao).await?,
+      gas_for_add_proposal: None,
+      gas_for_claim_approval: None,
+      gas_for_claimer_approval: None,
+    }
+  };
+  Ok(reviewers_params)
 }
 
 async fn bounty_claim(
@@ -688,7 +744,14 @@ async fn test_create_bounty(
   let owner_balance = get_token_balance(test_token, project_owner.id()).await?;
   assert_eq!(get_token_balance(test_token, bounties.id()).await?, 0);
 
-  add_bounty(test_token, bounties, Some(validators_dao), project_owner).await?;
+  add_bounty(
+    test_token,
+    bounties,
+    project_owner,
+    json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
+    "WithoutApproval".to_string(),
+    Some(build_reviewers_params(validators_dao).await?),
+  ).await?;
 
   let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
   assert_eq!(last_bounty_id, 1);
@@ -713,22 +776,33 @@ async fn test_create_bounty(
   assert_eq!(
     bounty,
     Bounty {
-      description: "Test bounty description".to_string(),
       token: test_token.id().to_string().parse().unwrap(),
       amount: BOUNTY_AMOUNT,
-      bounty_type: BountyType::MarketingServices,
-      max_deadline: MAX_DEADLINE,
-      validators_dao: Some(
-        ValidatorsDao {
-          account_id: validators_dao.id().to_string().parse().unwrap(),
-          add_proposal_bond: get_proposal_bond(validators_dao).await?,
-          gas_for_add_proposal: GAS_FOR_ADD_PROPOSAL.0.into(),
-          gas_for_claim_approval: GAS_FOR_CLAIM_APPROVAL.0.into(),
-          gas_for_claimer_approval: GAS_FOR_CLAIMER_APPROVAL.0.into(),
-        }
-      ),
+      platform_fee: PLATFORM_FEE,
+      dao_fee: DAO_FEE,
+      metadata: BountyMetadata {
+        title: "Test bounty title".to_string(),
+        description: "Test bounty description".to_string(),
+        category: "Marketing".to_string(),
+        attachments: Some(vec!["http://ipfs-url/1".to_string(), "http://ipfs-url/2".to_string()]),
+        experience: Some(Experience::Intermediate),
+        tags: Some(vec!["Community".to_string(), "NFT".to_string()]),
+        acceptance_criteria: Some("test acceptance criteria".to_string()),
+        contact_details: Some(
+          ContactDetails {
+            contact: "example@domain.net".to_string(),
+            contact_type: ContactType::Email
+          }
+        ),
+      },
+      deadline: Deadline::MaxDeadline {
+        max_deadline: MAX_DEADLINE,
+      },
+      claimer_approval: ClaimerApproval::WithoutApproval,
+      reviewers: Some(build_reviewers_params(validators_dao).await?.to_reviewers()),
       owner: project_owner.id().to_string().parse().unwrap(),
       status: BountyStatus::New,
+      created_at: bounty.created_at,
     }
   );
 
@@ -828,7 +902,14 @@ async fn test_bounty_give_up(
   let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
   assert_eq!(last_bounty_id, 1);
 
-  add_bounty(test_token, bounties, None, project_owner).await?;
+  add_bounty(
+    test_token,
+    bounties,
+    project_owner,
+    json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
+    "WithoutApproval".to_string(),
+    None,
+  ).await?;
 
   let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
   assert_eq!(last_bounty_id, 2);
@@ -937,7 +1018,14 @@ async fn test_bounty_reject_by_validators_dao(
   let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
   assert_eq!(last_bounty_id, 0);
 
-  add_bounty(test_token, bounties, Some(validators_dao), project_owner).await?;
+  add_bounty(
+    test_token,
+    bounties,
+    project_owner,
+    json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
+    "WithoutApproval".to_string(),
+    Some(build_reviewers_params(validators_dao).await?),
+  ).await?;
 
   let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
   assert_eq!(last_bounty_id, 1);
@@ -1329,7 +1417,14 @@ async fn test_bounty_open_and_approve_dispute(
   let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
   assert_eq!(last_bounty_id, 1);
 
-  add_bounty(test_token, bounties, Some(validators_dao), project_owner).await?;
+  add_bounty(
+    test_token,
+    bounties,
+    project_owner,
+    json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
+    "WithoutApproval".to_string(),
+    Some(build_reviewers_params(validators_dao).await?),
+  ).await?;
 
   let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
   assert_eq!(last_bounty_id, 2);
@@ -1423,7 +1518,14 @@ async fn test_bounty_claim_approved(
   let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
   assert_eq!(last_bounty_id, 2);
 
-  add_bounty(test_token, bounties, Some(validators_dao), project_owner).await?;
+  add_bounty(
+    test_token,
+    bounties,
+    project_owner,
+    json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
+    "WithoutApproval".to_string(),
+    Some(build_reviewers_params(validators_dao).await?),
+  ).await?;
 
   let last_bounty_id = bounties.call("get_last_bounty_id").view().await?.json::<u64>()?;
   assert_eq!(last_bounty_id, 3);
