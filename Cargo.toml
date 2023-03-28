@@ -34,7 +34,8 @@ members = [
     "bounties",
     "disputes",
     "reputation",
-    "kyc-whitelist"
+    "kyc-whitelist",
+    "test-token"
 ]
 
 [[example]]

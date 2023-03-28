@@ -2752,6 +2752,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-token"
+version = "1.0.0"
+dependencies = [
+ "near-contract-standards",
+ "near-sdk",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
