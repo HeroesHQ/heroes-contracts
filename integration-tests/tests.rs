@@ -19,7 +19,7 @@ struct DaoPolicy {
   proposal_bond: U128,
 }
 
-pub const TEST_TOKEN_WASM: &str = "./integration-tests/res/test_token.wasm";
+pub const TEST_TOKEN_WASM: &str = "./test-token/res/test_token.wasm";
 pub const BOUNTIES_WASM: &str = "./bounties/res/bounties.wasm";
 pub const SPUTNIK_DAO2_WASM: &str = "./integration-tests/res/sputnikdao2.wasm";
 pub const DISPUTES_WASM: &str = "./disputes/res/disputes.wasm";
@@ -91,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
     .await?;
   assert_contract_call_result(res).await?;
   register_user(&test_token, bounties.id()).await?;
-  add_token(&test_token, &bounties).await?;
+  add_token(&test_token, &bounties, &bounties_contract_admin).await?;
 
   let validators_dao = worker.dev_deploy(&std::fs::read(SPUTNIK_DAO2_WASM)?).await?;
   res = validators_dao
@@ -173,15 +173,17 @@ async fn register_user(
 async fn add_token(
   test_token: &Contract,
   bounties: &Contract,
+  administrator: &Account,
 ) -> anyhow::Result<()> {
   let metadata: FungibleTokenMetadata = test_token.call("ft_metadata").view().await?.json()?;
-  let res = bounties
-    .call("add_token_id")
+  let res = administrator
+    .call(bounties.id(), "add_token_id")
     .args_json(json!({
       "token_id": test_token.id(),
       "min_amount_for_kyc": U128(150 * metadata.decimals as u128),
     }))
     .max_gas()
+    .deposit(ONE_YOCTO)
     .transact()
     .await?;
   assert_contract_call_result(res).await?;
@@ -264,7 +266,7 @@ async fn init_bounty_contract_with_dispute_and_reputation(
     .await?;
   assert_contract_call_result(res).await?;
   register_user(&test_token, bounties.id()).await?;
-  add_token(&test_token, &bounties).await?;
+  add_token(&test_token, &bounties, &bounties_contract_admin).await?;
 
   Ok((bounties, dispute_contract, reputation_contract, dispute_dao, dispute_dao_council_member))
 }
@@ -341,11 +343,12 @@ async fn bounty_claim(
   bounty_id: u64,
   freelancer: &Account,
   deadline: U64,
+  description: String,
 ) -> anyhow::Result<()> {
   let config: bounties::Config = bounties.call("get_config").view().await?.json()?;
   let res = freelancer
     .call(bounties.id(), "bounty_claim")
-    .args_json((bounty_id, deadline))
+    .args_json((bounty_id, deadline, description))
     .max_gas()
     .deposit(config.bounty_claim_bond.0)
     .transact()
@@ -757,9 +760,12 @@ async fn test_create_bounty(
   assert_eq!(last_bounty_id, 1);
   assert_eq!(
     get_token_balance(test_token, project_owner.id()).await?,
-    owner_balance - BOUNTY_AMOUNT.0
+    owner_balance - BOUNTY_AMOUNT.0 - PLATFORM_FEE.0 - DAO_FEE.0
   );
-  assert_eq!(get_token_balance(test_token, bounties.id()).await?, BOUNTY_AMOUNT.0);
+  assert_eq!(
+    get_token_balance(test_token, bounties.id()).await?,
+    BOUNTY_AMOUNT.0 + PLATFORM_FEE.0 + DAO_FEE.0
+  );
 
   let bounty_id = 0;
   let bounty_indexes = get_account_bounties(bounties, project_owner).await?;
@@ -815,13 +821,19 @@ async fn test_bounty_claim(
   freelancer: &Account,
 ) -> anyhow::Result<()> {
   let bounty_id = 0;
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 60 * 24 * 2),
+    "Test claim".to_string(),
+  ).await?;
 
   let (bounty_claim, _) = assert_statuses(
     bounties,
     bounty_id.clone(),
     freelancer,
-    ClaimStatus::New,
+    ClaimStatus::InProgress,
     BountyStatus::Claimed,
   ).await?;
 
@@ -915,7 +927,13 @@ async fn test_bounty_give_up(
   assert_eq!(last_bounty_id, 2);
 
   let bounty_id = 1;
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 60 * 24 * 2),
+    "Test claim".to_string(),
+  ).await?;
   bounty_give_up(bounties, bounty_id, freelancer).await?;
 
   assert_statuses(
@@ -936,7 +954,13 @@ async fn test_bounty_reject_by_project_owner(
   freelancer: &Account,
 ) -> anyhow::Result<()> {
   let bounty_id = 1;
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 60 * 24 * 2),
+    "Test claim".to_string(),
+  ).await?;
   bounty_done(bounties, bounty_id, freelancer, "test description".to_string()).await?;
   bounty_action_by_user(
     bounties,
@@ -969,7 +993,13 @@ async fn test_bounty_approve_by_project_owner(
   let freelancer_balance = get_token_balance(test_token, freelancer.id()).await?;
 
   let bounty_id = 1;
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 60 * 24 * 2),
+    "Test claim".to_string(),
+  ).await?;
   bounty_done(bounties, bounty_id, freelancer, "test description".to_string()).await?;
   bounty_action_by_user(
     bounties,
@@ -1035,7 +1065,13 @@ async fn test_bounty_reject_by_validators_dao(
   ).await?;
 
   let bounty_id = 0;
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 60 * 24 * 2),
+    "Test claim".to_string(),
+  ).await?;
   assert_reputation_stat_values_eq(
     reputation_contract, project_owner, freelancer,
     Some([1, 0, 0, 0, 0, 0, 0]), Some([1, 0, 0, 1, 0, 0, 0, 0])
@@ -1098,7 +1134,13 @@ async fn test_bounty_claim_deadline_that_has_expired(
 ) -> anyhow::Result<()> {
   let bounty_id = 0;
 
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 60 * 24 * 2),
+    "Test claim".to_string(),
+  ).await?;
   assert_reputation_stat_values_eq(
     reputation_contract, project_owner, freelancer,
     Some([2, 0, 1, 0, 0, 0, 0]), Some([1, 0, 0, 2, 0, 1, 0, 0])
@@ -1118,7 +1160,13 @@ async fn test_bounty_claim_deadline_that_has_expired(
   ).await?;
 
   // Deadline 2 min
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 2),
+    "Test claim".to_string(),
+  ).await?;
   assert_reputation_stat_values_eq(
     reputation_contract, project_owner, freelancer,
     Some([3, 0, 1, 0, 1, 0, 0]), Some([1, 0, 0, 3, 0, 1, 0, 0])
@@ -1128,7 +1176,7 @@ async fn test_bounty_claim_deadline_that_has_expired(
     bounties,
     bounty_id.clone(),
     freelancer,
-    ClaimStatus::New,
+    ClaimStatus::InProgress,
     BountyStatus::Claimed,
   ).await?;
 
@@ -1166,7 +1214,13 @@ async fn test_bounty_open_and_reject_dispute(
 ) -> anyhow::Result<()> {
   let bounty_id = 0;
 
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 2),
+    "Test claim".to_string(),
+  ).await?;
   assert_reputation_stat_values_eq(
     reputation_contract, project_owner, freelancer,
     Some([4, 0, 1, 1, 1, 0, 0]), Some([1, 0, 0, 4, 0, 1, 0, 0])
@@ -1280,7 +1334,13 @@ async fn test_cancel_dispute_by_claimer(
 ) -> anyhow::Result<()> {
   let bounty_id = 0;
 
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 2),
+    "Test claim".to_string(),
+  ).await?;
   assert_reputation_stat_values_eq(
     reputation_contract, project_owner, freelancer,
     Some([5, 0, 2, 1, 1, 1, 0]), Some([1, 0, 0, 5, 0, 2, 1, 1])
@@ -1343,7 +1403,13 @@ async fn test_cancel_dispute_by_project_owner(
   let freelancer_balance = get_token_balance(test_token, freelancer.id()).await?;
 
   let bounty_id = 0;
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 2),
+    "Test claim".to_string(),
+  ).await?;
   assert_reputation_stat_values_eq(
     reputation_contract, project_owner, freelancer,
     Some([6, 0, 3, 1, 1, 2, 0]), Some([1, 0, 0, 6, 0, 3, 2, 2])
@@ -1437,7 +1503,13 @@ async fn test_bounty_open_and_approve_dispute(
   let freelancer_balance = get_token_balance(test_token, freelancer.id()).await?;
 
   let bounty_id = 1;
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 60 * 24 * 2),
+    "Test claim".to_string(),
+  ).await?;
   assert_reputation_stat_values_eq(
     reputation_contract, project_owner, freelancer,
     Some([7, 1, 3, 1, 1, 3, 1]), Some([2, 1, 0, 7, 0, 4, 3, 2])
@@ -1538,7 +1610,13 @@ async fn test_bounty_claim_approved(
   let freelancer_balance = get_token_balance(test_token, freelancer.id()).await?;
 
   let bounty_id = 2;
-  bounty_claim(bounties, bounty_id, freelancer, U64(1_000_000_000 * 60 * 60 * 24 * 2)).await?;
+  bounty_claim(
+    bounties,
+    bounty_id,
+    freelancer,
+    U64(1_000_000_000 * 60 * 60 * 24 * 2),
+    "Test claim".to_string(),
+  ).await?;
   assert_reputation_stat_values_eq(
     reputation_contract, project_owner, freelancer,
     Some([8, 2, 3, 1, 1, 4, 2]), Some([3, 2, 0, 8, 0, 5, 4, 2])

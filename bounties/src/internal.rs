@@ -859,7 +859,7 @@ impl BountiesContract {
     Self::internal_add_claim(id, claims, bounty_claim);
     self.internal_save_claims(&claimer, &claims);
     self.internal_add_bounty_claimer_account(id, claimer.clone());
-    self.locked_amount += env::attached_deposit();
+    self.locked_amount += self.config.bounty_claim_bond.0;
     self.internal_update_statistic(
       Some(claimer.clone()),
       Some(bounty.owner.clone()),
