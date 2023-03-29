@@ -1,7 +1,7 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::{UnorderedMap};
+use near_sdk::collections::{UnorderedMap, UnorderedSet};
 use near_sdk::serde::{Deserialize, Serialize};
-use near_sdk::{env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault};
+use near_sdk::{assert_one_yocto, env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault};
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
@@ -102,10 +102,15 @@ pub struct ReputationContract {
   pub claimers_entries: UnorderedMap<AccountId, ClaimerMetrics>,
   /// Bounty owner statistics.
   pub bounty_owners_entries: UnorderedMap<AccountId, BountyOwnerMetrics>,
+  /// account ids that can perform all actions:
+  /// - manage admin_whitelist
+  /// - change bounties contract
+  pub admin_whitelist: UnorderedSet<AccountId>,
 }
 
 #[derive(BorshStorageKey, BorshSerialize)]
 pub(crate) enum StorageKey {
+  AdminWhitelist,
   ClaimersEntries,
   BountyOwnersEntries,
 }
@@ -113,11 +118,19 @@ pub(crate) enum StorageKey {
 #[near_bindgen]
 impl ReputationContract {
   #[init]
-  pub fn new(bounties_contract: AccountId) -> Self {
+  pub fn new(bounties_contract: AccountId, admin_whitelist: Vec<AccountId>) -> Self {
+    assert!(
+      admin_whitelist.len() > 0,
+      "Admin whitelist must contain at least one account"
+    );
+    let mut admin_whitelist_set = UnorderedSet::new(StorageKey::AdminWhitelist);
+    admin_whitelist_set.extend(admin_whitelist.into_iter().map(|a| a.into()));
+
     Self {
       bounties_contract,
       claimers_entries: UnorderedMap::new(StorageKey::ClaimersEntries),
       bounty_owners_entries: UnorderedMap::new(StorageKey::BountyOwnersEntries),
+      admin_whitelist: admin_whitelist_set,
     }
   }
 
@@ -185,6 +198,10 @@ impl ReputationContract {
     self.bounty_owners_entries.len()
   }
 
+  pub fn get_admin_whitelist(&self) -> Vec<AccountId> {
+    self.admin_whitelist.to_vec()
+  }
+
   /**
     Internal
   **/
@@ -194,6 +211,13 @@ impl ReputationContract {
       self.bounties_contract,
       env::predecessor_account_id(),
       "Only a bounties contract can call this method"
+    );
+  }
+
+  pub(crate) fn assert_admin_whitelist(&self) {
+    assert!(
+      self.admin_whitelist.contains(&env::predecessor_account_id()),
+      "Not in admin whitelist"
     );
   }
 
@@ -290,6 +314,58 @@ impl ReputationContract {
       self.bounty_owners_entries.insert(&bounty_owner.unwrap(), &bounty_owner_metrics);
     }
   }
+
+  /**
+    Administrator
+  **/
+
+  #[payable]
+  pub fn add_to_admin_whitelist(
+    &mut self,
+    account_id: Option<AccountId>,
+    account_ids: Option<Vec<AccountId>>,
+  ) {
+    assert_one_yocto();
+    self.assert_admin_whitelist();
+    let account_ids = if let Some(account_ids) = account_ids {
+      account_ids
+    } else {
+      vec![account_id.expect("Expected either account_id or account_ids")]
+    };
+    for account_id in &account_ids {
+      self.admin_whitelist.insert(account_id);
+    }
+  }
+
+  #[payable]
+  pub fn remove_from_admin_whitelist(
+    &mut self,
+    account_id: Option<AccountId>,
+    account_ids: Option<Vec<AccountId>>,
+  ) {
+    assert_one_yocto();
+    self.assert_admin_whitelist();
+    let account_ids = if let Some(account_ids) = account_ids {
+      account_ids
+    } else {
+      vec![account_id.expect("Expected either account_id or account_ids")]
+    };
+    for account_id in &account_ids {
+      self.admin_whitelist.remove(&account_id);
+    }
+    assert!(
+      !self.admin_whitelist.is_empty(),
+      "Cannot remove all accounts from admin whitelist",
+    );
+  }
+
+  /// Can be used only during migrations when updating contract versions
+  #[payable]
+  pub fn update_bounties_contract(&mut self, bounties_contract: AccountId) {
+    assert_one_yocto();
+    self.assert_admin_whitelist();
+    self.bounties_contract = bounties_contract;
+  }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -303,11 +379,15 @@ mod tests {
     "bounties".parse().unwrap()
   }
 
+  fn get_admin_whitelist() -> Vec<AccountId> {
+    vec!["admin".parse().unwrap()]
+  }
+
   #[test]
   #[should_panic(expected = "Bounty owner is required and Claimer is not required")]
   fn test_stats_after_bounty_created_with_claimer_account() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -318,7 +398,7 @@ mod tests {
   #[should_panic(expected = "Bounty owner is required and Claimer is not required")]
   fn test_stats_after_bounty_created_without_bounty_owner_account() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -329,7 +409,7 @@ mod tests {
   #[should_panic(expected = "Only a bounties contract can call this method")]
   fn test_stats_after_bounty_created_by_other_account() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(accounts(0));
+    let mut contract = ReputationContract::new(accounts(0), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -339,7 +419,7 @@ mod tests {
   #[test]
   fn test_stats_after_bounty_created() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -368,7 +448,7 @@ mod tests {
   #[should_panic(expected = "Claimer and bounty owner required")]
   fn test_stats_after_claim_created_without_claimer_account() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -379,7 +459,7 @@ mod tests {
   #[should_panic(expected = "Claimer and bounty owner required")]
   fn test_stats_after_claim_created_without_bounty_owner_account() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -389,7 +469,7 @@ mod tests {
   #[test]
   fn test_stats_after_claim_created() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -430,7 +510,7 @@ mod tests {
   #[test]
   fn test_stats_after_bounty_cancelled() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -459,7 +539,7 @@ mod tests {
   #[should_panic(expected = "Claimer is required and Bounty owner is not required")]
   fn test_stats_after_claim_cancelled_with_bounty_owner_account() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -470,7 +550,7 @@ mod tests {
   #[should_panic(expected = "Claimer is required and Bounty owner is not required")]
   fn test_stats_after_claim_cancelled_without_claimer_account() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -480,7 +560,7 @@ mod tests {
   #[test]
   fn test_stats_after_claim_cancelled() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -507,7 +587,7 @@ mod tests {
   #[test]
   fn test_stats_after_claim_expired() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -534,7 +614,7 @@ mod tests {
   #[test]
   fn test_stats_after_successful_claim() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -599,7 +679,7 @@ mod tests {
   #[test]
   fn test_stats_after_successful_claim_with_dispute() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -644,7 +724,7 @@ mod tests {
   #[test]
   fn test_stats_after_unsuccessful_claim() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());
@@ -689,7 +769,7 @@ mod tests {
   #[test]
   fn test_stats_after_unsuccessful_claim_with_dispute() {
     let mut context = VMContextBuilder::new();
-    let mut contract = ReputationContract::new(get_bounties_contract());
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
       .build());

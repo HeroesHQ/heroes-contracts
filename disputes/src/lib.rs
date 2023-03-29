@@ -222,6 +222,14 @@ impl DisputesContract {
 
     self.internal_get_proposal(id, &mut dispute)
   }
+
+  /// Can be used only during migrations when updating contract versions
+  #[payable]
+  pub fn update_bounties_contract(&mut self, bounties_contract: AccountId) {
+    assert_one_yocto();
+    self.assert_admin_whitelist(&env::predecessor_account_id());
+    self.bounties_contract = bounties_contract;
+  }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

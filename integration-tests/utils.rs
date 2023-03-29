@@ -203,6 +203,7 @@ impl Env {
       .call("new")
       .args_json(json!({
       "bounties_contract": disputed_bounties.id(),
+      "admin_whitelist": vec![bounties_contract_admin.id()],
     }))
       .max_gas()
       .transact()
