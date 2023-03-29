@@ -28,7 +28,7 @@ impl Contract {
                     &FungibleTokenMetadata {
                         spec: FT_METADATA_SPEC.to_string(),
                         name: "Test fungible token".to_string(),
-                        symbol: "TEST".to_string(),
+                        symbol: "TFT".to_string(),
                         icon: Some(DATA_IMAGE_SVG_NEAR_ICON.to_string()),
                         reference: None,
                         reference_hash: None,
