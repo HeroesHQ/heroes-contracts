@@ -424,7 +424,8 @@ impl BountiesContract {
       "The claim status does not allow to give up the bounty"
     );
 
-    let result = if matches!(claims[claim_idx].status, ClaimStatus::InProgress) &&
+    let was_status_in_progress = matches!(claims[claim_idx].status, ClaimStatus::InProgress);
+    let result = if was_status_in_progress &&
       env::block_timestamp() - claims[claim_idx].start_time.unwrap().0 >
         self.config.bounty_forgiveness_period.0
     {
@@ -437,7 +438,7 @@ impl BountiesContract {
 
     claims[claim_idx].status = ClaimStatus::Canceled;
     self.internal_save_claims(&sender_id, &claims);
-    if matches!(bounty.status, BountyStatus::Claimed) {
+    if was_status_in_progress && matches!(bounty.status, BountyStatus::Claimed) {
       self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::New);
     }
     self.internal_update_statistic(
