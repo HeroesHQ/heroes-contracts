@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
-use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, ClaimStatus, FungibleTokenMetadata,
-               ReviewersParams, ValidatorsDaoParams};
+use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, ClaimStatus, ReviewersParams,
+               ValidatorsDaoParams};
 use disputes::{Dispute, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
@@ -22,10 +22,12 @@ pub const BOUNTIES_WASM: &str = "./bounties/res/bounties.wasm";
 pub const SPUTNIK_DAO2_WASM: &str = "./integration-tests/res/sputnikdao2.wasm";
 pub const DISPUTES_WASM: &str = "./disputes/res/disputes.wasm";
 pub const REPUTATION_WASM: &str = "./reputation/res/reputation.wasm";
+pub const KYC_WHITELIST_WASM: &str = "./kyc-whitelist/res/kyc_whitelist.wasm";
 
-pub const BOUNTY_AMOUNT: U128 = U128(10u128.pow(18));
-pub const PLATFORM_FEE: U128 = U128(10u128.pow(17));
-pub const DAO_FEE: U128 = U128(10u128.pow(17));
+pub const BOUNTY_AMOUNT: U128 = U128(10u128.pow(18)); // 1 TFT (Test fungible token)
+pub const PLATFORM_FEE: U128 = U128(10u128.pow(17)); // 0.1 TFT
+pub const DAO_FEE: U128 = U128(10u128.pow(17)); // 0.1 TFT
+pub const MIN_AMOUNT_FOR_KYC: U128 = U128(2 * 10u128.pow(18)); // 2 TFT
 pub const MAX_DEADLINE: U64 = U64(604_800_000_000_000);
 
 pub struct Env {
@@ -43,6 +45,8 @@ pub struct Env {
   pub disputed_bounties: Contract,
   pub dispute_contract: Contract,
   pub reputation_contract: Contract,
+  pub kyc_whitelist_contract: Contract,
+  pub kyc_service_account: Account,
 }
 
 pub async fn get_bounty(
@@ -210,6 +214,25 @@ impl Env {
       .await?;
     Self::assert_contract_call_result(res).await?;
 
+    let kyc_service_account = root
+      .create_subaccount("kyc_service")
+      .initial_balance(parse_near!("30 N"))
+      .transact()
+      .await?
+      .into_result()?;
+
+    let kyc_whitelist_contract = worker.dev_deploy(&std::fs::read(KYC_WHITELIST_WASM)?).await?;
+    res = kyc_whitelist_contract
+      .call("new")
+      .args_json(json!({
+      "admin_account": bounties_contract_admin.id(),
+      "service_account": kyc_service_account.id(),
+    }))
+      .max_gas()
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res).await?;
+
     let mut bounties_config = bounties::Config::default();
     bounties_config.period_for_opening_dispute = U64(1_000_000_000 * 60 * 10); // 5 min
 
@@ -220,12 +243,15 @@ impl Env {
       "config": bounties_config,
       "reputation_contract": reputation_contract.id(),
       "dispute_contract": dispute_contract.id(),
+      "kyc_whitelist_contract": kyc_whitelist_contract.id(),
+      "recipient_of_platform_fee": bounties_contract_admin.id(),
     }))
       .max_gas()
       .transact()
       .await?;
     Self::assert_contract_call_result(res).await?;
     Self::register_user(&test_token, disputed_bounties.id()).await?;
+    Self::register_user(&test_token, bounties_contract_admin.id()).await?;
     Self::add_token(&test_token, &disputed_bounties, &bounties_contract_admin).await?;
 
     Ok(
@@ -244,6 +270,8 @@ impl Env {
         disputed_bounties,
         dispute_contract,
         reputation_contract,
+        kyc_whitelist_contract,
+        kyc_service_account,
       }
     )
   }
@@ -265,12 +293,11 @@ impl Env {
     bounties: &Contract,
     administrator: &Account,
   ) -> anyhow::Result<()> {
-    let metadata: FungibleTokenMetadata = test_token.call("ft_metadata").view().await?.json()?;
     let res = administrator
       .call(bounties.id(), "add_token_id")
       .args_json(json!({
       "token_id": test_token.id(),
-      "min_amount_for_kyc": U128(150 * metadata.decimals as u128),
+      "min_amount_for_kyc": MIN_AMOUNT_FOR_KYC,
     }))
       .max_gas()
       .deposit(ONE_YOCTO)
@@ -278,6 +305,19 @@ impl Env {
       .await?;
     Self::assert_contract_call_result(res).await?;
     Ok(())
+  }
+
+  pub async fn add_account(
+    &self,
+    account_id: &str,
+  ) -> anyhow::Result<Account> {
+    let account = self.root
+      .create_subaccount(account_id)
+      .initial_balance(parse_near!("30 N"))
+      .transact()
+      .await?
+      .into_result()?;
+    Ok(account)
   }
 
   async fn assert_contract_call_result(result: ExecutionFinalResult) -> anyhow::Result<()> {
@@ -319,11 +359,17 @@ impl Env {
     bounties: &Contract,
     bounty_id: u64,
     claim_index: usize,
+    for_payout_proposal: bool,
   ) -> anyhow::Result<U64> {
     let bounty_claims = Self::get_bounty_claims_by_id(bounties, bounty_id).await?;
     assert!(bounty_claims.len() > claim_index);
     let bounty_claim = bounty_claims[claim_index].clone().1;
-    Ok(bounty_claim.bounty_payout_proposal_id.unwrap())
+    let proposal_id = if for_payout_proposal {
+      bounty_claim.bounty_payout_proposal_id.expect("No payout proposal found")
+    } else {
+      bounty_claim.approve_claimer_proposal_id.expect("No claimer approve proposal found")
+    };
+    Ok(proposal_id)
   }
 
   pub async fn get_bounty_claims_by_id(
@@ -437,9 +483,10 @@ impl Env {
     bounty_id: u64,
     deadline: U64,
     description: String,
+    user: Option<&Account>,
   ) -> anyhow::Result<()> {
     let config: bounties::Config = bounties.call("get_config").view().await?.json()?;
-    let res = self.freelancer
+    let res = if user.is_some() { user.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "bounty_claim")
       .args_json((bounty_id, deadline, description))
       .max_gas()
@@ -472,8 +519,15 @@ impl Env {
     bounties: &Contract,
     bounty_id: u64,
     proposal_action: String,
+    claim_idx: usize,
+    for_payout_proposal: bool,
   ) -> anyhow::Result<()> {
-    let proposal_id = Self::get_claim_proposal_id(bounties, bounty_id, 0).await?;
+    let proposal_id = Self::get_claim_proposal_id(
+      bounties,
+      bounty_id,
+      claim_idx,
+      for_payout_proposal
+    ).await?;
     let res = self.dao_council_member
       .call(self.validators_dao.id(), "act_proposal")
       .args_json((proposal_id.0, proposal_action, Option::<bool>::None))
@@ -489,10 +543,35 @@ impl Env {
     bounty_id: u64,
     user: &Account,
     action: &BountyAction,
+    freelancer_account_id: Option<&AccountId> // to finalize his claim
   ) -> anyhow::Result<()> {
     let res = user
       .call(bounties.id(), "bounty_action")
-      .args_json((bounty_id, action))
+      .args_json((bounty_id, action, freelancer_account_id))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res).await?;
+    Ok(())
+  }
+
+  pub async fn decision_on_claim(
+    &self,
+    bounties: &Contract,
+    bounty_id: u64,
+    user: &Account,
+    approve: bool,
+    freelancer: Option<&Account>,
+  ) -> anyhow::Result<()> {
+    let freelancer = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer };
+    let res = user
+      .call(bounties.id(), "decision_on_claim")
+      .args_json((
+        bounty_id,
+        freelancer.id(),
+        approve
+      ))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -505,8 +584,9 @@ impl Env {
     &self,
     bounties: &Contract,
     bounty_id: u64,
+    freelancer: Option<&Account>,
   ) -> anyhow::Result<()> {
-    let res = self.freelancer
+    let res = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "bounty_give_up")
       .args_json((bounty_id,))
       .max_gas()
