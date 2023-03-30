@@ -458,16 +458,11 @@ impl BountiesContract {
   }
 
   #[payable]
-  pub fn bounty_action(
-    &mut self,
-    id: BountyIndex,
-    action: BountyAction,
-    claimer_account_id: Option<AccountId>
-  ) -> PromiseOrValue<()> {
+  pub fn bounty_action(&mut self, id: BountyIndex, action: BountyAction) -> PromiseOrValue<()> {
     assert_one_yocto();
     let mut bounty = self.get_bounty(id.clone());
 
-    if claimer_account_id.is_none() {
+    if !action.need_to_finalize_claim() {
       assert!(
         matches!(bounty.status, BountyStatus::Claimed),
         "Bounty status does not allow approval of the execution result"
@@ -493,7 +488,7 @@ impl BountiesContract {
 
           result
         }
-        BountyAction::Finalize => {
+        BountyAction::Finalize { .. } => {
           let (receiver_id, mut claims, claim_idx) = self.internal_find_active_claim(id.clone());
 
           let result = if matches!(claims[claim_idx].status, ClaimStatus::InProgress) &&
@@ -534,12 +529,7 @@ impl BountiesContract {
         }
       }
     } else {
-      assert!(
-        matches!(action, BountyAction::Finalize { .. }),
-        "Only a finalize action is available if 'claimer_account_id' is used"
-      );
-
-      let receiver_id = claimer_account_id.unwrap();
+      let receiver_id = action.get_finalize_action_receiver().unwrap();
       let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &receiver_id);
 
       if matches!(claims[claim_idx].status, ClaimStatus::New) &&
@@ -621,14 +611,14 @@ impl BountiesContract {
       assert!(
         bounty.reviewers.is_none() ||
           match bounty.reviewers.clone().unwrap() {
-            Reviewers::MoreReviewers { more_reviewers: _more_reviewers } => true,
+            Reviewers::MoreReviewers { .. } => true,
             _ => false
           },
         "Validators DAO settings cannot be changed"
       );
       assert!(
         match bounty_update.reviewers.clone().unwrap() {
-          ReviewersParams::MoreReviewers { more_reviewers: _more_reviewers } => true,
+          ReviewersParams::MoreReviewers { .. } => true,
           _ => false
         },
         "It is not possible to start using Validators DAO after creating a bounty"
@@ -928,13 +918,12 @@ mod tests {
     id: BountyIndex,
     project_owner: &AccountId,
     action: BountyAction,
-    claimer_account_id: Option<AccountId>,
   ) {
     testing_env!(context
       .predecessor_account_id(project_owner.clone())
       .attached_deposit(1)
       .build());
-    contract.bounty_action(id, action, claimer_account_id);
+    contract.bounty_action(id, action);
   }
 
   #[test]
@@ -1543,7 +1532,6 @@ mod tests {
       id.clone(),
       &project_owner,
       BountyAction::ClaimRejected { receiver_id: claimer.clone() },
-      None,
     );
     assert_eq!(
       contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
@@ -1561,7 +1549,6 @@ mod tests {
       id.clone(),
       &project_owner,
       BountyAction::ClaimApproved { receiver_id: claimer },
-      None,
     );
     // For the unit test, the object statuses have not changed.
     // The action is performed in the promise callback function (see simulation test).
@@ -1599,7 +1586,6 @@ mod tests {
       id.clone(),
       &project_owner,
       BountyAction::ClaimApproved { receiver_id: claimer },
-      None,
     );
   }
 
@@ -1627,7 +1613,7 @@ mod tests {
       .attached_deposit(1)
       .build());
     let action = BountyAction::ClaimApproved { receiver_id: claimer };
-    contract.bounty_action(id, action, None);
+    contract.bounty_action(id, action);
   }
 
   #[test]
@@ -1701,7 +1687,6 @@ mod tests {
       id.clone(),
       &project_owner,
       BountyAction::ClaimRejected { receiver_id: claimer.clone() },
-      None,
     );
 
     testing_env!(context
@@ -1759,7 +1744,6 @@ mod tests {
       id.clone(),
       &project_owner,
       BountyAction::ClaimRejected { receiver_id: claimer.clone() },
-      None,
     );
     assert_eq!(
       contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
@@ -1843,7 +1827,6 @@ mod tests {
       id.clone(),
       &project_owner,
       BountyAction::ClaimRejected { receiver_id: claimer.clone() },
-      None,
     );
 
     testing_env!(context

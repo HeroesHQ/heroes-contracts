@@ -448,7 +448,7 @@ impl Env {
     let mut amount = BOUNTY_AMOUNT.0 + PLATFORM_FEE.0;
     if reviewers.is_some() {
       amount += match reviewers.clone().unwrap() {
-        ReviewersParams::ValidatorsDao { validators_dao: _validators_dao } => DAO_FEE.0,
+        ReviewersParams::ValidatorsDao { .. } => DAO_FEE.0,
         _ => 0,
       };
     }
@@ -543,11 +543,10 @@ impl Env {
     bounty_id: u64,
     user: &Account,
     action: &BountyAction,
-    freelancer_account_id: Option<&AccountId> // to finalize his claim
   ) -> anyhow::Result<()> {
     let res = user
       .call(bounties.id(), "bounty_action")
-      .args_json((bounty_id, action, freelancer_account_id))
+      .args_json((bounty_id, action))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()

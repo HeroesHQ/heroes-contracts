@@ -121,8 +121,8 @@ pub enum Deadline {
 impl Deadline {
   pub fn get_deadline_type(&self) -> u8 {
     match self.clone() {
-      Self::DueDate { due_date: _due_date } => 1,
-      Self::MaxDeadline { max_deadline: _max_deadline } => 2,
+      Self::DueDate { .. } => 1,
+      Self::MaxDeadline { .. } => 2,
       _ => 3
     }
   }
@@ -276,7 +276,7 @@ impl BountyCreate {
     let percentage_platform: u128 = config.platform_fee_percentage.into();
     let percentage_dao: u128 = if self.reviewers.is_some() {
       match self.reviewers.clone().unwrap() {
-        ReviewersParams::ValidatorsDao { validators_dao: _validators_dao } =>
+        ReviewersParams::ValidatorsDao { .. } =>
           config.validators_dao_fee_percentage.into(),
         _ => 0
       }
@@ -447,7 +447,7 @@ impl Bounty {
 
   pub fn is_validators_dao_used(&self) -> bool {
     self.reviewers.is_some() && match self.reviewers.clone().unwrap() {
-      Reviewers::ValidatorsDao { validators_dao: _validators_dao } => true,
+      Reviewers::ValidatorsDao { .. } => true,
       _ => false
     }
   }
@@ -600,7 +600,23 @@ impl From<BountyClaim> for VersionedBountyClaim {
 pub enum BountyAction {
   ClaimApproved { receiver_id: AccountId },
   ClaimRejected { receiver_id: AccountId },
-  Finalize,
+  Finalize { receiver_id: Option<AccountId> },
+}
+
+impl BountyAction {
+  pub fn need_to_finalize_claim(&self) -> bool {
+    match self.clone() {
+      Self::Finalize { receiver_id } => receiver_id.is_some(),
+      _ => false,
+    }
+  }
+
+  pub fn get_finalize_action_receiver(&self) -> Option<AccountId> {
+    match self.clone() {
+      Self::Finalize { receiver_id } => receiver_id,
+      _ => None,
+    }
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
