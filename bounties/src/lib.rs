@@ -299,12 +299,9 @@ impl BountiesContract {
     bounty.assert_account_is_not_owner_or_reviewer(sender_id.clone());
 
     let mut claims = self.get_bounty_claims(sender_id.clone());
-    let found_claim = claims.clone()
-      .into_iter()
-      .find(|c| c.bounty_id == id && matches!(c.status, ClaimStatus::New))
-      .is_some();
+    let index = Self::internal_find_claim(id, &claims);
     assert!(
-      !found_claim,
+      index.is_none() || !matches!(claims[index.unwrap()].status, ClaimStatus::New),
       "You already have a claim with the status 'New'"
     );
 
@@ -342,8 +339,7 @@ impl BountiesContract {
       "Bounty status does not allow to make a decision on a claim"
     );
     bounty.check_access_rights();
-    let mut claims = self.get_bounty_claims(claimer.clone());
-    let claim_idx = Self::internal_find_claim(id, &mut claims).expect("No claims found");
+    let (mut claims, claim_idx) = self.internal_get_claims(id, &claimer);
     let mut bounty_claim= claims[claim_idx].clone();
     assert!(
       matches!(bounty_claim.status, ClaimStatus::New),
@@ -409,13 +405,6 @@ impl BountiesContract {
     assert_one_yocto();
 
     let bounty = self.get_bounty(id.clone());
-    assert!(
-      matches!(bounty.status, BountyStatus::New) ||
-        matches!(bounty.status, BountyStatus::Claimed) ||
-        matches!(bounty.status, BountyStatus::Canceled),
-      "Bounty status does not allow to give up"
-    );
-
     let sender_id = env::predecessor_account_id();
     let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
     assert!(
@@ -469,86 +458,103 @@ impl BountiesContract {
   }
 
   #[payable]
-  pub fn bounty_action(&mut self, id: BountyIndex, action: BountyAction) -> PromiseOrValue<()> {
+  pub fn bounty_action(
+    &mut self,
+    id: BountyIndex,
+    action: BountyAction,
+    claimer_account_id: Option<AccountId>
+  ) -> PromiseOrValue<()> {
     assert_one_yocto();
-
     let mut bounty = self.get_bounty(id.clone());
-    assert!(
-      matches!(bounty.status, BountyStatus::Claimed),
-      "Bounty status does not allow approval of the execution result"
-    );
 
-    match action.clone() {
-      BountyAction::ClaimApproved { receiver_id } |
-      BountyAction::ClaimRejected { receiver_id } => {
-        bounty.check_access_rights();
+    if claimer_account_id.is_none() {
+      assert!(
+        matches!(bounty.status, BountyStatus::Claimed),
+        "Bounty status does not allow approval of the execution result"
+      );
 
-        let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &receiver_id);
-        assert!(
-          matches!(claims[claim_idx].status, ClaimStatus::Completed),
-          "The claim status does not allow approval of the execution result"
-        );
+      match action.clone() {
+        BountyAction::ClaimApproved { receiver_id } |
+        BountyAction::ClaimRejected { receiver_id } => {
+          bounty.check_access_rights();
 
-        let result = if matches!(action, BountyAction::ClaimApproved { .. }) {
-          self.internal_bounty_payout(id, receiver_id, &mut bounty, claim_idx, &mut claims)
-        } else {
-          self.internal_reject_claim(id, receiver_id, &mut bounty, claim_idx, &mut claims);
-          PromiseOrValue::Value(())
-        };
+          let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &receiver_id);
+          assert!(
+            matches!(claims[claim_idx].status, ClaimStatus::Completed),
+            "The claim status does not allow approval of the execution result"
+          );
 
-        result
+          let result = if matches!(action, BountyAction::ClaimApproved { .. }) {
+            self.internal_bounty_payout(id, receiver_id, &mut bounty, claim_idx, &mut claims)
+          } else {
+            self.internal_reject_claim(id, receiver_id, &mut bounty, claim_idx, &mut claims);
+            PromiseOrValue::Value(())
+          };
+
+          result
+        }
+        BountyAction::Finalize => {
+          let (receiver_id, mut claims, claim_idx) = self.internal_find_active_claim(id.clone());
+
+          let result = if matches!(claims[claim_idx].status, ClaimStatus::InProgress) &&
+            claims[claim_idx].is_claim_expired()
+          {
+            self.internal_set_claim_expiry_status(id, &receiver_id, bounty, claim_idx, &mut claims);
+            PromiseOrValue::Value(())
+          }
+
+          else if matches!(claims[claim_idx].status, ClaimStatus::Completed) &&
+            bounty.is_validators_dao_used()
+          {
+            Self::internal_check_bounty_payout_proposal(
+              id,
+              receiver_id,
+              &mut bounty,
+              claim_idx,
+              &mut claims
+            )
+          }
+
+          else if matches!(claims[claim_idx].status, ClaimStatus::Rejected) &&
+            self.is_deadline_for_opening_dispute_expired(&claims[claim_idx])
+          {
+            self.internal_reset_bounty_to_initial_state(id, &receiver_id, &mut bounty, claim_idx, &mut claims);
+            PromiseOrValue::Value(())
+          }
+
+          else if matches!(claims[claim_idx].status, ClaimStatus::Disputed) {
+            self.internal_get_dispute(id, receiver_id, &mut bounty, claim_idx, &mut claims)
+          }
+
+          else {
+            env::panic_str("This bounty is not subject to finalization");
+          };
+
+          result
+        }
       }
-      BountyAction::Finalize => {
-        let (receiver_id, mut claims, claim_idx) = self.internal_find_active_claim(id.clone());
+    } else {
+      assert!(
+        matches!(action, BountyAction::Finalize { .. }),
+        "Only a finalize action is available if 'claimer_account_id' is used"
+      );
 
-        let result = if matches!(claims[claim_idx].status, ClaimStatus::InProgress) &&
-          claims[claim_idx].is_claim_expired()
-        {
-          self.internal_set_claim_expiry_status(id, &receiver_id, bounty, claim_idx, &mut claims);
-          PromiseOrValue::Value(())
-        }
+      let receiver_id = claimer_account_id.unwrap();
+      let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &receiver_id);
 
-        else if matches!(claims[claim_idx].status, ClaimStatus::New) &&
-          bounty.is_validators_dao_used()
-        {
-          Self::internal_check_approve_claimer_proposal(
-            id,
-            receiver_id,
-            bounty,
-            claim_idx,
-            &mut claims
-          )
-        }
-
-        else if matches!(claims[claim_idx].status, ClaimStatus::Completed) &&
-          bounty.is_validators_dao_used()
-        {
-          Self::internal_check_bounty_payout_proposal(
-            id,
-            receiver_id,
-            &mut bounty,
-            claim_idx,
-            &mut claims
-          )
-        }
-
-        else if matches!(claims[claim_idx].status, ClaimStatus::Rejected) &&
-          self.is_deadline_for_opening_dispute_expired(&claims[claim_idx])
-        {
-          self.internal_reset_bounty_to_initial_state(id, &receiver_id, &mut bounty, claim_idx, &mut claims);
-          PromiseOrValue::Value(())
-        }
-
-        else if matches!(claims[claim_idx].status, ClaimStatus::Disputed) {
-          self.internal_get_dispute(id, receiver_id, &mut bounty, claim_idx, &mut claims)
-        }
-
-        else {
-          env::panic_str("This bounty is not subject to finalization")
-        };
-
-        result
+      if matches!(claims[claim_idx].status, ClaimStatus::New) &&
+        bounty.is_validators_dao_used()
+      {
+        return Self::internal_check_approve_claimer_proposal(
+          id,
+          receiver_id,
+          bounty,
+          claim_idx,
+          &mut claims
+        )
       }
+
+      env::panic_str("This bounty claim is not subject to finalization");
     }
   }
 
@@ -921,13 +927,14 @@ mod tests {
     contract: &mut BountiesContract,
     id: BountyIndex,
     project_owner: &AccountId,
-    action: BountyAction
+    action: BountyAction,
+    claimer_account_id: Option<AccountId>,
   ) {
     testing_env!(context
       .predecessor_account_id(project_owner.clone())
       .attached_deposit(1)
       .build());
-    contract.bounty_action(id, action);
+    contract.bounty_action(id, action, claimer_account_id);
   }
 
   #[test]
@@ -1461,8 +1468,8 @@ mod tests {
   }
 
   #[test]
-  #[should_panic(expected = "Bounty status does not allow to give up")]
-  fn test_bounty_give_up_with_incorrect_bounty_status() {
+  #[should_panic(expected = "No claimer found")]
+  fn test_bounty_give_up_with_unknown_claimer() {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
     let mut contract = BountiesContract::new(
@@ -1475,10 +1482,6 @@ mod tests {
     );
     let id = add_bounty(&mut contract, &accounts(1), None);
     let claimer = accounts(2);
-    // Change bounty status
-    let mut bounty = contract.bounties.get(&id).unwrap().to_bounty();
-    bounty.status = BountyStatus::Completed;
-    contract.bounties.insert(&id, &bounty.into());
 
     bounty_give_up(
       &mut context,
@@ -1539,7 +1542,8 @@ mod tests {
       &mut contract,
       id.clone(),
       &project_owner,
-      BountyAction::ClaimRejected { receiver_id: claimer.clone() }
+      BountyAction::ClaimRejected { receiver_id: claimer.clone() },
+      None,
     );
     assert_eq!(
       contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
@@ -1556,7 +1560,8 @@ mod tests {
       &mut contract,
       id.clone(),
       &project_owner,
-      BountyAction::ClaimApproved { receiver_id: claimer }
+      BountyAction::ClaimApproved { receiver_id: claimer },
+      None,
     );
     // For the unit test, the object statuses have not changed.
     // The action is performed in the promise callback function (see simulation test).
@@ -1593,7 +1598,8 @@ mod tests {
       &mut contract,
       id.clone(),
       &project_owner,
-      BountyAction::ClaimApproved { receiver_id: claimer }
+      BountyAction::ClaimApproved { receiver_id: claimer },
+      None,
     );
   }
 
@@ -1621,7 +1627,7 @@ mod tests {
       .attached_deposit(1)
       .build());
     let action = BountyAction::ClaimApproved { receiver_id: claimer };
-    contract.bounty_action(id, action);
+    contract.bounty_action(id, action, None);
   }
 
   #[test]
@@ -1694,7 +1700,8 @@ mod tests {
       &mut contract,
       id.clone(),
       &project_owner,
-      BountyAction::ClaimRejected { receiver_id: claimer.clone() }
+      BountyAction::ClaimRejected { receiver_id: claimer.clone() },
+      None,
     );
 
     testing_env!(context
@@ -1751,7 +1758,8 @@ mod tests {
       &mut contract,
       id.clone(),
       &project_owner,
-      BountyAction::ClaimRejected { receiver_id: claimer.clone() }
+      BountyAction::ClaimRejected { receiver_id: claimer.clone() },
+      None,
     );
     assert_eq!(
       contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
@@ -1834,7 +1842,8 @@ mod tests {
       &mut contract,
       id.clone(),
       &project_owner,
-      BountyAction::ClaimRejected { receiver_id: claimer.clone() }
+      BountyAction::ClaimRejected { receiver_id: claimer.clone() },
+      None,
     );
 
     testing_env!(context

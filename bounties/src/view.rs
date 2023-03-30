@@ -107,8 +107,7 @@ impl BountiesContract {
       .into_iter()
       .map(|account_id|
         {
-          let claims = self.get_bounty_claims(account_id.clone());
-          let index = Self::internal_find_claim(id, &claims).unwrap();
+          let (claims, index) = self.internal_get_claims(id, &account_id);
           (
             account_id,
             claims[index].clone()

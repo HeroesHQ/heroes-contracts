@@ -375,20 +375,13 @@ impl BountiesContract {
     &self,
     id: BountyIndex,
   ) -> (AccountId, Vec<BountyClaim>, usize) {
-    let bounty = self.get_bounty(id.clone());
-    assert!(
-      matches!(bounty.status, BountyStatus::Claimed),
-      "Bounty status does not allow completion"
-    );
-
     let account_ids = self
       .bounty_claimer_accounts
       .get(&id)
       .expect("No claims found");
 
     for account_id in account_ids {
-      let claims = self.get_bounty_claims(account_id.clone());
-      let index = Self::internal_find_claim(id, &claims).unwrap();
+      let (claims, index) = self.internal_get_claims(id, &account_id);
       let claim = claims[index].clone();
       if Self::is_claim_active(&claim) {
         return (account_id, claims, index);
