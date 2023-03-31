@@ -401,7 +401,7 @@ impl BountiesContract {
   /// Give up working on the bounty.
   /// Only the claimant can call this method.
   #[payable]
-  pub fn bounty_give_up(&mut self, id: u64) -> PromiseOrValue<()> {
+  pub fn bounty_give_up(&mut self, id: BountyIndex) -> PromiseOrValue<()> {
     assert_one_yocto();
 
     let bounty = self.get_bounty(id.clone());
@@ -442,7 +442,7 @@ impl BountiesContract {
   /// Cancel the bounty and return the funds to the owner.
   /// Only the owner of the bounty can call this method.
   #[payable]
-  pub fn bounty_cancel(&mut self, id: u64) -> PromiseOrValue<()> {
+  pub fn bounty_cancel(&mut self, id: BountyIndex) -> PromiseOrValue<()> {
     assert_one_yocto();
 
     let bounty = self.get_bounty(id.clone());
@@ -549,7 +549,7 @@ impl BountiesContract {
   }
 
   #[payable]
-  pub fn bounty_update(&mut self, id: u64, bounty_update: BountyUpdate) {
+  pub fn bounty_update(&mut self, id: BountyIndex, bounty_update: BountyUpdate) {
     assert_one_yocto();
 
     let mut bounty = self.get_bounty(id.clone());

@@ -6,8 +6,8 @@ use serde_json::{json, Value};
 use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
-use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, ClaimStatus, ReviewersParams,
-               ValidatorsDaoParams};
+use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
+               ReviewersParams, ValidatorsDaoParams};
 use disputes::{Dispute, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
@@ -596,6 +596,39 @@ impl Env {
     Ok(())
   }
 
+  pub async fn bounty_cancel(
+    &self,
+    bounties: &Contract,
+    bounty_id: u64,
+  ) -> anyhow::Result<()> {
+    let res = self.project_owner
+      .call(bounties.id(), "bounty_cancel")
+      .args_json((bounty_id,))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res).await?;
+    Ok(())
+  }
+
+  pub async fn bounty_update(
+    &self,
+    bounties: &Contract,
+    bounty_id: u64,
+    bounty_update: BountyUpdate,
+  ) -> anyhow::Result<()> {
+    let res = self.project_owner
+      .call(bounties.id(), "bounty_update")
+      .args_json((bounty_id, bounty_update))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res).await?;
+    Ok(())
+  }
+
   pub async fn open_dispute(
     &self,
     bounties: &Contract,
@@ -701,6 +734,13 @@ impl Env {
         gas_for_claim_approval: None,
         gas_for_claimer_approval: None,
       }
+    };
+    Ok(reviewers_params)
+  }
+
+  pub async fn more_reviewers(&self, reviewer: &Account) -> anyhow::Result<ReviewersParams> {
+    let reviewers_params = ReviewersParams::MoreReviewers {
+      more_reviewers: vec![reviewer.id().to_string().parse().unwrap()],
     };
     Ok(reviewers_params)
   }
