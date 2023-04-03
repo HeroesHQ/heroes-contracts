@@ -7,7 +7,7 @@ use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               ReviewersParams, ValidatorsDaoParams};
+               DaoFeeStats, FeeStats, ReviewersParams, TokenDetails, ValidatorsDaoParams};
 use disputes::{Dispute, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
@@ -119,7 +119,7 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
 
     res = test_token
       .call("mint")
@@ -127,7 +127,7 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Self::register_user(&test_token, freelancer.id()).await?;
 
     let bounties = worker.dev_deploy(&std::fs::read(BOUNTIES_WASM)?).await?;
@@ -139,7 +139,7 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Self::register_user(&test_token, bounties.id()).await?;
     Self::add_token(&test_token, &bounties, &bounties_contract_admin).await?;
 
@@ -157,7 +157,7 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
 
     let arbitrator = root
       .create_subaccount("arbitrator")
@@ -180,7 +180,7 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
 
     let disputed_bounties = worker.dev_deploy(&std::fs::read(BOUNTIES_WASM)?).await?;
 
@@ -200,7 +200,7 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
 
     let reputation_contract = worker.dev_deploy(&std::fs::read(REPUTATION_WASM)?).await?;
     res = reputation_contract
@@ -212,7 +212,7 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
 
     let kyc_service_account = root
       .create_subaccount("kyc_service")
@@ -231,7 +231,7 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
 
     let mut bounties_config = bounties::Config::default();
     bounties_config.period_for_opening_dispute = U64(1_000_000_000 * 60 * 10); // 5 min
@@ -249,9 +249,10 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Self::register_user(&test_token, disputed_bounties.id()).await?;
     Self::register_user(&test_token, bounties_contract_admin.id()).await?;
+    Self::register_user(&test_token, validators_dao.id()).await?;
     Self::add_token(&test_token, &disputed_bounties, &bounties_contract_admin).await?;
 
     Ok(
@@ -284,7 +285,7 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -303,7 +304,26 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn update_token(
+    &self,
+    bounties: &Contract,
+    token_details: &TokenDetails,
+  ) -> anyhow::Result<()> {
+    let res = self.bounties_contract_admin
+      .call(bounties.id(), "update_token")
+      .args_json(json!({
+      "token_id": self.test_token.id(),
+      "token_details": token_details,
+    }))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -320,11 +340,27 @@ impl Env {
     Ok(account)
   }
 
-  async fn assert_contract_call_result(result: ExecutionFinalResult) -> anyhow::Result<()> {
-    if result.is_failure() {
-      println!("{:#?}", result.clone().into_result().err());
+  async fn assert_contract_call_result(
+    result: ExecutionFinalResult,
+    expected_msg: Option<&str>,
+  ) -> anyhow::Result<()> {
+    if expected_msg.is_none() {
+      if result.is_failure() {
+        println!("{:#?}", result.clone().into_result().err());
+      }
+      assert!(result.is_success());
+    } else {
+      assert!(result.is_failure());
+      assert!(
+        result
+          .clone()
+          .into_result()
+          .err()
+          .unwrap()
+          .to_string()
+          .contains(&expected_msg.unwrap())
+      );
     }
-    assert!(result.is_success());
     Ok(())
   }
 
@@ -430,6 +466,7 @@ impl Env {
     deadline: Value,
     claimer_approval: String,
     reviewers: Option<ReviewersParams>,
+    total_amount: Option<U128>,
   ) -> anyhow::Result<()> {
     let metadata = json!({
       "title": "Test bounty title",
@@ -445,12 +482,17 @@ impl Env {
       }),
     });
 
-    let mut amount = BOUNTY_AMOUNT.0 + PLATFORM_FEE.0;
-    if reviewers.is_some() {
-      amount += match reviewers.clone().unwrap() {
-        ReviewersParams::ValidatorsDao { .. } => DAO_FEE.0,
-        _ => 0,
-      };
+    let mut amount;
+    if total_amount.is_some() {
+      amount = total_amount.unwrap().0;
+    } else {
+      amount = BOUNTY_AMOUNT.0 + PLATFORM_FEE.0;
+      if reviewers.is_some() {
+        amount += match reviewers.clone().unwrap() {
+          ReviewersParams::ValidatorsDao { .. } => DAO_FEE.0,
+          _ => 0,
+        };
+      }
     }
 
     let res = self.project_owner
@@ -473,7 +515,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -484,6 +526,7 @@ impl Env {
     deadline: U64,
     description: String,
     user: Option<&Account>,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let config: bounties::Config = bounties.call("get_config").view().await?.json()?;
     let res = if user.is_some() { user.unwrap() } else { &self.freelancer }
@@ -493,7 +536,7 @@ impl Env {
       .deposit(config.bounty_claim_bond.0)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, expected_msg).await?;
     Ok(())
   }
 
@@ -510,7 +553,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -534,7 +577,7 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -551,7 +594,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -575,7 +618,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -592,7 +635,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -608,7 +651,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -625,7 +668,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -641,7 +684,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -658,7 +701,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -674,7 +717,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -689,7 +732,7 @@ impl Env {
       .max_gas()
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -705,7 +748,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -721,7 +764,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res).await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -836,5 +879,99 @@ impl Env {
       .await?
       .json::<Proposal>()?;
     Ok(proposal)
+  }
+
+  pub async fn add_to_claimers_whitelist(
+    &self,
+    freelancer: &Account,
+  ) -> anyhow::Result<()> {
+    let res = self.project_owner
+      .call(self.disputed_bounties.id(), "add_to_claimers_whitelist")
+      .args_json((freelancer.id(),))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn remove_from_claimers_whitelist(
+    &self,
+    freelancer: &Account,
+  ) -> anyhow::Result<()> {
+    let res = self.project_owner
+      .call(self.disputed_bounties.id(), "remove_from_claimers_whitelist")
+      .args_json((freelancer.id(),))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn add_account_to_kyc_whitelist_by_service(
+    &self,
+    freelancer: &Account,
+  ) -> anyhow::Result<()> {
+    let res = self.kyc_service_account
+      .call(self.kyc_whitelist_contract.id(), "add_account")
+      .args_json((freelancer.id(),))
+      .max_gas()
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn get_platform_fees(&self) -> anyhow::Result<FeeStats> {
+    let stats = self.disputed_bounties
+      .call("get_total_fees")
+      .args_json((self.test_token.id(), ))
+      .view()
+      .await?
+      .json::<FeeStats>()?;
+    Ok(stats)
+  }
+
+  pub async fn get_dao_fees(&self) -> anyhow::Result<FeeStats> {
+    let result = self.disputed_bounties
+      .call("get_total_validators_dao_fees")
+      .args_json((self.validators_dao.id(), ))
+      .view()
+      .await?
+      .json::<Vec<DaoFeeStats>>()?;
+    if result.len() == 1 {
+      assert_eq!(result[0].token_id.to_string(), self.test_token.id().to_string());
+      Ok(result[0].fee_stats.clone())
+    } else {
+      assert_eq!(result.len(), 0);
+      Ok(FeeStats::new())
+    }
+  }
+
+  pub async fn withdraw_platform_fee(&self) -> anyhow::Result<()> {
+    let res = self.bounties_contract_admin
+      .call(self.disputed_bounties.id(), "withdraw_platform_fee")
+      .args_json((self.test_token.id(),))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn withdraw_validators_dao_fee(&self) -> anyhow::Result<()> {
+    let res = self.validators_dao.as_account()
+      .call(self.disputed_bounties.id(), "withdraw_validators_dao_fee")
+      .args_json((self.test_token.id(),))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
   }
 }
