@@ -407,13 +407,12 @@ impl BountiesContract {
     let bounty = self.get_bounty(id.clone());
     let sender_id = env::predecessor_account_id();
     let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
+    let was_status_in_progress = matches!(claims[claim_idx].status, ClaimStatus::InProgress);
     assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::New)
-        || matches!(claims[claim_idx].status, ClaimStatus::InProgress),
+      matches!(claims[claim_idx].status, ClaimStatus::New) || was_status_in_progress,
       "The claim status does not allow to give up the bounty"
     );
 
-    let was_status_in_progress = matches!(claims[claim_idx].status, ClaimStatus::InProgress);
     let result = if was_status_in_progress &&
       env::block_timestamp() - claims[claim_idx].start_time.unwrap().0 >
         self.config.bounty_forgiveness_period.0
@@ -532,7 +531,7 @@ impl BountiesContract {
       let receiver_id = action.get_finalize_action_receiver().unwrap();
       let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &receiver_id);
 
-      if matches!(claims[claim_idx].status, ClaimStatus::New) &&
+      let result = if matches!(claims[claim_idx].status, ClaimStatus::New) &&
         bounty.is_validators_dao_used()
       {
         return Self::internal_check_approve_claimer_proposal(
@@ -544,7 +543,20 @@ impl BountiesContract {
         )
       }
 
-      env::panic_str("This bounty claim is not subject to finalization");
+      else if matches!(claims[claim_idx].status, ClaimStatus::New) &&
+        (matches!(bounty.status, BountyStatus::Completed) ||
+          matches!(bounty.status, BountyStatus::Canceled))
+      {
+        claims[claim_idx].status = ClaimStatus::Canceled;
+        self.internal_save_claims(&receiver_id, &claims);
+        self.internal_return_bonds(&receiver_id)
+      }
+
+      else {
+        env::panic_str("This bounty claim is not subject to finalization");
+      };
+
+      result
     }
   }
 
