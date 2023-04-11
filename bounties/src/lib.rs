@@ -306,15 +306,19 @@ impl BountiesContract {
     );
 
     let token_details = self.tokens.get(&bounty.token).unwrap();
+
     if self.kyc_whitelist_contract.is_some() &&
       (
         token_details.min_amount_for_kyc.is_none() ||
           bounty.amount.0 >= token_details.min_amount_for_kyc.unwrap().0
       )
     {
-      self.is_claimer_in_kyc_whitelist(id, bounty, &mut claims, sender_id, deadline, description)
+      self.check_if_claimer_in_kyc_whitelist(id, bounty, &mut claims, sender_id, deadline, description)
+    }
 
-    } else if bounty.is_validators_dao_used() {
+    else if bounty.is_validators_dao_used() &&
+      self.is_approval_required(bounty.clone(), &sender_id)
+    {
       Self::internal_add_proposal_to_approve_claimer(
         id,
         bounty,
@@ -454,6 +458,11 @@ impl BountiesContract {
     let sender_id = env::predecessor_account_id();
     assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
 
+    self.internal_update_statistic(
+      None,
+      Some(sender_id),
+      ReputationActionKind::BountyCancelled
+    );
     self.internal_refund_bounty_amount(id, bounty)
   }
 

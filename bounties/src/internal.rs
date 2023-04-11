@@ -815,6 +815,15 @@ impl BountiesContract {
       .into()
   }
 
+  pub(crate) fn is_approval_required(&self, bounty: Bounty, claimer: &AccountId) -> bool {
+    match bounty.claimer_approval {
+      ClaimerApproval::MultipleClaims => true,
+      ClaimerApproval::ApprovalWithWhitelist =>
+        !self.is_claimer_whitelisted(bounty.owner, claimer),
+      _ => false
+    }
+  }
+
   pub(crate) fn internal_create_claim(
     &mut self,
     id: BountyIndex,
@@ -825,50 +834,37 @@ impl BountiesContract {
     description: String,
     proposal_id: Option<U64>,
   ) {
-    let need_approval = match bounty.claimer_approval {
-      ClaimerApproval::WithoutApproval => false,
-      _ => true,
-    };
     let created_at = U64::from(env::block_timestamp());
     let mut bounty_claim = BountyClaim {
       bounty_id: id,
       created_at: created_at.clone(),
-      start_time: if need_approval { None } else { Some(created_at) },
+      start_time: None,
       deadline,
       description,
-      status: if need_approval { ClaimStatus::New } else { ClaimStatus::InProgress },
+      status: ClaimStatus::New,
       bounty_payout_proposal_id: None,
       approve_claimer_proposal_id: proposal_id,
       rejected_timestamp: None,
       dispute_id: None,
     };
 
-    match bounty.claimer_approval {
-      ClaimerApproval::ApprovalWithWhitelist => {
-        if self.is_claimer_whitelisted(bounty.clone().owner, &claimer) {
-          self.internal_claimer_approval(id, bounty.clone(), &mut bounty_claim, &claimer);
-        }
-      }
-      ClaimerApproval::WithoutApproval => {
-        self.internal_change_status_and_save_bounty(&id, bounty.clone(), BountyStatus::Claimed);
-      }
-      _ => ()
+    if !self.is_approval_required(bounty.clone(), &claimer) {
+      self.internal_claimer_approval(id, bounty.clone(), &mut bounty_claim, &claimer);
     }
-
     Self::internal_add_claim(id, claims, bounty_claim);
     self.internal_save_claims(&claimer, &claims);
     self.internal_add_bounty_claimer_account(id, claimer.clone());
     self.locked_amount += self.config.bounty_claim_bond.0;
     self.internal_update_statistic(
       Some(claimer.clone()),
-      Some(bounty.owner.clone()),
+      Some(bounty.owner),
       ReputationActionKind::ClaimCreated
     );
 
     log!("Created new claim for bounty {} by applicant {}", id, claimer);
   }
 
-  pub(crate) fn is_claimer_in_kyc_whitelist(
+  pub(crate) fn check_if_claimer_in_kyc_whitelist(
     &self,
     id: BountyIndex,
     bounty: Bounty,

@@ -792,7 +792,7 @@ impl Env {
     &self,
     claimer: Option<&AccountId>,
   ) -> anyhow::Result<(Option<ClaimerMetrics>, Option<BountyOwnerMetrics>)> {
-    let freelancer = if claimer.is_some() { claimer.unwrap() } else { self.project_owner.id() };
+    let freelancer = if claimer.is_some() { claimer.unwrap() } else { self.freelancer.id() };
     let bounty_owner_stats: (Option<ClaimerMetrics>, Option<BountyOwnerMetrics>) =
       self.reputation_contract
         .call("get_statistics")

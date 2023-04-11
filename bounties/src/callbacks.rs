@@ -255,7 +255,9 @@ impl BountiesContract {
     } else {
       let is_whitelisted = result.unwrap();
       if is_whitelisted {
-        if bounty.is_validators_dao_used() {
+        if bounty.is_validators_dao_used() &&
+          self.is_approval_required(bounty.clone(), &claimer)
+        {
           Self::internal_add_proposal_to_approve_claimer(
             id,
             bounty,
