@@ -306,15 +306,19 @@ impl BountiesContract {
     );
 
     let token_details = self.tokens.get(&bounty.token).unwrap();
+
     if self.kyc_whitelist_contract.is_some() &&
       (
         token_details.min_amount_for_kyc.is_none() ||
           bounty.amount.0 >= token_details.min_amount_for_kyc.unwrap().0
       )
     {
-      self.is_claimer_in_kyc_whitelist(id, bounty, &mut claims, sender_id, deadline, description)
+      self.check_if_claimer_in_kyc_whitelist(id, bounty, &mut claims, sender_id, deadline, description)
+    }
 
-    } else if bounty.is_validators_dao_used() {
+    else if bounty.is_validators_dao_used() &&
+      self.is_approval_required(bounty.clone(), &sender_id)
+    {
       Self::internal_add_proposal_to_approve_claimer(
         id,
         bounty,
@@ -346,7 +350,7 @@ impl BountiesContract {
       "Claim status does not allow a decision to be made"
     );
     if approve {
-      self.internal_claimer_approval(id, bounty, &mut bounty_claim);
+      self.internal_claimer_approval(id, bounty, &mut bounty_claim, &claimer);
     } else {
       bounty_claim.status = ClaimStatus::NotHired;
       self.internal_return_bonds(&claimer);
@@ -409,7 +413,8 @@ impl BountiesContract {
     let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
     let was_status_in_progress = matches!(claims[claim_idx].status, ClaimStatus::InProgress);
     assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::New) || was_status_in_progress,
+      matches!(claims[claim_idx].status, ClaimStatus::New) ||
+          was_status_in_progress && matches!(bounty.status, BountyStatus::Claimed),
       "The claim status does not allow to give up the bounty"
     );
 
@@ -426,14 +431,14 @@ impl BountiesContract {
 
     claims[claim_idx].status = ClaimStatus::Canceled;
     self.internal_save_claims(&sender_id, &claims);
-    if was_status_in_progress && matches!(bounty.status, BountyStatus::Claimed) {
+    if was_status_in_progress {
       self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::New);
+      self.internal_update_statistic(
+        Some(sender_id),
+        None,
+        ReputationActionKind::ClaimCancelled
+      );
     }
-    self.internal_update_statistic(
-      Some(sender_id),
-      None,
-      ReputationActionKind::ClaimCancelled
-    );
 
     result
   }
@@ -453,6 +458,11 @@ impl BountiesContract {
     let sender_id = env::predecessor_account_id();
     assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
 
+    self.internal_update_statistic(
+      None,
+      Some(sender_id),
+      ReputationActionKind::BountyCancelled
+    );
     self.internal_refund_bounty_amount(id, bounty)
   }
 

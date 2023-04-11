@@ -790,7 +790,9 @@ impl Env {
 
   async fn get_reputation_stats(
     &self,
+    claimer: Option<&AccountId>,
   ) -> anyhow::Result<(Option<ClaimerMetrics>, Option<BountyOwnerMetrics>)> {
+    let freelancer = if claimer.is_some() { claimer.unwrap() } else { self.freelancer.id() };
     let bounty_owner_stats: (Option<ClaimerMetrics>, Option<BountyOwnerMetrics>) =
       self.reputation_contract
         .call("get_statistics")
@@ -801,46 +803,49 @@ impl Env {
     let claimer_stats: (Option<ClaimerMetrics>, Option<BountyOwnerMetrics>) =
       self.reputation_contract
         .call("get_statistics")
-        .args_json((self.freelancer.id(),))
+        .args_json((freelancer,))
         .view()
         .await?
         .json()?;
     Ok((claimer_stats.0, bounty_owner_stats.1))
   }
 
-  pub async fn claimer_metrics_value_of(values: [u64; 7]) -> anyhow::Result<ClaimerMetrics> {
+  pub async fn claimer_metrics_value_of(values: [u64; 8]) -> anyhow::Result<ClaimerMetrics> {
     let stats = ClaimerMetrics {
       number_of_claims: values[0],
-      number_of_successful_claims: values[1],
-      number_of_unsuccessful_claims: values[2],
-      number_of_overdue_claims: values[3],
-      number_of_canceled_claims: values[4],
-      number_of_open_disputes: values[5],
-      number_of_disputes_won: values[6],
-    };
-    Ok(stats)
-  }
-
-  pub async fn bounty_owner_metrics_value_of(values: [u64; 8]) -> anyhow::Result<BountyOwnerMetrics> {
-    let stats = BountyOwnerMetrics {
-      number_of_bounties: values[0],
-      number_of_successful_bounties: values[1],
-      number_of_canceled_bounties: values[2],
-      number_of_claims: values[3],
-      number_of_approved_claims: values[4],
-      number_of_rejected_claims: values[5],
+      number_of_accepted_claims: values[1],
+      number_of_successful_claims: values[2],
+      number_of_unsuccessful_claims: values[3],
+      number_of_overdue_claims: values[4],
+      number_of_canceled_claims: values[5],
       number_of_open_disputes: values[6],
       number_of_disputes_won: values[7],
     };
     Ok(stats)
   }
 
+  pub async fn bounty_owner_metrics_value_of(values: [u64; 9]) -> anyhow::Result<BountyOwnerMetrics> {
+    let stats = BountyOwnerMetrics {
+      number_of_bounties: values[0],
+      number_of_successful_bounties: values[1],
+      number_of_canceled_bounties: values[2],
+      number_of_claims: values[3],
+      number_of_approved_claimers: values[4],
+      number_of_approved_claims: values[5],
+      number_of_rejected_claims: values[6],
+      number_of_open_disputes: values[7],
+      number_of_disputes_won: values[8],
+    };
+    Ok(stats)
+  }
+
   pub async fn assert_reputation_stat_values_eq(
     &self,
-    claimer_stats: Option<[u64; 7]>,
-    bounty_owner_stats: Option<[u64; 8]>,
+    claimer_stats: Option<[u64; 8]>,
+    bounty_owner_stats: Option<[u64; 9]>,
+    claimer: Option<&AccountId>,
   ) -> anyhow::Result<()> {
-    let stats = self.get_reputation_stats().await?;
+    let stats = self.get_reputation_stats(claimer).await?;
     assert_eq!(stats.0.is_some(), claimer_stats.is_some());
     if claimer_stats.is_some() {
       assert_eq!(

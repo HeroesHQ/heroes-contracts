@@ -161,7 +161,7 @@ impl BountiesContract {
       assert_eq!(proposal.id, bounty_claim.approve_claimer_proposal_id.unwrap().0);
       assert_eq!(proposal.proposer, env::current_account_id());
       if proposal.status == "Approved" {
-        self.internal_claimer_approval(id, bounty, &mut bounty_claim);
+        self.internal_claimer_approval(id, bounty, &mut bounty_claim, &claimer);
       } else if proposal.status == "Rejected" {
         bounty_claim.status = ClaimStatus::NotHired;
         self.internal_return_bonds(&claimer);
@@ -255,7 +255,9 @@ impl BountiesContract {
     } else {
       let is_whitelisted = result.unwrap();
       if is_whitelisted {
-        if bounty.is_validators_dao_used() {
+        if bounty.is_validators_dao_used() &&
+          self.is_approval_required(bounty.clone(), &claimer)
+        {
           Self::internal_add_proposal_to_approve_claimer(
             id,
             bounty,
