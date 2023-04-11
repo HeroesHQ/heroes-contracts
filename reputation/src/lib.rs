@@ -9,6 +9,8 @@ use near_sdk::{assert_one_yocto, env, near_bindgen, AccountId, BorshStorageKey, 
 pub struct ClaimerMetrics {
   /// Total number of claims created
   pub number_of_claims: u64,
+  /// Number of successfully accepted claims
+  pub number_of_accepted_claims: u64,
   /// Number of successfully completed claims
   pub number_of_successful_claims: u64,
   /// Number of claims for which the result of execution was not finally accepted
@@ -27,6 +29,7 @@ impl Default for ClaimerMetrics {
   fn default() -> Self {
     Self {
       number_of_claims: 0,
+      number_of_accepted_claims: 0,
       number_of_successful_claims: 0,
       number_of_unsuccessful_claims: 0,
       number_of_overdue_claims: 0,
@@ -49,6 +52,8 @@ pub struct BountyOwnerMetrics {
   pub number_of_canceled_bounties: u64,
   /// Number of claims for his bounties
   pub number_of_claims: u64,
+  /// Number of approved claimers
+  pub number_of_approved_claimers: u64,
   /// Number of approved claims
   pub number_of_approved_claims: u64,
   /// Number of rejected claims
@@ -66,6 +71,7 @@ impl Default for BountyOwnerMetrics {
       number_of_successful_bounties: 0,
       number_of_canceled_bounties: 0,
       number_of_claims: 0,
+      number_of_approved_claimers: 0,
       number_of_approved_claims: 0,
       number_of_rejected_claims: 0,
       number_of_open_disputes: 0,
@@ -85,6 +91,8 @@ pub enum ActionKind {
   ClaimCreated,
   /// Claim cancelled
   ClaimCancelled,
+  /// Claimer approved
+  ClaimerApproved,
   /// The claim has expired
   ClaimExpired,
   /// Successful bounty and claim
@@ -275,6 +283,10 @@ impl ReputationContract {
         bounty_owner_metrics.number_of_claims += 1;
         claimer_metrics.number_of_claims += 1;
       }
+      ActionKind::ClaimerApproved => {
+        bounty_owner_metrics.number_of_approved_claimers += 1;
+        claimer_metrics.number_of_accepted_claims += 1;
+      }
       ActionKind::ClaimCancelled => {
         claimer_metrics.number_of_canceled_claims += 1;
       }
@@ -435,6 +447,7 @@ mod tests {
         number_of_successful_bounties: 0,
         number_of_canceled_bounties: 0,
         number_of_claims: 0,
+        number_of_approved_claimers: 0,
         number_of_approved_claims: 0,
         number_of_rejected_claims: 0,
         number_of_open_disputes: 0,
@@ -483,6 +496,7 @@ mod tests {
       claimer_stats,
       ClaimerMetrics {
         number_of_claims: 1,
+        number_of_accepted_claims: 0,
         number_of_successful_claims: 0,
         number_of_unsuccessful_claims: 0,
         number_of_overdue_claims: 0,
@@ -499,6 +513,50 @@ mod tests {
         number_of_successful_bounties: 0,
         number_of_canceled_bounties: 0,
         number_of_claims: 1,
+        number_of_approved_claimers: 0,
+        number_of_approved_claims: 0,
+        number_of_rejected_claims: 0,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+  }
+
+  #[test]
+  fn test_stats_after_claimer_approved() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = ReputationContract::new(get_bounties_contract(), get_admin_whitelist());
+    testing_env!(context
+      .predecessor_account_id(get_bounties_contract())
+      .build());
+
+    contract.emit(Some(accounts(0)), Some(accounts(1)), ActionKind::ClaimerApproved);
+
+    let claimer_stats = contract.claimers_entries.get(&accounts(0)).unwrap();
+    let bounty_owner_stats = contract.bounty_owners_entries.get(&accounts(1)).unwrap();
+    assert_eq!(contract.claimers_entries.len(), 1);
+    assert_eq!(
+      claimer_stats,
+      ClaimerMetrics {
+        number_of_claims: 0,
+        number_of_accepted_claims: 1,
+        number_of_successful_claims: 0,
+        number_of_unsuccessful_claims: 0,
+        number_of_overdue_claims: 0,
+        number_of_canceled_claims: 0,
+        number_of_open_disputes: 0,
+        number_of_disputes_won: 0,
+      }
+    );
+    assert_eq!(contract.bounty_owners_entries.len(), 1);
+    assert_eq!(
+      bounty_owner_stats,
+      BountyOwnerMetrics {
+        number_of_bounties: 0,
+        number_of_successful_bounties: 0,
+        number_of_canceled_bounties: 0,
+        number_of_claims: 0,
+        number_of_approved_claimers: 1,
         number_of_approved_claims: 0,
         number_of_rejected_claims: 0,
         number_of_open_disputes: 0,
@@ -526,6 +584,7 @@ mod tests {
         number_of_successful_bounties: 0,
         number_of_canceled_bounties: 1,
         number_of_claims: 0,
+        number_of_approved_claimers: 0,
         number_of_approved_claims: 0,
         number_of_rejected_claims: 0,
         number_of_open_disputes: 0,
@@ -573,6 +632,7 @@ mod tests {
       claimer_stats,
       ClaimerMetrics {
         number_of_claims: 0,
+        number_of_accepted_claims: 0,
         number_of_successful_claims: 0,
         number_of_unsuccessful_claims: 0,
         number_of_overdue_claims: 0,
@@ -600,6 +660,7 @@ mod tests {
       claimer_stats,
       ClaimerMetrics {
         number_of_claims: 0,
+        number_of_accepted_claims: 0,
         number_of_successful_claims: 0,
         number_of_unsuccessful_claims: 0,
         number_of_overdue_claims: 1,
@@ -632,6 +693,7 @@ mod tests {
       claimer_stats,
       ClaimerMetrics {
         number_of_claims: 0,
+        number_of_accepted_claims: 0,
         number_of_successful_claims: 1,
         number_of_unsuccessful_claims: 0,
         number_of_overdue_claims: 0,
@@ -648,6 +710,7 @@ mod tests {
         number_of_successful_bounties: 1,
         number_of_canceled_bounties: 0,
         number_of_claims: 0,
+        number_of_approved_claimers: 0,
         number_of_approved_claims: 1,
         number_of_rejected_claims: 0,
         number_of_open_disputes: 0,
@@ -697,6 +760,7 @@ mod tests {
       claimer_stats,
       ClaimerMetrics {
         number_of_claims: 0,
+        number_of_accepted_claims: 0,
         number_of_successful_claims: 1,
         number_of_unsuccessful_claims: 0,
         number_of_overdue_claims: 0,
@@ -713,6 +777,7 @@ mod tests {
         number_of_successful_bounties: 1,
         number_of_canceled_bounties: 0,
         number_of_claims: 0,
+        number_of_approved_claimers: 0,
         number_of_approved_claims: 0,
         number_of_rejected_claims: 1,
         number_of_open_disputes: 1,
@@ -742,6 +807,7 @@ mod tests {
       claimer_stats,
       ClaimerMetrics {
         number_of_claims: 0,
+        number_of_accepted_claims: 0,
         number_of_successful_claims: 0,
         number_of_unsuccessful_claims: 1,
         number_of_overdue_claims: 0,
@@ -758,6 +824,7 @@ mod tests {
         number_of_successful_bounties: 0,
         number_of_canceled_bounties: 0,
         number_of_claims: 0,
+        number_of_approved_claimers: 0,
         number_of_approved_claims: 0,
         number_of_rejected_claims: 1,
         number_of_open_disputes: 0,
@@ -787,6 +854,7 @@ mod tests {
       claimer_stats,
       ClaimerMetrics {
         number_of_claims: 0,
+        number_of_accepted_claims: 0,
         number_of_successful_claims: 0,
         number_of_unsuccessful_claims: 1,
         number_of_overdue_claims: 0,
@@ -803,6 +871,7 @@ mod tests {
         number_of_successful_bounties: 0,
         number_of_canceled_bounties: 0,
         number_of_claims: 0,
+        number_of_approved_claimers: 0,
         number_of_approved_claims: 0,
         number_of_rejected_claims: 1,
         number_of_open_disputes: 1,

@@ -303,7 +303,7 @@ async fn test_claim_result_approve_by_project_owner(e: &Env) -> anyhow::Result<(
 }
 
 async fn test_claim_result_reject_by_validators_dao(e: &Env) -> anyhow::Result<()> {
-  e.assert_reputation_stat_values_eq(None, None).await?;
+  e.assert_reputation_stat_values_eq(None, None, None).await?;
   // New bounty contract, numbering reset
   let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(last_bounty_id, 0);
@@ -318,7 +318,7 @@ async fn test_claim_result_reject_by_validators_dao(e: &Env) -> anyhow::Result<(
 
   let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(last_bounty_id, 1);
-  e.assert_reputation_stat_values_eq(None, Some([1, 0, 0, 0, 0, 0, 0, 0])).await?;
+  e.assert_reputation_stat_values_eq(None, Some([1, 0, 0, 0, 0, 0, 0, 0, 0]), None).await?;
 
   let bounty_id = 0;
   e.bounty_claim(
@@ -330,8 +330,9 @@ async fn test_claim_result_reject_by_validators_dao(e: &Env) -> anyhow::Result<(
     None
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([1, 0, 0, 0, 0, 0, 0]),
-    Some([1, 0, 0, 1, 0, 0, 0, 0])
+    Some([1, 1, 0, 0, 0, 0, 0, 0]),
+    Some([1, 0, 0, 1, 1, 0, 0, 0, 0]),
+    None,
   ).await?;
 
   e.bounty_done(&e.disputed_bounties, bounty_id, "test description".to_string()).await?;
@@ -380,8 +381,9 @@ async fn test_claim_result_reject_by_validators_dao(e: &Env) -> anyhow::Result<(
     BountyStatus::New,
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([1, 0, 1, 0, 0, 0, 0]),
-    Some([1, 0, 0, 1, 0, 1, 0, 0])
+    Some([1, 1, 0, 1, 0, 0, 0, 0]),
+    Some([1, 0, 0, 1, 1, 0, 1, 0, 0]),
+    None,
   ).await?;
 
   println!("      Passed ✅ Test - claim result reject by DAO");
@@ -400,8 +402,9 @@ async fn test_bounty_claim_deadline_has_expired(e: &Env) -> anyhow::Result<()> {
     None
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([2, 0, 1, 0, 0, 0, 0]),
-    Some([1, 0, 0, 2, 0, 1, 0, 0])
+    Some([2, 2, 0, 1, 0, 0, 0, 0]),
+    Some([1, 0, 0, 2, 2, 0, 1, 0, 0]),
+    None,
   ).await?;
 
   e.bounty_give_up(&e.disputed_bounties, bounty_id, None).await?;
@@ -412,8 +415,9 @@ async fn test_bounty_claim_deadline_has_expired(e: &Env) -> anyhow::Result<()> {
     BountyStatus::New,
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([2, 0, 1, 0, 1, 0, 0]),
-    Some([1, 0, 0, 2, 0, 1, 0, 0])
+    Some([2, 2, 0, 1, 0, 1, 0, 0]),
+    Some([1, 0, 0, 2, 2, 0, 1, 0, 0]),
+    None,
   ).await?;
 
   // Deadline 2 min
@@ -426,8 +430,9 @@ async fn test_bounty_claim_deadline_has_expired(e: &Env) -> anyhow::Result<()> {
     None
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([3, 0, 1, 0, 1, 0, 0]),
-    Some([1, 0, 0, 3, 0, 1, 0, 0])
+    Some([3, 3, 0, 1, 0, 1, 0, 0]),
+    Some([1, 0, 0, 3, 3, 0, 1, 0, 0]),
+    None,
   ).await?;
 
   e.assert_statuses(
@@ -452,8 +457,9 @@ async fn test_bounty_claim_deadline_has_expired(e: &Env) -> anyhow::Result<()> {
     BountyStatus::New,
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([3, 0, 1, 1, 1, 0, 0]),
-    Some([1, 0, 0, 3, 0, 1, 0, 0])
+    Some([3, 3, 0, 1, 1, 1, 0, 0]),
+    Some([1, 0, 0, 3, 3, 0, 1, 0, 0]),
+    None,
   ).await?;
 
   println!("      Passed ✅ Test - bounty claim deadline has expired");
@@ -472,8 +478,9 @@ async fn test_open_dispute_and_reject_by_dispute_dao(e: &Env) -> anyhow::Result<
     None
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([4, 0, 1, 1, 1, 0, 0]),
-    Some([1, 0, 0, 4, 0, 1, 0, 0])
+    Some([4, 4, 0, 1, 1, 1, 0, 0]),
+    Some([1, 0, 0, 4, 4, 0, 1, 0, 0]),
+    None,
   ).await?;
   e.bounty_done(&e.disputed_bounties, bounty_id, "test description".to_string()).await?;
   e.bounty_action_by_validators_dao(
@@ -557,8 +564,9 @@ async fn test_open_dispute_and_reject_by_dispute_dao(e: &Env) -> anyhow::Result<
     BountyStatus::New,
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([4, 0, 2, 1, 1, 1, 0]),
-    Some([1, 0, 0, 4, 0, 2, 1, 1])
+    Some([4, 4, 0, 2, 1, 1, 1, 0]),
+    Some([1, 0, 0, 4, 4, 0, 2, 1, 1]),
+    None,
   ).await?;
 
   println!("      Passed ✅ Test - open the dispute and reject by dispute DAO");
@@ -577,8 +585,9 @@ async fn test_cancel_dispute_by_claimer(e: &Env) -> anyhow::Result<()> {
     None
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([5, 0, 2, 1, 1, 1, 0]),
-    Some([1, 0, 0, 5, 0, 2, 1, 1])
+    Some([5, 5, 0, 2, 1, 1, 1, 0]),
+    Some([1, 0, 0, 5, 5, 0, 2, 1, 1]),
+    None,
   ).await?;
   e.bounty_done(&e.disputed_bounties, bounty_id, "test description".to_string()).await?;
   e.bounty_action_by_validators_dao(
@@ -619,8 +628,9 @@ async fn test_cancel_dispute_by_claimer(e: &Env) -> anyhow::Result<()> {
     BountyStatus::New,
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([5, 0, 3, 1, 1, 2, 0]),
-    Some([1, 0, 0, 5, 0, 3, 2, 2])
+    Some([5, 5, 0, 3, 1, 1, 2, 0]),
+    Some([1, 0, 0, 5, 5, 0, 3, 2, 2]),
+    None,
   ).await?;
 
   println!("      Passed ✅ Test - cancel the dispute by claimer");
@@ -641,8 +651,9 @@ async fn test_cancel_dispute_by_project_owner(e: &Env) -> anyhow::Result<()> {
     None
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([6, 0, 3, 1, 1, 2, 0]),
-    Some([1, 0, 0, 6, 0, 3, 2, 2])
+    Some([6, 6, 0, 3, 1, 1, 2, 0]),
+    Some([1, 0, 0, 6, 6, 0, 3, 2, 2]),
+    None,
   ).await?;
   e.bounty_done(&e.disputed_bounties, bounty_id, "test description".to_string()).await?;
   e.bounty_action_by_validators_dao(
@@ -683,8 +694,9 @@ async fn test_cancel_dispute_by_project_owner(e: &Env) -> anyhow::Result<()> {
     BountyStatus::Completed,
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([6, 1, 3, 1, 1, 3, 1]),
-    Some([1, 1, 0, 6, 0, 4, 3, 2])
+    Some([6, 6, 1, 3, 1, 1, 3, 1]),
+    Some([1, 1, 0, 6, 6, 0, 4, 3, 2]),
+    None,
   ).await?;
 
   assert_eq!(
@@ -715,8 +727,9 @@ async fn test_open_dispute_and_approve_by_dispute_dao(e: &Env) -> anyhow::Result
   let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(last_bounty_id, 2);
   e.assert_reputation_stat_values_eq(
-    Some([6, 1, 3, 1, 1, 3, 1]),
-    Some([2, 1, 0, 6, 0, 4, 3, 2])
+    Some([6, 6, 1, 3, 1, 1, 3, 1]),
+    Some([2, 1, 0, 6, 6, 0, 4, 3, 2]),
+    None,
   ).await?;
 
   let token_balance = e.get_token_balance(e.disputed_bounties.id()).await?;
@@ -732,8 +745,9 @@ async fn test_open_dispute_and_approve_by_dispute_dao(e: &Env) -> anyhow::Result
     None
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([7, 1, 3, 1, 1, 3, 1]),
-    Some([2, 1, 0, 7, 0, 4, 3, 2])
+    Some([7, 7, 1, 3, 1, 1, 3, 1]),
+    Some([2, 1, 0, 7, 7, 0, 4, 3, 2]),
+    None,
   ).await?;
   e.bounty_done(&e.disputed_bounties, bounty_id, "test description".to_string()).await?;
   e.bounty_action_by_validators_dao(
@@ -780,8 +794,9 @@ async fn test_open_dispute_and_approve_by_dispute_dao(e: &Env) -> anyhow::Result
     BountyStatus::Completed,
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([7, 2, 3, 1, 1, 4, 2]),
-    Some([2, 2, 0, 7, 0, 5, 4, 2])
+    Some([7, 7, 2, 3, 1, 1, 4, 2]),
+    Some([2, 2, 0, 7, 7, 0, 5, 4, 2]),
+    None,
   ).await?;
 
   assert_eq!(
@@ -812,8 +827,9 @@ async fn test_statistics_for_bounty_claim_approval(e: &Env) -> anyhow::Result<()
   let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(last_bounty_id, 3);
   e.assert_reputation_stat_values_eq(
-    Some([7, 2, 3, 1, 1, 4, 2]),
-    Some([3, 2, 0, 7, 0, 5, 4, 2])
+    Some([7, 7, 2, 3, 1, 1, 4, 2]),
+    Some([3, 2, 0, 7, 7, 0, 5, 4, 2]),
+    None,
   ).await?;
 
   let token_balance = e.get_token_balance(e.disputed_bounties.id()).await?;
@@ -829,8 +845,9 @@ async fn test_statistics_for_bounty_claim_approval(e: &Env) -> anyhow::Result<()
     None
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([8, 2, 3, 1, 1, 4, 2]),
-    Some([3, 2, 0, 8, 0, 5, 4, 2])
+    Some([8, 8, 2, 3, 1, 1, 4, 2]),
+    Some([3, 2, 0, 8, 8, 0, 5, 4, 2]),
+    None,
   ).await?;
   e.bounty_done(&e.disputed_bounties, bounty_id, "test description".to_string()).await?;
   e.bounty_action_by_validators_dao(
@@ -848,8 +865,9 @@ async fn test_statistics_for_bounty_claim_approval(e: &Env) -> anyhow::Result<()
     BountyStatus::Completed,
   ).await?;
   e.assert_reputation_stat_values_eq(
-    Some([8, 3, 3, 1, 1, 4, 2]),
-    Some([3, 3, 0, 8, 1, 5, 4, 2])
+    Some([8, 8, 3, 3, 1, 1, 4, 2]),
+    Some([3, 3, 0, 8, 8, 1, 5, 4, 2]),
+    None,
   ).await?;
 
   assert_eq!(
@@ -876,6 +894,11 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     None,
     None,
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([8, 8, 3, 3, 1, 1, 4, 2]),
+    Some([4, 3, 0, 8, 8, 1, 5, 4, 2]),
+    None,
+  ).await?;
 
   let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(last_bounty_id, 4);
@@ -891,6 +914,11 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     None, // by default freelancer
     None
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([9, 8, 3, 3, 1, 1, 4, 2]),
+    Some([4, 3, 0, 9, 8, 1, 5, 4, 2]),
+    None,
+  ).await?;
 
   let freelancer2 = e.add_account("freelancer2").await?;
   e.bounty_claim(
@@ -900,6 +928,11 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     "Test claim 2".to_string(),
     Some(&freelancer2),
     None
+  ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([1, 0, 0, 0, 0, 0, 0, 0]),
+    Some([4, 3, 0, 10, 8, 1, 5, 4, 2]),
+    Some(freelancer2.id()),
   ).await?;
 
   let freelancer3 = e.add_account("freelancer3").await?;
@@ -911,6 +944,11 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     Some(&freelancer3),
     None,
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([1, 0, 0, 0, 0, 0, 0, 0]),
+    Some([4, 3, 0, 11, 8, 1, 5, 4, 2]),
+    Some(freelancer3.id()),
+  ).await?;
 
   let freelancer4 = e.add_account("freelancer4").await?;
   e.bounty_claim(
@@ -921,8 +959,19 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     Some(&freelancer4),
     None,
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([1, 0, 0, 0, 0, 0, 0, 0]),
+    Some([4, 3, 0, 12, 8, 1, 5, 4, 2]),
+    Some(freelancer4.id()),
+  ).await?;
 
   e.decision_on_claim(&e.disputed_bounties, bounty_id, &e.project_owner, false, None).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([9, 8, 3, 3, 1, 1, 4, 2]),
+    Some([4, 3, 0, 12, 8, 1, 5, 4, 2]),
+    None,
+  ).await?;
+
   e.decision_on_claim(
     &e.disputed_bounties,
     bounty_id,
@@ -930,7 +979,18 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     true,
     Some(&freelancer2)
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([1, 1, 0, 0, 0, 0, 0, 0]),
+    Some([4, 3, 0, 12, 9, 1, 5, 4, 2]),
+    Some(freelancer2.id()),
+  ).await?;
+
   e.bounty_give_up(&e.disputed_bounties, bounty_id, Some(&freelancer3)).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([1, 0, 0, 0, 0, 1, 0, 0]),
+    Some([4, 3, 0, 12, 9, 1, 5, 4, 2]),
+    Some(freelancer3.id()),
+  ).await?;
 
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
   assert_eq!(bounty_claims.len(), 4);
@@ -952,6 +1012,11 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
 
   // The second freelancer failed the task
   e.bounty_give_up(&e.disputed_bounties, bounty_id, Some(&freelancer2)).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([1, 1, 0, 0, 0, 1, 0, 0]),
+    Some([4, 3, 0, 12, 9, 1, 5, 4, 2]),
+    Some(freelancer2.id()),
+  ).await?;
 
   let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
   assert_eq!(bounty.status, BountyStatus::New);
@@ -963,6 +1028,11 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     &e.project_owner,
     true,
     Some(&freelancer4)
+  ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([1, 1, 0, 0, 0, 0, 0, 0]),
+    Some([4, 3, 0, 12, 10, 1, 5, 4, 2]),
+    Some(freelancer4.id()),
   ).await?;
 
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
@@ -988,6 +1058,11 @@ async fn test_rejection_and_approval_of_claimers_by_validators_dao(e: &Env) -> a
     Some(e.reviewer_is_dao().await?),
     None,
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([9, 8, 3, 3, 1, 1, 4, 2]),
+    Some([5, 3, 0, 12, 10, 1, 5, 4, 2]),
+    None,
+  ).await?;
 
   let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(last_bounty_id, 5);
@@ -1002,6 +1077,11 @@ async fn test_rejection_and_approval_of_claimers_by_validators_dao(e: &Env) -> a
     None, // by default freelancer
     None
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([10, 8, 3, 3, 1, 1, 4, 2]),
+    Some([5, 3, 0, 13, 10, 1, 5, 4, 2]),
+    None,
+  ).await?;
 
   let freelancer2 = e.add_account("freelancer5").await?;
   e.bounty_claim(
@@ -1011,6 +1091,11 @@ async fn test_rejection_and_approval_of_claimers_by_validators_dao(e: &Env) -> a
     "Test claim 2".to_string(),
     Some(&freelancer2),
     None,
+  ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([1, 0, 0, 0, 0, 0, 0, 0]),
+    Some([5, 3, 0, 14, 10, 1, 5, 4, 2]),
+    Some(freelancer2.id()),
   ).await?;
 
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
@@ -1045,6 +1130,11 @@ async fn test_rejection_and_approval_of_claimers_by_validators_dao(e: &Env) -> a
       receiver_id: Some(e.freelancer.id().to_string().parse().unwrap())
     },
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([10, 8, 3, 3, 1, 1, 4, 2]),
+    Some([5, 3, 0, 14, 10, 1, 5, 4, 2]),
+    None,
+  ).await?;
 
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
   assert_eq!(bounty_claims[0].1.status, ClaimStatus::NotHired);
@@ -1057,6 +1147,11 @@ async fn test_rejection_and_approval_of_claimers_by_validators_dao(e: &Env) -> a
     "VoteApprove".to_string(),
     1,
     false,
+  ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([1, 1, 0, 0, 0, 0, 0, 0]),
+    Some([5, 3, 0, 14, 11, 1, 5, 4, 2]),
+    Some(freelancer2.id()),
   ).await?;
 
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
@@ -1080,6 +1175,11 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
     Some(e.more_reviewers(&reviewer).await?),
     None,
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([10, 8, 3, 3, 1, 1, 4, 2]),
+    Some([6, 3, 0, 14, 11, 1, 5, 4, 2]),
+    None,
+  ).await?;
 
   let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(last_bounty_id, 6);
@@ -1094,6 +1194,11 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
     None, // by default freelancer
     None
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([11, 8, 3, 3, 1, 1, 4, 2]),
+    Some([6, 3, 0, 15, 11, 1, 5, 4, 2]),
+    None,
+  ).await?;
 
   e.assert_statuses(
     &e.disputed_bounties,
@@ -1103,6 +1208,11 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
   ).await?;
 
   e.decision_on_claim(&e.disputed_bounties, bounty_id, &reviewer, true, None).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([11, 9, 3, 3, 1, 1, 4, 2]),
+    Some([6, 3, 0, 15, 12, 1, 5, 4, 2]),
+    None,
+  ).await?;
 
   e.assert_statuses(
     &e.disputed_bounties,
@@ -1128,6 +1238,11 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
       receiver_id: e.freelancer.id().as_str().parse().unwrap()
     },
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([11, 9, 4, 3, 1, 1, 4, 2]),
+    Some([6, 4, 0, 15, 12, 2, 5, 4, 2]),
+    None,
+  ).await?;
 
   e.assert_statuses(
     &e.disputed_bounties,
@@ -1151,6 +1266,11 @@ async fn test_bounty_cancel(e: &Env) -> anyhow::Result<()> {
     None,
     None,
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([11, 9, 4, 3, 1, 1, 4, 2]),
+    Some([7, 4, 0, 15, 12, 2, 5, 4, 2]),
+    None,
+  ).await?;
 
   let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(last_bounty_id, 7);
@@ -1165,6 +1285,11 @@ async fn test_bounty_cancel(e: &Env) -> anyhow::Result<()> {
     None, // by default freelancer
     None
   ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([12, 9, 4, 3, 1, 1, 4, 2]),
+    Some([7, 4, 0, 15, 12, 2, 5, 4, 2]),
+    None,
+  ).await?;
 
   e.assert_statuses(
     &e.disputed_bounties,
@@ -1175,6 +1300,11 @@ async fn test_bounty_cancel(e: &Env) -> anyhow::Result<()> {
 
   // Bounty cancellation is possible only with 'New' status. Regardless of the presence of new claims
   e.bounty_cancel(&e.disputed_bounties, bounty_id).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([12, 9, 4, 3, 1, 1, 4, 2]),
+    Some([7, 4, 1, 15, 12, 2, 5, 4, 2]),
+    None,
+  ).await?;
 
   e.assert_statuses(
     &e.disputed_bounties,
@@ -1185,6 +1315,11 @@ async fn test_bounty_cancel(e: &Env) -> anyhow::Result<()> {
 
   // To return the bonus, the freelancer must call 'bounty_give_up'
   e.bounty_give_up(&e.disputed_bounties, bounty_id, None).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([12, 9, 4, 3, 1, 1, 4, 2]),
+    Some([7, 4, 1, 15, 12, 2, 5, 4, 2]),
+    None,
+  ).await?;
 
   e.assert_statuses(
     &e.disputed_bounties,

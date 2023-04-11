@@ -787,10 +787,16 @@ impl BountiesContract {
     id: BountyIndex,
     bounty: Bounty,
     claim: &mut BountyClaim,
+    claimer: &AccountId,
   ) {
-    self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::Claimed);
+    self.internal_change_status_and_save_bounty(&id, bounty.clone(), BountyStatus::Claimed);
     claim.start_time = Some(U64::from(env::block_timestamp()));
     claim.status = ClaimStatus::InProgress;
+    self.internal_update_statistic(
+      Some(claimer.clone()),
+      Some(bounty.owner),
+      ReputationActionKind::ClaimerApproved
+    );
   }
 
   pub(crate) fn internal_get_ft_metadata(
@@ -840,7 +846,7 @@ impl BountiesContract {
     match bounty.claimer_approval {
       ClaimerApproval::ApprovalWithWhitelist => {
         if self.is_claimer_whitelisted(bounty.clone().owner, &claimer) {
-          self.internal_claimer_approval(id, bounty.clone(), &mut bounty_claim);
+          self.internal_claimer_approval(id, bounty.clone(), &mut bounty_claim, &claimer);
         }
       }
       ClaimerApproval::WithoutApproval => {

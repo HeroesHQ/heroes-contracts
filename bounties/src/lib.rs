@@ -346,7 +346,7 @@ impl BountiesContract {
       "Claim status does not allow a decision to be made"
     );
     if approve {
-      self.internal_claimer_approval(id, bounty, &mut bounty_claim);
+      self.internal_claimer_approval(id, bounty, &mut bounty_claim, &claimer);
     } else {
       bounty_claim.status = ClaimStatus::NotHired;
       self.internal_return_bonds(&claimer);
@@ -409,7 +409,8 @@ impl BountiesContract {
     let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
     let was_status_in_progress = matches!(claims[claim_idx].status, ClaimStatus::InProgress);
     assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::New) || was_status_in_progress,
+      matches!(claims[claim_idx].status, ClaimStatus::New) ||
+          was_status_in_progress && matches!(bounty.status, BountyStatus::Claimed),
       "The claim status does not allow to give up the bounty"
     );
 
@@ -426,14 +427,14 @@ impl BountiesContract {
 
     claims[claim_idx].status = ClaimStatus::Canceled;
     self.internal_save_claims(&sender_id, &claims);
-    if was_status_in_progress && matches!(bounty.status, BountyStatus::Claimed) {
+    if was_status_in_progress {
       self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::New);
+      self.internal_update_statistic(
+        Some(sender_id),
+        None,
+        ReputationActionKind::ClaimCancelled
+      );
     }
-    self.internal_update_statistic(
-      Some(sender_id),
-      None,
-      ReputationActionKind::ClaimCancelled
-    );
 
     result
   }

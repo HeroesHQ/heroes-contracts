@@ -94,6 +94,7 @@ pub enum ReputationActionKind {
   BountyCancelled,
   ClaimCreated,
   ClaimCancelled,
+  ClaimerApproved,
   ClaimExpired,
   SuccessfulClaim { with_dispute: bool },
   UnsuccessfulClaim { with_dispute: bool },

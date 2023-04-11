@@ -161,7 +161,7 @@ impl BountiesContract {
       assert_eq!(proposal.id, bounty_claim.approve_claimer_proposal_id.unwrap().0);
       assert_eq!(proposal.proposer, env::current_account_id());
       if proposal.status == "Approved" {
-        self.internal_claimer_approval(id, bounty, &mut bounty_claim);
+        self.internal_claimer_approval(id, bounty, &mut bounty_claim, &claimer);
       } else if proposal.status == "Rejected" {
         bounty_claim.status = ClaimStatus::NotHired;
         self.internal_return_bonds(&claimer);
