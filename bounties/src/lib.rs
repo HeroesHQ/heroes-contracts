@@ -217,6 +217,30 @@ impl BountiesContract {
     self.kyc_whitelist_contract = kyc_whitelist_contract;
   }
 
+  /// Can be used only during migrations when updating contract versions
+  #[payable]
+  pub fn update_reputation_contract(&mut self, reputation_contract: AccountId) {
+    assert_one_yocto();
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+    assert!(
+      self.reputation_contract.is_some(),
+      "The reputation contract is not used",
+    );
+    self.reputation_contract = Some(reputation_contract);
+  }
+
+  /// Can be used only during migrations when updating contract versions
+  #[payable]
+  pub fn update_dispute_contract(&mut self, dispute_contract: AccountId) {
+    assert_one_yocto();
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+    assert!(
+      self.dispute_contract.is_some(),
+      "The dispute contract is not used",
+    );
+    self.dispute_contract = Some(dispute_contract);
+  }
+
   #[payable]
   pub fn change_config(&mut self, config_create: ConfigCreate) {
     assert_one_yocto();
@@ -348,6 +372,10 @@ impl BountiesContract {
     assert!(
       matches!(bounty_claim.status, ClaimStatus::New),
       "Claim status does not allow a decision to be made"
+    );
+    assert!(
+      bounty.is_claim_deadline_correct(bounty_claim.deadline),
+      "The claim deadline is no longer correct"
     );
     if approve {
       self.internal_claimer_approval(id, bounty, &mut bounty_claim, &claimer);
