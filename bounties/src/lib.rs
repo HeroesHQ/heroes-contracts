@@ -217,6 +217,30 @@ impl BountiesContract {
     self.kyc_whitelist_contract = kyc_whitelist_contract;
   }
 
+  /// Can be used only during migrations when updating contract versions
+  #[payable]
+  pub fn update_reputation_contract(&mut self, reputation_contract: AccountId) {
+    assert_one_yocto();
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+    assert!(
+      self.reputation_contract.is_some(),
+      "The reputation contract is not used",
+    );
+    self.reputation_contract = Some(reputation_contract);
+  }
+
+  /// Can be used only during migrations when updating contract versions
+  #[payable]
+  pub fn update_dispute_contract(&mut self, dispute_contract: AccountId) {
+    assert_one_yocto();
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+    assert!(
+      self.dispute_contract.is_some(),
+      "The dispute contract is not used",
+    );
+    self.dispute_contract = Some(dispute_contract);
+  }
+
   #[payable]
   pub fn change_config(&mut self, config_create: ConfigCreate) {
     assert_one_yocto();
