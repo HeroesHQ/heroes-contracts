@@ -349,6 +349,10 @@ impl BountiesContract {
       matches!(bounty_claim.status, ClaimStatus::New),
       "Claim status does not allow a decision to be made"
     );
+    assert!(
+      bounty.is_claim_deadline_correct(bounty_claim.deadline),
+      "The claim deadline is no longer correct"
+    );
     if approve {
       self.internal_claimer_approval(id, bounty, &mut bounty_claim, &claimer);
     } else {
