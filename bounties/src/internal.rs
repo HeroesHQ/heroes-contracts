@@ -30,12 +30,16 @@ impl BountiesContract {
   }
 
   pub(crate) fn assert_bounty_category_is_correct(&self, category: String) {
-    assert!(self.config.categories.contains(&category), "Invalid bounty type {}", category);
+    assert!(
+      self.config.clone().to_config().categories.contains(&category),
+      "Invalid bounty type {}",
+      category
+    );
   }
 
   pub(crate) fn assert_bounty_tags_are_correct(&self, tags: Vec<String>) {
     tags.into_iter().for_each(|t| {
-      assert!(self.config.tags.contains(&t), "Invalid bounty tag {}", t);
+      assert!(self.config.clone().to_config().tags.contains(&t), "Invalid bounty tag {}", t);
     });
   }
 
@@ -167,10 +171,11 @@ impl BountiesContract {
     bounty: &Bounty,
   ) {
     let mut total_fees = self.total_fees.get(&bounty.token).unwrap();
+    let config = self.config.clone().to_config();
     total_fees.refund_commission(
       &bounty.platform_fee,
-      self.config.platform_fee_percentage,
-      self.config.penalty_platform_fee_percentage
+      config.platform_fee_percentage,
+      config.penalty_platform_fee_percentage
     );
     self.total_fees.insert(&bounty.token, &total_fees);
 
@@ -179,8 +184,8 @@ impl BountiesContract {
       let (dao_account_id, mut stats, stats_idx) = dao_fee_stats.unwrap();
       stats[stats_idx].fee_stats.refund_commission(
         &bounty.dao_fee,
-        self.config.validators_dao_fee_percentage,
-        self.config.penalty_validators_dao_fee_percentage
+        config.validators_dao_fee_percentage,
+        config.penalty_validators_dao_fee_percentage
       );
       self.total_validators_dao_fees.insert(&dao_account_id, &stats);
     }
@@ -206,15 +211,16 @@ impl BountiesContract {
     &self,
     bounty: &Bounty,
   ) -> U128 {
-    let penalty_platform_fee: u128 = if self.config.platform_fee_percentage != 0 {
+    let config = self.config.clone().to_config();
+    let penalty_platform_fee: u128 = if config.platform_fee_percentage != 0 {
       bounty.platform_fee.0 *
-        self.config.penalty_platform_fee_percentage as u128 /
-        self.config.platform_fee_percentage as u128
+        config.penalty_platform_fee_percentage as u128 /
+        config.platform_fee_percentage as u128
     } else { 0 };
-    let penalty_validators_dao_fee: u128 = if self.config.validators_dao_fee_percentage != 0 {
+    let penalty_validators_dao_fee: u128 = if config.validators_dao_fee_percentage != 0 {
       bounty.dao_fee.0 *
-        self.config.penalty_validators_dao_fee_percentage as u128 /
-        self.config.platform_fee_percentage as u128
+        config.penalty_validators_dao_fee_percentage as u128 /
+        config.platform_fee_percentage as u128
     } else { 0 };
     let amount = bounty.amount.0 + bounty.platform_fee.0 - penalty_platform_fee +
       bounty.dao_fee.0 - penalty_validators_dao_fee;
@@ -305,10 +311,9 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_return_bonds(&mut self, receiver_id: &AccountId) -> PromiseOrValue<()> {
-    self.locked_amount -= self.config.bounty_claim_bond.0;
-    Promise::new(receiver_id.clone())
-      .transfer(self.config.bounty_claim_bond.0)
-      .into()
+    let config = self.config.clone().to_config();
+    self.locked_amount -= config.bounty_claim_bond.0;
+    Promise::new(receiver_id.clone()).transfer(config.bounty_claim_bond.0).into()
   }
 
   pub(crate) fn internal_reset_bounty_to_initial_state(
@@ -333,7 +338,8 @@ impl BountiesContract {
 
   pub(crate) fn is_deadline_for_opening_dispute_expired(&self, claim: &BountyClaim) -> bool {
     env::block_timestamp() >
-      claim.rejected_timestamp.unwrap().0 + self.config.period_for_opening_dispute.0
+      claim.rejected_timestamp.unwrap().0 +
+        self.config.clone().to_config().period_for_opening_dispute.0
   }
 
   pub(crate) fn internal_set_claim_expiry_status(
@@ -767,9 +773,10 @@ impl BountiesContract {
     entry: Option<String>,
     entries: Option<Vec<String>>
   ) -> (&mut Vec<String>, Vec<String>) {
+    let config = self.config.to_config_mut();
     let (name_entry, name_entries, reference) = match dict {
-      ReferenceType::Categories => { ("category", "categories", self.config.categories.as_mut()) },
-      _ => { ("tag", "tags", self.config.tags.as_mut()) },
+      ReferenceType::Categories => { ("category", "categories", config.categories.as_mut()) },
+      _ => { ("tag", "tags", config.tags.as_mut()) },
     };
 
     let entries = if let Some(entries) = entries {
@@ -854,7 +861,7 @@ impl BountiesContract {
     Self::internal_add_claim(id, claims, bounty_claim);
     self.internal_save_claims(&claimer, &claims);
     self.internal_add_bounty_claimer_account(id, claimer.clone());
-    self.locked_amount += self.config.bounty_claim_bond.0;
+    self.locked_amount += self.config.clone().to_config().bounty_claim_bond.0;
     self.internal_update_statistic(
       Some(claimer.clone()),
       Some(bounty.owner),

@@ -32,7 +32,7 @@ impl BountiesContract {
   }
 
   pub fn get_config(&self) -> Config {
-    self.config.clone()
+    self.config.clone().into()
   }
 
   /// Returns locked amount of NEAR that is used for storage.
