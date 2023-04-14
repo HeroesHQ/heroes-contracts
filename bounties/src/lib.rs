@@ -47,7 +47,7 @@ pub struct BountiesContract {
   pub admins_whitelist: UnorderedSet<AccountId>,
 
   /// Bounty contract configuration.
-  pub config: Config,
+  pub config: VersionedConfig,
 
   /// Reputation contract (optional)
   pub reputation_contract: Option<AccountId>,
@@ -77,7 +77,7 @@ impl BountiesContract {
   #[init]
   pub fn new(
     admins_whitelist: Vec<AccountId>,
-    config: Option<Config>,
+    config: Option<VersionedConfig>,
     reputation_contract: Option<AccountId>,
     dispute_contract: Option<AccountId>,
     kyc_whitelist_contract: Option<AccountId>,
@@ -89,6 +89,11 @@ impl BountiesContract {
     );
     let mut admins_whitelist_set = UnorderedSet::new(StorageKey::AdminWhitelist);
     admins_whitelist_set.extend(admins_whitelist.into_iter().map(|a| a.into()));
+    let versioned_config = if config.is_some() {
+      config.unwrap()
+    } else {
+      Config::default().into()
+    };
 
     Self {
       tokens: UnorderedMap::new(StorageKey::Tokens),
@@ -99,7 +104,7 @@ impl BountiesContract {
       bounty_claimer_accounts: LookupMap::new(StorageKey::BountyClaimerAccounts),
       locked_amount: 0,
       admins_whitelist: admins_whitelist_set,
-      config: config.unwrap_or_default(),
+      config: versioned_config,
       reputation_contract,
       dispute_contract,
       kyc_whitelist_contract,
@@ -245,7 +250,7 @@ impl BountiesContract {
   pub fn change_config(&mut self, config_create: ConfigCreate) {
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
-    self.config = config_create.to_config(self.config.clone());
+    self.config = config_create.to_config(self.config.clone().to_config()).into();
   }
 
   #[payable]
@@ -303,7 +308,7 @@ impl BountiesContract {
 
     assert_eq!(
       env::attached_deposit(),
-      self.config.bounty_claim_bond.0,
+      self.config.clone().to_config().bounty_claim_bond.0,
       "Bounty wrong bond"
     );
     assert!(
@@ -448,7 +453,7 @@ impl BountiesContract {
 
     let result = if was_status_in_progress &&
       env::block_timestamp() - claims[claim_idx].start_time.unwrap().0 >
-        self.config.bounty_forgiveness_period.0
+        self.config.clone().to_config().bounty_forgiveness_period.0
     {
       // If user over the forgiveness period.
       PromiseOrValue::Value(())

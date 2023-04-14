@@ -703,6 +703,40 @@ impl Default for Config {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+pub enum VersionedConfig {
+  Current(Config),
+}
+
+impl VersionedConfig {
+  pub fn to_config(self) -> Config {
+    match self {
+      VersionedConfig::Current(config) => config,
+    }
+  }
+
+  pub fn to_config_mut(&mut self) -> &mut Config {
+    match self {
+      VersionedConfig::Current(config) => config,
+    }
+  }
+}
+
+impl From<VersionedConfig> for Config {
+  fn from(value: VersionedConfig) -> Self {
+    match value {
+      VersionedConfig::Current(config) => config,
+    }
+  }
+}
+
+impl From<Config> for VersionedConfig {
+  fn from(value: Config) -> Self {
+    VersionedConfig::Current(value)
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct FeeStats {
   pub balance: U128,
