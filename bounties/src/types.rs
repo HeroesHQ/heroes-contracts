@@ -9,7 +9,7 @@ pub const GAS_FOR_ADD_PROPOSAL: Gas = Gas(25_000_000_000_000);
 pub const GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK: Gas = Gas(10_000_000_000_000);
 pub const GAS_FOR_AFTER_ADD_PROPOSAL: Gas = Gas(45_000_000_000_000);
 pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(70_000_000_000_000);
-pub const GAS_FOR_CLAIMER_APPROVAL: Gas = Gas(30_000_000_000_000);
+pub const GAS_FOR_CLAIMER_APPROVAL: Gas = Gas(120_000_000_000_000);
 pub const GAS_FOR_FT_TRANSFER: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(40_000_000_000_000);
 pub const GAS_FOR_AFTER_FT_TRANSACT: Gas = Gas(15_000_000_000_000);
@@ -263,6 +263,59 @@ impl ReviewersParams {
   }
 }
 
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Copy)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum KycVerificationMethod {
+  WhenCreatingClaim,
+  DuringClaimApproval,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum KycConfig {
+  KycNotRequired,
+  KycRequired {
+    kyc_verification_method: KycVerificationMethod,
+    min_amount_for_kyc: Option<U128>,
+  },
+}
+
+impl KycConfig {
+  pub fn is_kyc_required(&self) -> bool {
+    match self.clone() {
+      Self::KycRequired { .. } => true,
+      _ => false,
+    }
+  }
+
+  pub fn get_kyc_params(&self) -> (KycVerificationMethod, Option<U128>) {
+    match self.clone() {
+      Self::KycRequired { kyc_verification_method, min_amount_for_kyc } =>
+        (kyc_verification_method, min_amount_for_kyc),
+      _ => env::panic_str("No params")
+    }
+  }
+}
+
+impl Default for KycConfig {
+  fn default() -> Self {
+    KycConfig::KycRequired {
+      kyc_verification_method: KycVerificationMethod::WhenCreatingClaim,
+      min_amount_for_kyc: None,
+    }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub enum PlaceOfCheckKYC {
+  CreatingClaim { deadline: U64, description: String },
+  DecisionOnClaim { approve: bool, is_kyc_delayed: Option<DefermentOfKYC> },
+  ClaimDone { description: String },
+}
+
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct BountyCreate {
@@ -270,6 +323,7 @@ pub struct BountyCreate {
   pub deadline: Deadline,
   pub claimer_approval: ClaimerApproval,
   pub reviewers: Option<ReviewersParams>,
+  pub kyc_config: Option<KycConfig>,
 }
 
 impl BountyCreate {
@@ -285,6 +339,11 @@ impl BountyCreate {
     let bounty_amount = amount.0 * 100_000 / (100_000 + percentage_platform + percentage_dao );
     let platform_fee = bounty_amount * percentage_platform / 100_000;
     let dao_fee = amount.0 - bounty_amount - platform_fee;
+    let kyc_config = if self.kyc_config.is_some() {
+      self.kyc_config.clone().unwrap()
+    } else {
+      KycConfig::default()
+    };
 
     Bounty {
       token: token_id.clone(),
@@ -302,6 +361,7 @@ impl BountyCreate {
       owner: payer_id.clone(),
       status: BountyStatus::New,
       created_at: U64::from(env::block_timestamp()),
+      kyc_config,
     }
   }
 }
@@ -313,6 +373,7 @@ pub struct BountyUpdate {
   pub deadline: Option<Deadline>,
   pub claimer_approval: Option<ClaimerApproval>,
   pub reviewers: Option<ReviewersParams>,
+  pub kyc_config: Option<KycConfig>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -324,6 +385,23 @@ pub struct ValidatorsDao {
   pub gas_for_add_proposal: U64,
   pub gas_for_claim_approval: U64,
   pub gas_for_claimer_approval: U64,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyV1 {
+  pub token: AccountId,
+  pub amount: U128,
+  pub platform_fee: U128,
+  pub dao_fee: U128,
+  pub metadata: BountyMetadata,
+  pub deadline: Deadline,
+  pub claimer_approval: ClaimerApproval,
+  pub reviewers: Option<Reviewers>,
+  pub owner: AccountId,
+  pub status: BountyStatus,
+  pub created_at: U64,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -341,6 +419,7 @@ pub struct Bounty {
   pub owner: AccountId,
   pub status: BountyStatus,
   pub created_at: U64,
+  pub kyc_config: KycConfig,
 }
 
 impl Bounty {
@@ -487,13 +566,32 @@ impl Bounty {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub enum VersionedBounty {
+  V1(BountyV1),
   Current(Bounty),
 }
 
 impl VersionedBounty {
+  fn upgrade_v1_to_v2(bounty: BountyV1) -> Bounty {
+    Bounty {
+      token: bounty.token,
+      amount: bounty.amount,
+      platform_fee: bounty.platform_fee,
+      dao_fee: bounty.dao_fee,
+      metadata: bounty.metadata,
+      deadline: bounty.deadline,
+      claimer_approval: bounty.claimer_approval,
+      reviewers: bounty.reviewers,
+      owner: bounty.owner,
+      status: bounty.status,
+      created_at: bounty.created_at,
+      kyc_config: KycConfig::default(),
+    }
+  }
+
   pub fn to_bounty(self) -> Bounty {
     match self {
       VersionedBounty::Current(bounty) => bounty,
+      VersionedBounty::V1(bounty_v1) => VersionedBounty::upgrade_v1_to_v2(bounty_v1),
     }
   }
 }
@@ -502,6 +600,7 @@ impl From<VersionedBounty> for Bounty {
   fn from(value: VersionedBounty) -> Self {
     match value {
       VersionedBounty::Current(bounty) => bounty,
+      VersionedBounty::V1(bounty_v1) => VersionedBounty::upgrade_v1_to_v2(bounty_v1),
     }
   }
 }
@@ -539,7 +638,15 @@ pub enum ClaimStatus {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct BountyClaim {
+pub enum DefermentOfKYC {
+  AllowedToSkipKyc,
+  BeforeDeadline,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyClaimV1 {
   /// Bounty id that was claimed.
   pub bounty_id: BountyIndex,
   /// When a claim is created.
@@ -548,7 +655,7 @@ pub struct BountyClaim {
   pub start_time: Option<U64>,
   /// Deadline specified by claimer.
   pub deadline: U64,
-  /// Sescription
+  /// Description
   pub description: String,
   /// status
   pub status: ClaimStatus,
@@ -562,6 +669,34 @@ pub struct BountyClaim {
   pub dispute_id: Option<U64>,
 }
 
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyClaim {
+  /// Bounty id that was claimed.
+  pub bounty_id: BountyIndex,
+  /// When a claim is created.
+  pub created_at: U64,
+  /// Start time of the claim.
+  pub start_time: Option<U64>,
+  /// Deadline specified by claimer.
+  pub deadline: U64,
+  /// Description
+  pub description: String,
+  /// status
+  pub status: ClaimStatus,
+  /// Bounty payout proposal ID
+  pub bounty_payout_proposal_id: Option<U64>,
+  /// Proposal ID for applicant approval
+  pub approve_claimer_proposal_id: Option<U64>,
+  /// Timestamp when the status is set to rejected
+  pub rejected_timestamp: Option<U64>,
+  /// Dispute ID
+  pub dispute_id: Option<U64>,
+  /// Bounty owner deferred KYC verification or verification status will be tracked manually
+  pub is_kyc_delayed: Option<DefermentOfKYC>,
+}
+
 impl BountyClaim {
   pub fn is_claim_expired(&self) -> bool {
     env::block_timestamp() > self.start_time.unwrap().0 + self.deadline.0
@@ -571,13 +706,32 @@ impl BountyClaim {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub enum VersionedBountyClaim {
+  V1(BountyClaimV1),
   Current(BountyClaim),
 }
 
 impl VersionedBountyClaim {
+  fn upgrade_v1_to_v2(bounty_claim: BountyClaimV1) -> BountyClaim {
+    BountyClaim {
+      bounty_id: bounty_claim.bounty_id,
+      created_at: bounty_claim.created_at,
+      start_time: bounty_claim.start_time,
+      deadline: bounty_claim.deadline,
+      description: bounty_claim.description,
+      status: bounty_claim.status,
+      bounty_payout_proposal_id: bounty_claim.bounty_payout_proposal_id,
+      approve_claimer_proposal_id: bounty_claim.approve_claimer_proposal_id,
+      rejected_timestamp: bounty_claim.rejected_timestamp,
+      dispute_id: bounty_claim.dispute_id,
+      is_kyc_delayed: None,
+    }
+  }
+
   pub fn to_bounty_claim(self) -> BountyClaim {
     match self {
       VersionedBountyClaim::Current(bounty_claim) => bounty_claim,
+      VersionedBountyClaim::V1(bounty_claim_v1) =>
+        VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1),
     }
   }
 }
@@ -586,6 +740,8 @@ impl From<VersionedBountyClaim> for BountyClaim {
   fn from(value: VersionedBountyClaim) -> Self {
     match value {
       VersionedBountyClaim::Current(claim) => claim,
+      VersionedBountyClaim::V1(bounty_claim_v1) =>
+        VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1),
     }
   }
 }

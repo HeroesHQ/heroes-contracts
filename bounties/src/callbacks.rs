@@ -6,18 +6,15 @@ impl BountiesContract {
   pub fn on_added_proposal_callback(
     &mut self,
     #[callback_result] result: Result<u64, PromiseError>,
-    sender_id: &AccountId,
-    claims: &mut Vec<BountyClaim>,
-    claim_idx: usize,
+    id: BountyIndex,
+    claimer: AccountId,
   ) -> bool {
     if !is_promise_success() || result.is_err() {
       env::log_str("Could not create bounty proposal");
       false
     } else {
       let proposal_id = result.unwrap();
-      claims[claim_idx].status = ClaimStatus::Completed;
-      claims[claim_idx].bounty_payout_proposal_id = Some(proposal_id.into());
-      self.internal_save_claims(sender_id, &claims);
+      self.internal_claim_done(id, claimer, Some(proposal_id.into()));
       true
     }
   }
@@ -27,8 +24,6 @@ impl BountiesContract {
     &mut self,
     #[callback_result] result: Result<u64, PromiseError>,
     id: BountyIndex,
-    bounty: Bounty,
-    claims: &mut Vec<BountyClaim>,
     claimer: AccountId,
     deadline: U64,
     description: String,
@@ -39,8 +34,6 @@ impl BountiesContract {
     } else {
       self.internal_create_claim(
         id,
-        bounty,
-        claims,
         claimer,
         deadline,
         description,
@@ -161,7 +154,7 @@ impl BountiesContract {
       assert_eq!(proposal.id, bounty_claim.approve_claimer_proposal_id.unwrap().0);
       assert_eq!(proposal.proposer, env::current_account_id());
       if proposal.status == "Approved" {
-        self.internal_claimer_approval(id, bounty, &mut bounty_claim, &claimer);
+        self.internal_claimer_approval(id, bounty, &mut bounty_claim, &claimer, None);
       } else if proposal.status == "Rejected" {
         bounty_claim.status = ClaimStatus::NotHired;
         self.internal_return_bonds(&claimer);
@@ -244,31 +237,24 @@ impl BountiesContract {
     &mut self,
     #[callback_result] result: Result<bool, PromiseError>,
     id: BountyIndex,
-    bounty: Bounty,
-    claims: &mut Vec<BountyClaim>,
     claimer: AccountId,
-    deadline: U64,
-    description: String,
+    place_of_check: PlaceOfCheckKYC,
   ) -> PromiseOrValue<()> {
     if !is_promise_success() || result.is_err() {
       env::panic_str("Error determining the claimer's KYC status");
     } else {
       let is_whitelisted = result.unwrap();
       if is_whitelisted {
-        if bounty.is_validators_dao_used() &&
-          self.is_approval_required(bounty.clone(), &claimer)
-        {
-          Self::internal_add_proposal_to_approve_claimer(
-            id,
-            bounty,
-            claims,
-            claimer,
-            deadline,
-            description
-          )
-        } else {
-          self.internal_create_claim(id, bounty, claims, claimer, deadline, description, None);
-          PromiseOrValue::Value(())
+        match place_of_check {
+          PlaceOfCheckKYC::CreatingClaim { .. } => {
+            self.internal_add_proposal_and_create_claim(id, claimer, place_of_check)
+          },
+          PlaceOfCheckKYC::DecisionOnClaim { .. } => {
+            self.internal_approval_and_save_claim(id, claimer, place_of_check)
+          },
+          _ => {
+            self.internal_add_proposal_and_update_claim(id, claimer, place_of_check)
+          },
         }
       } else {
         env::panic_str("The claimer is not whitelisted");

@@ -327,44 +327,30 @@ impl BountiesContract {
     let sender_id = env::predecessor_account_id();
     bounty.assert_account_is_not_owner_or_reviewer(sender_id.clone());
 
-    let mut claims = self.get_bounty_claims(sender_id.clone());
+    let claims = self.get_bounty_claims(sender_id.clone());
     let index = Self::internal_find_claim(id, &claims);
     assert!(
       index.is_none() || !matches!(claims[index.unwrap()].status, ClaimStatus::New),
       "You already have a claim with the status 'New'"
     );
 
-    let token_details = self.tokens.get(&bounty.token).unwrap();
-
-    if self.kyc_whitelist_contract.is_some() &&
-      (
-        token_details.min_amount_for_kyc.is_none() ||
-          bounty.amount.0 >= token_details.min_amount_for_kyc.unwrap().0
-      )
-    {
-      self.check_if_claimer_in_kyc_whitelist(id, bounty, &mut claims, sender_id, deadline, description)
-    }
-
-    else if bounty.is_validators_dao_used() &&
-      self.is_approval_required(bounty.clone(), &sender_id)
-    {
-      Self::internal_add_proposal_to_approve_claimer(
-        id,
-        bounty,
-        &mut claims,
-        sender_id,
-        deadline,
-        description
-      )
+    let place_of_check = PlaceOfCheckKYC::CreatingClaim { deadline, description };
+    if self.is_kyc_check_required(bounty, None, None, place_of_check.clone()) {
+      self.check_if_claimer_in_kyc_whitelist(id, sender_id, place_of_check)
 
     } else {
-      self.internal_create_claim(id, bounty, &mut claims, sender_id, deadline, description, None);
-      PromiseOrValue::Value(())
+      self.internal_add_proposal_and_create_claim(id, sender_id, place_of_check)
     }
   }
 
   #[payable]
-  pub fn decision_on_claim(&mut self, id: BountyIndex, claimer: AccountId, approve: bool) {
+  pub fn decision_on_claim(
+    &mut self,
+    id: BountyIndex,
+    claimer: AccountId,
+    approve: bool,
+    kyc_postponed: Option<DefermentOfKYC>
+  ) -> PromiseOrValue<()> {
     assert_one_yocto();
     let bounty = self.get_bounty(id.clone());
     assert!(
@@ -372,8 +358,8 @@ impl BountiesContract {
       "Bounty status does not allow to make a decision on a claim"
     );
     bounty.check_access_rights();
-    let (mut claims, claim_idx) = self.internal_get_claims(id, &claimer);
-    let mut bounty_claim= claims[claim_idx].clone();
+    let (claims, claim_idx) = self.internal_get_claims(id, &claimer);
+    let bounty_claim= claims[claim_idx].clone();
     assert!(
       matches!(bounty_claim.status, ClaimStatus::New),
       "Claim status does not allow a decision to be made"
@@ -382,14 +368,14 @@ impl BountiesContract {
       bounty.is_claim_deadline_correct(bounty_claim.deadline),
       "The claim deadline is no longer correct"
     );
-    if approve {
-      self.internal_claimer_approval(id, bounty, &mut bounty_claim, &claimer);
+
+    let place_of_check = PlaceOfCheckKYC::DecisionOnClaim { approve, is_kyc_delayed: kyc_postponed };
+    if self.is_kyc_check_required(bounty, None, None, place_of_check.clone()) {
+      self.check_if_claimer_in_kyc_whitelist(id, claimer, place_of_check)
+
     } else {
-      bounty_claim.status = ClaimStatus::NotHired;
-      self.internal_return_bonds(&claimer);
+      self.internal_approval_and_save_claim(id, claimer, place_of_check)
     }
-    claims.insert(claim_idx, bounty_claim);
-    self.internal_save_claims(&claimer, &claims);
   }
 
   /// Report that bounty is done. Creates a proposal to vote for paying out the bounty,
@@ -405,33 +391,28 @@ impl BountiesContract {
       "Bounty status does not allow to completion"
     );
 
-    let sender_id = &env::predecessor_account_id();
-    let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), sender_id);
+    let sender_id = env::predecessor_account_id();
+    let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
     assert!(
       matches!(claims[claim_idx].status, ClaimStatus::InProgress),
       "The claim status does not allow to complete the bounty"
     );
 
     if claims[claim_idx].is_claim_expired() {
-      self.internal_set_claim_expiry_status(id, sender_id, bounty, claim_idx, &mut claims);
-      PromiseOrValue::Value(())
+      return self.internal_set_claim_expiry_status(id, &sender_id, bounty, claim_idx, &mut claims);
+    }
+
+    let place_of_check = PlaceOfCheckKYC::ClaimDone { description };
+    if self.is_kyc_check_required(
+      bounty,
+      Some(&claims[claim_idx]),
+      Some(sender_id.clone()),
+      place_of_check.clone()
+    ) {
+      self.check_if_claimer_in_kyc_whitelist(id, sender_id, place_of_check)
 
     } else {
-      if bounty.is_validators_dao_used() {
-        Self::internal_add_proposal_to_finish_claim(
-          id,
-          sender_id,
-          &bounty,
-          claim_idx,
-          &mut claims,
-          description
-        )
-      } else {
-        claims[claim_idx].status = ClaimStatus::Completed;
-        self.internal_save_claims(sender_id, &claims);
-
-        PromiseOrValue::Value(())
-      }
+      self.internal_add_proposal_and_update_claim(id, sender_id, place_of_check)
     }
   }
 
@@ -609,7 +590,8 @@ impl BountiesContract {
 
     let mut bounty = self.get_bounty(id.clone());
     assert!(
-      matches!(bounty.status, BountyStatus::New),
+      matches!(bounty.status, BountyStatus::New) ||
+        matches!(bounty.status, BountyStatus::Claimed),
       "Bounty status does not allow updating"
     );
 
@@ -619,19 +601,27 @@ impl BountiesContract {
     let claims = self.get_bounty_claims_by_id(id.clone());
     let found_claim = claims
       .into_iter()
-      .find(|c| matches!(c.1.status, ClaimStatus::New))
+      .find(
+        |c|
+          matches!(c.1.status, ClaimStatus::New) ||
+            matches!(c.1.status, ClaimStatus::InProgress)
+      )
       .is_some();
     let mut changed = false;
 
     if bounty_update.metadata.is_some() {
       assert!(
-        !found_claim,
+        !found_claim && matches!(bounty.status, BountyStatus::New),
         "Metadata cannot be changed if there are already claims"
       );
       bounty.metadata = bounty_update.metadata.unwrap();
       changed = true;
     }
     if bounty_update.claimer_approval.is_some() {
+      assert!(
+        matches!(bounty.status, BountyStatus::New),
+        "Bounty status does not allow updating"
+      );
       assert!(
         !found_claim,
         "The approval setting cannot be changed if there are already claims"
@@ -664,6 +654,10 @@ impl BountiesContract {
     }
     if bounty_update.reviewers.is_some() {
       assert!(
+        matches!(bounty.status, BountyStatus::New),
+        "Bounty status does not allow updating"
+      );
+      assert!(
         bounty.reviewers.is_none() ||
           match bounty.reviewers.clone().unwrap() {
             Reviewers::MoreReviewers { .. } => true,
@@ -694,9 +688,62 @@ impl BountiesContract {
       };
       changed = true;
     }
+    if bounty_update.kyc_config.is_some() {
+      assert!(
+        matches!(bounty.status, BountyStatus::New),
+        "Bounty status does not allow updating"
+      );
+      if found_claim {
+        let kyc_config = bounty_update.kyc_config.clone().unwrap();
+        assert_eq!(
+          kyc_config.is_kyc_required(),
+          bounty.kyc_config.is_kyc_required(),
+          "It is not allowed to change the KYC requirement if there are already claims"
+        );
+        if kyc_config.is_kyc_required() {
+          let (_kyc_method, _) = kyc_config.get_kyc_params();
+          let (_old_method, _) = bounty.kyc_config.get_kyc_params();
+          assert!(
+            matches!(_kyc_method, _old_method),
+            "KYC method cannot be changed if there are already claims"
+          );
+        }
+      }
+      bounty.kyc_config = bounty_update.kyc_config.unwrap();
+      changed = true;
+    }
 
     assert!(changed, "No changes found");
     self.bounties.insert(&id, &bounty.into());
+  }
+
+  #[payable]
+  pub fn extend_claim_deadline(&mut self, id: BountyIndex, claimer: AccountId, deadline: U64) {
+    assert_one_yocto();
+
+    let bounty = self.get_bounty(id.clone());
+    assert!(
+      matches!(bounty.status, BountyStatus::Claimed),
+      "Bounty status does not allow to postpone the claim deadline"
+    );
+
+    let sender_id = env::predecessor_account_id();
+    assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
+
+    let (mut claims, claim_idx) = self.internal_get_claims(id, &claimer);
+    let mut bounty_claim= claims[claim_idx].clone();
+    assert!(
+      matches!(bounty_claim.status, ClaimStatus::InProgress),
+      "Claim status does not allow to postpone the deadline"
+    );
+    assert!(
+      bounty.is_claim_deadline_correct(deadline),
+      "The claim deadline is incorrect"
+    );
+
+    bounty_claim.deadline = deadline;
+    claims.insert(claim_idx, bounty_claim);
+    self.internal_save_claims(&claimer, &claims);
   }
 
   #[payable]
@@ -837,7 +884,7 @@ mod tests {
   use near_sdk::{testing_env, AccountId, Balance};
   use crate::{BountiesContract, Bounty, BountyAction, BountyClaim, BountyIndex, BountyMetadata,
               BountyStatus, ClaimerApproval, ClaimStatus, Config, ConfigCreate, Deadline, FeeStats,
-              Reviewers, TokenDetails, ValidatorsDao, ValidatorsDaoParams};
+              KycConfig, Reviewers, TokenDetails, ValidatorsDao, ValidatorsDaoParams};
 
   pub const TOKEN_DECIMALS: u8 = 18;
   pub const MAX_DEADLINE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
@@ -887,6 +934,7 @@ mod tests {
       owner: owner.clone(),
       status: BountyStatus::New,
       created_at: U64::from(0),
+      kyc_config: KycConfig::KycNotRequired,
     };
     contract.bounties.insert(&bounty_index, &bounty.clone().into());
     contract.account_bounties.insert(owner, &vec![bounty_index]);
@@ -925,12 +973,9 @@ mod tests {
     contract.bounty_claim(id, deadline, description.clone());
 
     let bounty = contract.bounties.get(&id).unwrap().to_bounty();
-    if bounty.is_validators_dao_used() {
-      let mut claims = contract.get_bounty_claims(claimer.clone());
+    if bounty.is_validators_dao_used() && contract.is_approval_required(bounty, &claimer) {
       contract.internal_create_claim(
         id,
-        bounty,
-        &mut claims,
         claimer.clone(),
         deadline,
         description,
@@ -1259,6 +1304,7 @@ mod tests {
         rejected_timestamp: None,
         dispute_id: None,
         description: "Test description".to_string(),
+        is_kyc_delayed: None,
       }
     );
     assert_eq!(contract.bounty_claimer_accounts.get(&id).unwrap()[0], claimer);
