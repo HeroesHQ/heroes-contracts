@@ -731,13 +731,13 @@ impl BountiesContract {
     assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
 
     let (mut claims, claim_idx) = self.internal_get_claims(id, &claimer);
-    let mut bounty_claim= claims[claim_idx].clone();
+    let mut bounty_claim = claims[claim_idx].clone();
     assert!(
       matches!(bounty_claim.status, ClaimStatus::InProgress),
       "Claim status does not allow to postpone the deadline"
     );
     assert!(
-      bounty.is_claim_deadline_correct(deadline),
+      bounty.is_claim_deadline_correct(deadline) && deadline.0 > bounty_claim.deadline.0,
       "The claim deadline is incorrect"
     );
 
