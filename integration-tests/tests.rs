@@ -2,7 +2,7 @@ use std::string::ToString;
 use near_sdk::json_types::{U128, U64};
 use serde_json::json;
 use bounties::{Bounty, BountyAction, BountyMetadata, BountyStatus, BountyUpdate, ClaimerApproval,
-               ClaimStatus, ContactDetails, ContactType, Deadline, Experience, Reviewers,
+               ClaimStatus, ContactDetails, ContactType, Deadline, Experience, KycConfig, Reviewers,
                ReviewersParams, TokenDetails};
 use disputes::DisputeStatus;
 
@@ -106,6 +106,7 @@ async fn test_create_bounty(e: &Env) -> anyhow::Result<()> {
       owner: e.project_owner.id().to_string().parse().unwrap(),
       status: BountyStatus::New,
       created_at: bounty.created_at,
+      kyc_config: KycConfig::default(),
     }
   );
 
@@ -1379,6 +1380,7 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
     reviewers: Some(ReviewersParams::MoreReviewers {
       more_reviewers: vec![reviewer2.id().to_string().parse().unwrap()],
     }),
+    kyc_config: None,
   };
 
   e.bounty_update(&e.disputed_bounties, bounty_id, bounty_update).await?;
@@ -1411,6 +1413,7 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
         reviewer3.id().to_string().parse().unwrap(),
       ],
     }),
+    kyc_config: None,
   };
 
   e.bounty_update(&e.disputed_bounties, bounty_id, bounty_update).await?;
@@ -1437,6 +1440,7 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
       owner: e.project_owner.id().to_string().parse().unwrap(),
       status: BountyStatus::New,
       created_at: bounty.created_at,
+      kyc_config: KycConfig::default(),
     }
   );
 

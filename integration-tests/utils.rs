@@ -7,8 +7,8 @@ use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               DaoFeeStats, FeeStats, ReviewersParams, TokenDetails, ValidatorsDaoParams,
-               VersionedConfig};
+               DaoFeeStats, DefermentOfKYC, FeeStats, ReviewersParams, TokenDetails,
+               ValidatorsDaoParams, VersionedConfig};
 use disputes::{Dispute, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
@@ -613,7 +613,8 @@ impl Env {
       .args_json((
         bounty_id,
         freelancer.id(),
-        approve
+        approve,
+        Option::<DefermentOfKYC>::None,
       ))
       .max_gas()
       .deposit(ONE_YOCTO)
