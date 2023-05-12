@@ -868,14 +868,16 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_get_min_amount_for_kyc(&self, bounty: &Bounty) -> Option<U128> {
-    match bounty.kyc_config.clone() {
-      KycConfig::KycRequired { min_amount_for_kyc, .. } => {
-        return min_amount_for_kyc;
-      }
-      _ => {}
+    let min_amount_for_kyc = match bounty.kyc_config.clone() {
+      KycConfig::KycRequired { min_amount_for_kyc, .. } => min_amount_for_kyc,
+      _ => None
+    };
+    if min_amount_for_kyc.is_some() {
+      min_amount_for_kyc
+    } else {
+      let token_details = self.tokens.get(&bounty.token).unwrap();
+      token_details.min_amount_for_kyc
     }
-    let token_details = self.tokens.get(&bounty.token).unwrap();
-    token_details.min_amount_for_kyc
   }
 
   pub(crate) fn is_approval_required(&self, bounty: Bounty, claimer: &AccountId) -> bool {
