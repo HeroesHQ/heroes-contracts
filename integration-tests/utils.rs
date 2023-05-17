@@ -552,15 +552,17 @@ impl Env {
     bounties: &Contract,
     bounty_id: u64,
     description: String,
+    freelancer: Option<&Account>,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
-    let res = self.freelancer
+    let res = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "bounty_done")
       .args_json((bounty_id, description))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res, None).await?;
+    Self::assert_contract_call_result(res, expected_msg).await?;
     Ok(())
   }
 
@@ -612,6 +614,8 @@ impl Env {
     user: &Account,
     approve: bool,
     freelancer: Option<&Account>,
+    kyc_postponed: Option<DefermentOfKYC>,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let freelancer = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer };
     let res = user
@@ -620,13 +624,13 @@ impl Env {
         bounty_id,
         freelancer.id(),
         approve,
-        Option::<DefermentOfKYC>::None,
+        kyc_postponed,
       ))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res, None).await?;
+    Self::assert_contract_call_result(res, expected_msg).await?;
     Ok(())
   }
 
