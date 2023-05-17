@@ -263,9 +263,9 @@ impl ReviewersParams {
   }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Copy)]
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, Copy, PartialEq)]
 #[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub enum KycVerificationMethod {
   WhenCreatingClaim,
   DuringClaimApproval,
@@ -276,35 +276,12 @@ pub enum KycVerificationMethod {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum KycConfig {
   KycNotRequired,
-  KycRequired {
-    kyc_verification_method: KycVerificationMethod,
-    min_amount_for_kyc: Option<U128>,
-  },
-}
-
-impl KycConfig {
-  pub fn is_kyc_required(&self) -> bool {
-    match self.clone() {
-      Self::KycRequired { .. } => true,
-      _ => false,
-    }
-  }
-
-  pub fn get_kyc_params(&self) -> (KycVerificationMethod, Option<U128>) {
-    match self.clone() {
-      Self::KycRequired { kyc_verification_method, min_amount_for_kyc } =>
-        (kyc_verification_method, min_amount_for_kyc),
-      _ => env::panic_str("No params")
-    }
-  }
+  KycRequired { kyc_verification_method: KycVerificationMethod },
 }
 
 impl Default for KycConfig {
   fn default() -> Self {
-    KycConfig::KycRequired {
-      kyc_verification_method: KycVerificationMethod::WhenCreatingClaim,
-      min_amount_for_kyc: None,
-    }
+    KycConfig::KycRequired { kyc_verification_method: KycVerificationMethod::WhenCreatingClaim }
   }
 }
 
@@ -373,7 +350,6 @@ pub struct BountyUpdate {
   pub deadline: Option<Deadline>,
   pub claimer_approval: Option<ClaimerApproval>,
   pub reviewers: Option<ReviewersParams>,
-  pub kyc_config: Option<KycConfig>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]

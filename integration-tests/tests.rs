@@ -51,6 +51,7 @@ async fn test_create_bounty(e: &Env) -> anyhow::Result<()> {
     "WithoutApproval".to_string(),
     Some(e.reviewer_is_dao().await?),
     None,
+    None,
   ).await?;
 
   let last_bounty_id = get_last_bounty_id(&e.bounties).await?;
@@ -106,7 +107,7 @@ async fn test_create_bounty(e: &Env) -> anyhow::Result<()> {
       owner: e.project_owner.id().to_string().parse().unwrap(),
       status: BountyStatus::New,
       created_at: bounty.created_at,
-      kyc_config: KycConfig::default(),
+      kyc_config: KycConfig::KycNotRequired,
     }
   );
 
@@ -198,6 +199,7 @@ async fn test_claimer_give_up(e: &Env) -> anyhow::Result<()> {
     &e.bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
     "WithoutApproval".to_string(),
+    None,
     None,
     None,
   ).await?;
@@ -314,6 +316,7 @@ async fn test_claim_result_reject_by_validators_dao(e: &Env) -> anyhow::Result<(
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
     "WithoutApproval".to_string(),
     Some(e.reviewer_is_dao().await?),
+    None,
     None,
   ).await?;
 
@@ -723,6 +726,7 @@ async fn test_open_dispute_and_approve_by_dispute_dao(e: &Env) -> anyhow::Result
     "WithoutApproval".to_string(),
     Some(e.reviewer_is_dao().await?),
     None,
+    None,
   ).await?;
 
   let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
@@ -823,6 +827,7 @@ async fn test_statistics_for_bounty_claim_approval(e: &Env) -> anyhow::Result<()
     "WithoutApproval".to_string(),
     Some(e.reviewer_is_dao().await?),
     None,
+    None,
   ).await?;
 
   let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
@@ -892,6 +897,7 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
     "MultipleClaims".to_string(),
+    None,
     None,
     None,
   ).await?;
@@ -1058,6 +1064,7 @@ async fn test_rejection_and_approval_of_claimers_by_validators_dao(e: &Env) -> a
     "MultipleClaims".to_string(),
     Some(e.reviewer_is_dao().await?),
     None,
+    None,
   ).await?;
   e.assert_reputation_stat_values_eq(
     Some([9, 8, 3, 3, 1, 1, 4, 2]),
@@ -1175,6 +1182,7 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
     "MultipleClaims".to_string(),
     Some(e.more_reviewers(&reviewer).await?),
     None,
+    None,
   ).await?;
   e.assert_reputation_stat_values_eq(
     Some([10, 8, 3, 3, 1, 1, 4, 2]),
@@ -1266,6 +1274,7 @@ async fn test_bounty_cancel(e: &Env) -> anyhow::Result<()> {
     "MultipleClaims".to_string(),
     None,
     None,
+    None,
   ).await?;
   e.assert_reputation_stat_values_eq(
     Some([11, 9, 4, 3, 1, 1, 4, 2]),
@@ -1343,6 +1352,7 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
     "WithoutApproval".to_string(),
     None,
     None,
+    None,
   ).await?;
   e.assert_reputation_stat_values_eq(
     Some([12, 9, 4, 3, 1, 1, 4, 2]),
@@ -1380,7 +1390,6 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
     reviewers: Some(ReviewersParams::MoreReviewers {
       more_reviewers: vec![reviewer2.id().to_string().parse().unwrap()],
     }),
-    kyc_config: None,
   };
 
   e.bounty_update(&e.disputed_bounties, bounty_id, bounty_update).await?;
@@ -1413,7 +1422,6 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
         reviewer3.id().to_string().parse().unwrap(),
       ],
     }),
-    kyc_config: None,
   };
 
   e.bounty_update(&e.disputed_bounties, bounty_id, bounty_update).await?;
@@ -1440,7 +1448,7 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
       owner: e.project_owner.id().to_string().parse().unwrap(),
       status: BountyStatus::New,
       created_at: bounty.created_at,
-      kyc_config: KycConfig::default(),
+      kyc_config: KycConfig::KycNotRequired,
     }
   );
 
@@ -1456,6 +1464,7 @@ async fn test_claimers_whitelist_flow(e: &Env) -> anyhow::Result<()> {
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
     "ApprovalWithWhitelist".to_string(),
+    None,
     None,
     None,
   ).await?;
@@ -1521,6 +1530,7 @@ async fn test_claimers_whitelist_flow(e: &Env) -> anyhow::Result<()> {
     "ApprovalWithWhitelist".to_string(),
     None,
     None,
+    None,
   ).await?;
   e.assert_reputation_stat_values_eq(
     Some([13, 9, 4, 3, 1, 1, 4, 2]),
@@ -1584,6 +1594,7 @@ async fn test_kyc_whitelist_flow(e: &Env) -> anyhow::Result<()> {
     "WithoutApproval".to_string(),
     None,
     Some(U128((BOUNTY_AMOUNT.0 + PLATFORM_FEE.0) * 2)),
+    Some(KycConfig::default())
   ).await?;
   e.assert_reputation_stat_values_eq(
     Some([13, 9, 4, 3, 1, 1, 4, 2]),
@@ -1658,6 +1669,7 @@ async fn test_use_commissions(e: &Env) -> anyhow::Result<()> {
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
     "WithoutApproval".to_string(),
     Some(e.reviewer_is_dao().await?),
+    None,
     None,
   ).await?;
   e.assert_reputation_stat_values_eq(
@@ -1834,6 +1846,7 @@ async fn test_creating_bounty_for_disabled_token(e: &Env) -> anyhow::Result<()> 
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
     "WithoutApproval".to_string(),
+    None,
     None,
     None,
   ).await?;

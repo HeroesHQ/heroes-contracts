@@ -682,30 +682,6 @@ impl BountiesContract {
       };
       changed = true;
     }
-    if bounty_update.kyc_config.is_some() {
-      assert!(
-        matches!(bounty.status, BountyStatus::New),
-        "Bounty status does not allow updating"
-      );
-      if found_claim {
-        let kyc_config = bounty_update.kyc_config.clone().unwrap();
-        assert_eq!(
-          kyc_config.is_kyc_required(),
-          bounty.kyc_config.is_kyc_required(),
-          "It is not allowed to change the KYC requirement if there are already claims"
-        );
-        if kyc_config.is_kyc_required() {
-          let (_kyc_method, _) = kyc_config.get_kyc_params();
-          let (_old_method, _) = bounty.kyc_config.get_kyc_params();
-          assert!(
-            matches!(_kyc_method, _old_method),
-            "KYC method cannot be changed if there are already claims"
-          );
-        }
-      }
-      bounty.kyc_config = bounty_update.kyc_config.unwrap();
-      changed = true;
-    }
 
     assert!(changed, "No changes found");
     self.check_bounty(&bounty);

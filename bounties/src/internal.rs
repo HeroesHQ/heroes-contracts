@@ -830,45 +830,25 @@ impl BountiesContract {
       return false;
     }
     match bounty.kyc_config {
-      KycConfig::KycRequired { kyc_verification_method, .. } => {
-        let min_amount = self.internal_get_min_amount_for_kyc(&bounty);
-        if min_amount.is_none() ||
-          bounty.amount.0 >= min_amount.unwrap().0
-        {
-          match place_of_check {
-            PlaceOfCheckKYC::CreatingClaim { .. } => {
-              matches!(kyc_verification_method, KycVerificationMethod::WhenCreatingClaim)
-            },
-            PlaceOfCheckKYC::DecisionOnClaim { is_kyc_delayed, .. } => is_kyc_delayed.is_none(),
-            _ => {
-              claim.is_some()
-                && claim.unwrap().is_kyc_delayed.is_some()
-                && matches!(
+      KycConfig::KycRequired { kyc_verification_method } => {
+        match place_of_check {
+          PlaceOfCheckKYC::CreatingClaim { .. } => {
+            kyc_verification_method == KycVerificationMethod::WhenCreatingClaim
+          },
+          PlaceOfCheckKYC::DecisionOnClaim { is_kyc_delayed, .. } => is_kyc_delayed.is_none(),
+          _ => {
+            claim.is_some()
+              && claim.unwrap().is_kyc_delayed.is_some()
+              && matches!(
                       claim.unwrap().is_kyc_delayed.clone().unwrap(),
                       DefermentOfKYC::BeforeDeadline
                     )
               || claimer.is_some()
-                && !self.is_approval_required(bounty.clone(), &claimer.unwrap())
-            }
+              && !self.is_approval_required(bounty.clone(), &claimer.unwrap())
           }
-        } else {
-          false
         }
       },
       _ => false,
-    }
-  }
-
-  pub(crate) fn internal_get_min_amount_for_kyc(&self, bounty: &Bounty) -> Option<U128> {
-    let min_amount_for_kyc = match bounty.kyc_config.clone() {
-      KycConfig::KycRequired { min_amount_for_kyc, .. } => min_amount_for_kyc,
-      _ => None
-    };
-    if min_amount_for_kyc.is_some() {
-      min_amount_for_kyc
-    } else {
-      let token_details = self.tokens.get(&bounty.token).unwrap();
-      token_details.min_amount_for_kyc
     }
   }
 

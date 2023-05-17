@@ -7,7 +7,7 @@ use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               DaoFeeStats, DefermentOfKYC, FeeStats, ReviewersParams, TokenDetails,
+               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, ReviewersParams, TokenDetails,
                ValidatorsDaoParams, VersionedConfig};
 use disputes::{Dispute, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
@@ -468,6 +468,7 @@ impl Env {
     claimer_approval: String,
     reviewers: Option<ReviewersParams>,
     total_amount: Option<U128>,
+    kyc_required: Option<KycConfig>,
   ) -> anyhow::Result<()> {
     let metadata = json!({
       "title": "Test bounty title",
@@ -509,6 +510,11 @@ impl Env {
             Some(r) => json!(r),
             _ => json!(null),
           },
+          "kyc_config": if kyc_required.is_some() {
+            kyc_required
+          } else {
+            Some(KycConfig::KycNotRequired)
+          }
         })
           .to_string(),
       }))
