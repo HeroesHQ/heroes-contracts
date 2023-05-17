@@ -304,20 +304,10 @@ impl BountiesContract {
     deadline: U64,
     description: String
   ) -> PromiseOrValue<()> {
-    let bounty = self.get_bounty(id.clone());
-
     assert_eq!(
       env::attached_deposit(),
       self.config.clone().to_config().bounty_claim_bond.0,
       "Bounty wrong bond"
-    );
-    assert!(
-      matches!(bounty.status, BountyStatus::New),
-      "Bounty status does not allow to submit a claim"
-    );
-    assert!(
-      bounty.is_claim_deadline_correct(deadline),
-      "Bounty wrong deadline"
     );
     assert!(
       !description.is_empty(),
@@ -325,14 +315,21 @@ impl BountiesContract {
     );
 
     let sender_id = env::predecessor_account_id();
-    bounty.assert_account_is_not_owner_or_reviewer(sender_id.clone());
-
-    let claims = self.get_bounty_claims(sender_id.clone());
-    let index = Self::internal_find_claim(id, &claims);
-    assert!(
-      index.is_none() || !matches!(claims[index.unwrap()].status, ClaimStatus::New),
+    let (bounty, _, _) = self.internal_get_and_check_bounty_and_claim(
+      id.clone(),
+      sender_id.clone(),
+      BountyStatus::New,
+      vec![ClaimStatus::New],
+      true,
+      "Bounty status does not allow to submit a claim",
       "You already have a claim with the status 'New'"
     );
+
+    assert!(
+      bounty.is_claim_deadline_correct(deadline),
+      "Bounty wrong deadline"
+    );
+    bounty.assert_account_is_not_owner_or_reviewer(sender_id.clone());
 
     let place_of_check = PlaceOfCheckKYC::CreatingClaim { deadline, description };
     if self.is_kyc_check_required(bounty, None, None, place_of_check.clone()) {
@@ -369,12 +366,15 @@ impl BountiesContract {
       "The claim deadline is no longer correct"
     );
 
-    let place_of_check = PlaceOfCheckKYC::DecisionOnClaim { approve, is_kyc_delayed: kyc_postponed };
+    let place_of_check = PlaceOfCheckKYC::DecisionOnClaim {
+      approve,
+      is_kyc_delayed: kyc_postponed.clone()
+    };
     if self.is_kyc_check_required(bounty, None, None, place_of_check.clone()) {
       self.check_if_claimer_in_kyc_whitelist(id, claimer, place_of_check)
 
     } else {
-      self.internal_approval_and_save_claim(id, claimer, place_of_check)
+      self.internal_approval_and_save_claim(id, claimer, approve, kyc_postponed)
     }
   }
 
@@ -385,7 +385,7 @@ impl BountiesContract {
   pub fn bounty_done(&mut self, id: BountyIndex, description: String) -> PromiseOrValue<()> {
     assert_one_yocto();
 
-    let bounty = self.get_bounty(id.clone());
+    let mut bounty = self.get_bounty(id.clone());
     assert!(
       matches!(bounty.status, BountyStatus::Claimed),
       "Bounty status does not allow to completion"
@@ -399,7 +399,7 @@ impl BountiesContract {
     );
 
     if claims[claim_idx].is_claim_expired() {
-      return self.internal_set_claim_expiry_status(id, &sender_id, bounty, claim_idx, &mut claims);
+      return self.internal_set_claim_expiry_status(id, &sender_id, &mut bounty, claim_idx, &mut claims);
     }
 
     let place_of_check = PlaceOfCheckKYC::ClaimDone { description };
@@ -422,7 +422,7 @@ impl BountiesContract {
   pub fn bounty_give_up(&mut self, id: BountyIndex) -> PromiseOrValue<()> {
     assert_one_yocto();
 
-    let bounty = self.get_bounty(id.clone());
+    let mut bounty = self.get_bounty(id.clone());
     let sender_id = env::predecessor_account_id();
     let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
     let was_status_in_progress = matches!(claims[claim_idx].status, ClaimStatus::InProgress);
@@ -446,7 +446,7 @@ impl BountiesContract {
     claims[claim_idx].status = ClaimStatus::Canceled;
     self.internal_save_claims(&sender_id, &claims);
     if was_status_in_progress {
-      self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::New);
+      self.internal_change_status_and_save_bounty(&id, &mut bounty, BountyStatus::New);
       self.internal_update_statistic(
         Some(sender_id),
         None,
@@ -503,7 +503,7 @@ impl BountiesContract {
           );
 
           let result = if matches!(action, BountyAction::ClaimApproved { .. }) {
-            self.internal_bounty_payout(id, receiver_id, &mut bounty, claim_idx, &mut claims)
+            self.internal_bounty_payout(id, receiver_id)
           } else {
             self.internal_reject_claim(id, receiver_id, &mut bounty, claim_idx, &mut claims);
             PromiseOrValue::Value(())
@@ -517,19 +517,18 @@ impl BountiesContract {
           let result = if matches!(claims[claim_idx].status, ClaimStatus::InProgress) &&
             claims[claim_idx].is_claim_expired()
           {
-            self.internal_set_claim_expiry_status(id, &receiver_id, bounty, claim_idx, &mut claims);
+            self.internal_set_claim_expiry_status(id, &receiver_id, &mut bounty, claim_idx, &mut claims);
             PromiseOrValue::Value(())
           }
 
           else if matches!(claims[claim_idx].status, ClaimStatus::Completed) &&
             bounty.is_validators_dao_used()
           {
-            Self::internal_check_bounty_payout_proposal(
+            self.internal_check_bounty_payout_proposal(
               id,
+              bounty,
               receiver_id,
-              &mut bounty,
-              claim_idx,
-              &mut claims
+              claims[claim_idx].bounty_payout_proposal_id
             )
           }
 
@@ -541,7 +540,7 @@ impl BountiesContract {
           }
 
           else if matches!(claims[claim_idx].status, ClaimStatus::Disputed) {
-            self.internal_get_dispute(id, receiver_id, &mut bounty, claim_idx, &mut claims)
+            self.internal_get_dispute(id, receiver_id, claims[claim_idx].dispute_id.unwrap())
           }
 
           else {
@@ -558,12 +557,11 @@ impl BountiesContract {
       let result = if matches!(claims[claim_idx].status, ClaimStatus::New) &&
         bounty.is_validators_dao_used()
       {
-        return Self::internal_check_approve_claimer_proposal(
+        return self.internal_check_approve_claimer_proposal(
           id,
-          receiver_id,
           bounty,
-          claim_idx,
-          &mut claims
+          receiver_id,
+          claims[claim_idx].approve_claimer_proposal_id,
         )
       }
 
@@ -619,11 +617,7 @@ impl BountiesContract {
     }
     if bounty_update.claimer_approval.is_some() {
       assert!(
-        matches!(bounty.status, BountyStatus::New),
-        "Bounty status does not allow updating"
-      );
-      assert!(
-        !found_claim,
+        !found_claim && matches!(bounty.status, BountyStatus::New),
         "The approval setting cannot be changed if there are already claims"
       );
       bounty.claimer_approval = bounty_update.claimer_approval.unwrap();
@@ -714,6 +708,7 @@ impl BountiesContract {
     }
 
     assert!(changed, "No changes found");
+    self.check_bounty(&bounty);
     self.bounties.insert(&id, &bounty.into());
   }
 
@@ -822,7 +817,7 @@ impl BountiesContract {
     );
 
     let sender_id = env::predecessor_account_id();
-    let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
+    let (claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
     assert!(
       matches!(claims[claim_idx].status, ClaimStatus::Rejected),
       "The claim status does not allow opening a dispute"
@@ -833,7 +828,7 @@ impl BountiesContract {
       "The period for opening a dispute has expired"
     );
 
-    self.internal_create_dispute(id, &sender_id, bounty, claim_idx, &mut claims, description)
+    self.internal_create_dispute(id, &sender_id, bounty, description)
   }
 
   #[payable]
@@ -857,7 +852,7 @@ impl BountiesContract {
       "Bounty status does not allow sending the result of the dispute"
     );
 
-    let claimer = self.internal_find_claimer(id.clone());
+    let claimer = self.internal_find_disputed_claimer(id.clone());
     assert!(
       claimer.is_some(),
       "The claim status does not allow sending the result of the dispute",
@@ -866,7 +861,7 @@ impl BountiesContract {
     let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
 
     let result = if success {
-      self.internal_bounty_payout(id, sender_id, &mut bounty, claim_idx, &mut claims)
+      self.internal_bounty_payout(id, sender_id)
     } else {
       self.internal_reset_bounty_to_initial_state(id, &sender_id, &mut bounty, claim_idx, &mut claims);
       PromiseOrValue::Value(())

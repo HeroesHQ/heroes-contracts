@@ -324,7 +324,7 @@ impl BountiesContract {
     claim_idx: usize,
     claims: &mut Vec<BountyClaim>
   ) {
-    self.internal_change_status_and_save_bounty(&id, bounty.clone(), BountyStatus::New);
+    self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::New);
     let with_dispute = matches!(claims[claim_idx].status, ClaimStatus::Disputed);
     claims[claim_idx].status = ClaimStatus::NotCompleted;
     self.internal_save_claims(receiver_id, &claims);
@@ -346,7 +346,7 @@ impl BountiesContract {
     &mut self,
     id: BountyIndex,
     receiver_id: &AccountId,
-    bounty: Bounty,
+    bounty: &mut Bounty,
     claim_idx: usize,
     claims: &mut Vec<BountyClaim>
   ) -> PromiseOrValue<()> {
@@ -363,11 +363,11 @@ impl BountiesContract {
   pub(crate) fn internal_change_status_and_save_bounty(
     &mut self,
     id: &BountyIndex,
-    mut bounty: Bounty,
+    bounty: &mut Bounty,
     status: BountyStatus,
   ) {
     bounty.status = status;
-    self.bounties.insert(&id, &bounty.into());
+    self.bounties.insert(&id, &bounty.clone().into());
   }
 
   pub(crate) fn is_claim_active(claim: &BountyClaim) -> bool {
@@ -400,24 +400,22 @@ impl BountiesContract {
   pub(crate) fn internal_bounty_payout(
     &self,
     id: BountyIndex,
-    receiver_id: AccountId,
-    bounty: &mut Bounty,
-    claim_idx: usize,
-    claims: &mut Vec<BountyClaim>,
+    claimer: AccountId,
   ) -> PromiseOrValue<()> {
+    let bounty = self.get_bounty(id);
     self.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty);
     ext_ft_contract::ext(bounty.token.clone())
       .with_attached_deposit(ONE_YOCTO)
       .with_static_gas(GAS_FOR_FT_TRANSFER)
       .ft_transfer(
-        receiver_id.clone(),
+        claimer.clone(),
         bounty.amount.clone(),
         Some(format!("Bounty {} payout", id)),
       )
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_FT_TRANSFER)
-          .after_ft_transfer(id, receiver_id, bounty, claims, claim_idx)
+          .after_ft_transfer(id, claimer)
       )
       .into()
   }
@@ -441,7 +439,7 @@ impl BountiesContract {
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_FT_TRANSACT)
-          .after_refund_bounty_amount(id, bounty)
+          .after_refund_bounty_amount(id)
       )
       .into()
   }
@@ -472,7 +470,7 @@ impl BountiesContract {
   pub(crate) fn internal_reject_claim(
     &mut self,
     id: BountyIndex,
-    receiver_id: AccountId,
+    claimer: AccountId,
     bounty: &mut Bounty,
     claim_idx: usize,
     claims: &mut Vec<BountyClaim>,
@@ -480,11 +478,11 @@ impl BountiesContract {
     if self.dispute_contract.is_some() {
       claims[claim_idx].status = ClaimStatus::Rejected;
       claims[claim_idx].rejected_timestamp = Some(env::block_timestamp().into());
-      self.internal_save_claims(&receiver_id, &claims);
+      self.internal_save_claims(&claimer, &claims);
     } else {
       // If the creation of a dispute is not foreseen,
       // then the bounty reset to initial state
-      self.internal_reset_bounty_to_initial_state(id, &receiver_id, bounty, claim_idx, claims);
+      self.internal_reset_bounty_to_initial_state(id, &claimer, bounty, claim_idx, claims);
     }
   }
 
@@ -492,9 +490,9 @@ impl BountiesContract {
     &self,
     id: BountyIndex,
     claimer: AccountId,
+    bounty: Bounty,
     place_of_check: PlaceOfCheckKYC,
   ) -> PromiseOrValue<()> {
-    let bounty = self.get_bounty(id);
     if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
       let description = match place_of_check {
         PlaceOfCheckKYC::ClaimDone { description } => description,
@@ -547,10 +545,10 @@ impl BountiesContract {
     &self,
     id: BountyIndex,
     claimer: AccountId,
+    bounty: Bounty,
     deadline: U64,
     description: String,
   ) -> PromiseOrValue<()> {
-    let bounty = self.get_bounty(id.clone());
     if let Reviewers::ValidatorsDao { validators_dao } = bounty.reviewers.clone().unwrap() {
       Self::internal_add_proposal(
         validators_dao.account_id,
@@ -611,20 +609,19 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_check_bounty_payout_proposal(
+    &self,
     id: BountyIndex,
+    bounty: Bounty,
     receiver_id: AccountId,
-    bounty: &mut Bounty,
-    claim_idx: usize,
-    claims: &mut Vec<BountyClaim>,
+    proposal_id: Option<U64>,
   ) -> PromiseOrValue<()> {
     if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
-      let proposal_id = claims[claim_idx].bounty_payout_proposal_id.unwrap();
       Self::internal_check_proposal(
         validators_dao.account_id,
-        proposal_id,
+        proposal_id.unwrap(),
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CHECK_BOUNTY_PAYOUT_PROPOSAL)
-          .after_check_bounty_payout_proposal(id, receiver_id, bounty, claims, claim_idx)
+          .after_check_bounty_payout_proposal(id, receiver_id, proposal_id.unwrap())
       )
     } else {
       unreachable!();
@@ -632,20 +629,19 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_check_approve_claimer_proposal(
+    &self,
     id: BountyIndex,
-    claimer: AccountId,
     bounty: Bounty,
-    claim_idx: usize,
-    claims: &mut Vec<BountyClaim>,
+    claimer: AccountId,
+    proposal_id: Option<U64>,
   ) -> PromiseOrValue<()> {
     if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
-      let proposal_id = claims[claim_idx].approve_claimer_proposal_id.unwrap();
       Self::internal_check_proposal(
         validators_dao.account_id,
-        proposal_id,
+        proposal_id.unwrap(),
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CHECK_APPROVE_CLAIMER_PROPOSAL)
-          .after_check_approve_claimer_proposal(id, claimer, bounty, claims, claim_idx)
+          .after_check_approve_claimer_proposal(id, claimer, proposal_id.unwrap())
       )
     } else {
       unreachable!();
@@ -673,8 +669,6 @@ impl BountiesContract {
     id: BountyIndex,
     receiver_id: &AccountId,
     bounty: Bounty,
-    claim_idx: usize,
-    claims: &mut Vec<BountyClaim>,
     description: String,
   ) -> PromiseOrValue<()> {
     let project_owner_delegate = bounty.get_bounty_owner_delegate();
@@ -699,12 +693,12 @@ impl BountiesContract {
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CREATE_DISPUTE)
-          .after_create_dispute(receiver_id, claims, claim_idx)
+          .after_create_dispute(id, receiver_id)
       )
       .into()
   }
 
-  pub(crate) fn internal_find_claimer(
+  pub(crate) fn internal_find_disputed_claimer(
     &self,
     id: BountyIndex,
   ) -> Option<AccountId> {
@@ -720,16 +714,14 @@ impl BountiesContract {
   pub(crate) fn internal_get_dispute(
     &self,
     id: BountyIndex,
-    receiver_id: AccountId,
-    bounty: &mut Bounty,
-    claim_idx: usize,
-    claims: &mut Vec<BountyClaim>,
+    claimer: AccountId,
+    dispute_id: U64,
   ) -> PromiseOrValue<()> {
     Promise::new(self.dispute_contract.clone().unwrap())
       .function_call(
         "get_dispute".to_string(),
         json!({
-          "id": claims[claim_idx].dispute_id.unwrap().0,
+          "id": dispute_id.0,
         })
           .to_string()
           .into_bytes(),
@@ -739,7 +731,7 @@ impl BountiesContract {
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CHECK_DISPUTE)
-          .after_get_dispute(id, receiver_id, bounty, claims, claim_idx)
+          .after_get_dispute(id, claimer)
       )
       .into()
   }
@@ -795,18 +787,18 @@ impl BountiesContract {
   pub(crate) fn internal_claimer_approval(
     &mut self,
     id: BountyIndex,
-    bounty: Bounty,
+    bounty: &mut Bounty,
     claim: &mut BountyClaim,
     claimer: &AccountId,
     is_kyc_delayed: Option<DefermentOfKYC>,
   ) -> PromiseOrValue<()> {
-    self.internal_change_status_and_save_bounty(&id, bounty.clone(), BountyStatus::Claimed);
+    self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::Claimed);
     claim.start_time = Some(U64::from(env::block_timestamp()));
     claim.status = ClaimStatus::InProgress;
     claim.is_kyc_delayed = is_kyc_delayed;
     self.internal_update_statistic(
       Some(claimer.clone()),
-      Some(bounty.owner),
+      Some(bounty.clone().owner),
       ReputationActionKind::ClaimerApproved
     )
   }
@@ -897,15 +889,13 @@ impl BountiesContract {
     description: String,
     proposal_id: Option<U64>,
   ) {
-    let bounty = self.get_bounty(id.clone());
-    assert!(
-      matches!(bounty.status, BountyStatus::New),
-      "Bounty status does not allow to submit a claim"
-    );
-    let mut claims = self.get_bounty_claims(claimer.clone());
-    let index = Self::internal_find_claim(id, &claims);
-    assert!(
-      index.is_none() || !matches!(claims[index.unwrap()].status, ClaimStatus::New),
+    let (mut bounty, mut claims, _) = self.internal_get_and_check_bounty_and_claim(
+      id.clone(),
+      claimer.clone(),
+      BountyStatus::New,
+      vec![ClaimStatus::New],
+      true,
+      "Bounty status does not allow to submit a claim",
       "You already have a claim with the status 'New'"
     );
 
@@ -925,7 +915,7 @@ impl BountiesContract {
     };
 
     if !self.is_approval_required(bounty.clone(), &claimer) {
-      self.internal_claimer_approval(id, bounty.clone(), &mut bounty_claim, &claimer, None);
+      self.internal_claimer_approval(id, &mut bounty, &mut bounty_claim, &claimer, None);
     }
     Self::internal_add_claim(id, &mut claims, bounty_claim);
     self.internal_save_claims(&claimer, &claims);
@@ -933,7 +923,7 @@ impl BountiesContract {
     self.locked_amount += self.config.clone().to_config().bounty_claim_bond.0;
     self.internal_update_statistic(
       Some(claimer.clone()),
-      Some(bounty.owner),
+      Some(bounty.clone().owner),
       ReputationActionKind::ClaimCreated
     );
 
@@ -982,6 +972,7 @@ impl BountiesContract {
       self.internal_add_proposal_to_approve_claimer(
         id,
         claimer,
+        bounty,
         deadline,
         description
       )
@@ -995,34 +986,29 @@ impl BountiesContract {
     &mut self,
     id: BountyIndex,
     claimer: AccountId,
-    place_of_check: PlaceOfCheckKYC,
+    approve: bool,
+    is_kyc_delayed: Option<DefermentOfKYC>,
   ) -> PromiseOrValue<()> {
-    let bounty = self.get_bounty(id.clone());
-    assert!(
-      matches!(bounty.status, BountyStatus::New),
-      "Bounty status does not allow to make a decision on a claim"
-    );
-    let mut claims = self.get_bounty_claims(claimer.clone());
-    let index = Self::internal_find_claim(id, &claims);
-    assert!(
-      index.is_some() && matches!(claims[index.unwrap()].status, ClaimStatus::New),
+    let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
+      id.clone(),
+      claimer.clone(),
+      BountyStatus::New,
+      vec![ClaimStatus::New],
+      false,
+      "Bounty status does not allow to make a decision on a claim",
       "Claim status does not allow a decision to be made"
     );
 
-    let mut bounty_claim = claims[index.unwrap()].clone();
-    let (approve, is_kyc_delayed) = match place_of_check {
-      PlaceOfCheckKYC::DecisionOnClaim { approve, is_kyc_delayed } => (approve, is_kyc_delayed),
-      _ => unreachable!(),
-    };
-
+    let claim_idx = index.unwrap();
+    let mut bounty_claim = claims[claim_idx].clone();
     let result = if approve {
-      self.internal_claimer_approval(id, bounty, &mut bounty_claim, &claimer, is_kyc_delayed)
+      self.internal_claimer_approval(id, &mut bounty, &mut bounty_claim, &claimer, is_kyc_delayed)
     } else {
       bounty_claim.status = ClaimStatus::NotHired;
       self.internal_return_bonds(&claimer)
     };
 
-    claims.insert(index.unwrap(), bounty_claim);
+    claims.insert(claim_idx, bounty_claim);
     self.internal_save_claims(&claimer, &claims);
     result
   }
@@ -1038,6 +1024,7 @@ impl BountiesContract {
       self.internal_add_proposal_to_finish_claim(
         id,
         claimer,
+        bounty,
         place_of_check
       )
     } else {
@@ -1052,20 +1039,81 @@ impl BountiesContract {
     claimer: AccountId,
     proposal_id: Option<U64>
   ) {
-    let bounty = self.get_bounty(id.clone());
-    assert!(
-      matches!(bounty.status, BountyStatus::Claimed),
-      "Bounty status does not allow to completion"
-    );
-    let mut claims = self.get_bounty_claims(claimer.clone());
-    let index = Self::internal_find_claim(id, &claims);
-    assert!(
-      index.is_some() && matches!(claims[index.unwrap()].status, ClaimStatus::InProgress),
+    let (_, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
+      id.clone(),
+      claimer.clone(),
+      BountyStatus::Claimed,
+      vec![ClaimStatus::InProgress],
+      false,
+      "Bounty status does not allow to completion",
       "The claim status does not allow to complete the bounty"
     );
 
-    claims[index.unwrap()].status = ClaimStatus::Completed;
-    claims[index.unwrap()].bounty_payout_proposal_id = proposal_id;
+    let claim_idx = index.unwrap();
+    claims[claim_idx].status = ClaimStatus::Completed;
+    claims[claim_idx].bounty_payout_proposal_id = proposal_id;
     self.internal_save_claims(&claimer, &claims);
+  }
+
+  pub(crate) fn internal_bounty_completion(&mut self, id: BountyIndex, claimer: AccountId) {
+    let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
+      id.clone(),
+      claimer.clone(),
+      BountyStatus::Claimed,
+      vec![ClaimStatus::Completed, ClaimStatus::Disputed],
+      false,
+      "Bounty status does not allow to payout",
+      "The claim status does not allow to payout"
+    );
+
+    let claim_idx = index.unwrap();
+    let with_dispute = matches!(claims[claim_idx].status, ClaimStatus::Disputed);
+    claims[claim_idx].status = ClaimStatus::Approved;
+    self.internal_total_fees_unlocking_funds(&bounty);
+    self.internal_save_claims(&claimer, &claims);
+    self.internal_change_status_and_save_bounty(&id, &mut bounty, BountyStatus::Completed);
+    self.internal_update_statistic(
+      Some(claimer.clone()),
+      Some(bounty.owner.clone()),
+      ReputationActionKind::SuccessfulClaim {with_dispute},
+    );
+    self.internal_return_bonds(&claimer);
+  }
+
+  pub(crate) fn internal_get_and_check_bounty_and_claim(
+    &self,
+    id: BountyIndex,
+    claimer: AccountId,
+    bounty_status: BountyStatus,
+    claim_statuses: Vec<ClaimStatus>,
+    no_claim_found: bool,
+    bounty_message: &str,
+    claim_message: &str,
+  ) -> (Bounty, Vec<BountyClaim>, Option<usize>) {
+    let bounty = self.get_bounty(id.clone());
+    if bounty.clone().status != bounty_status {
+      env::panic_str(bounty_message);
+    }
+
+    let claims = self.get_bounty_claims(claimer.clone());
+    let index = Self::internal_find_claim(id, &claims);
+    let claim_found = index.is_some() &&
+      claim_statuses
+        .into_iter()
+        .find(|s| claims[index.unwrap()].status == s.clone())
+        .is_some();
+    if no_claim_found == claim_found {
+      env::panic_str(claim_message);
+    }
+
+    (bounty, claims, index)
+  }
+
+  pub(crate) fn check_bounty(&self, bounty: &Bounty) {
+    bounty.assert_new_valid();
+    self.assert_bounty_category_is_correct(bounty.clone().metadata.category);
+    if bounty.clone().metadata.tags.is_some() {
+      self.assert_bounty_tags_are_correct(bounty.clone().metadata.tags.unwrap());
+    }
   }
 }
