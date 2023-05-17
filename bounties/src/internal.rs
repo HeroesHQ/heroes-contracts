@@ -826,11 +826,12 @@ impl BountiesContract {
     claimer: Option<AccountId>,
     place_of_check: PlaceOfCheckKYC,
   ) -> bool {
-    if self.kyc_whitelist_contract.is_none() {
-      return false;
-    }
     match bounty.kyc_config {
       KycConfig::KycRequired { kyc_verification_method } => {
+        assert!(
+          self.kyc_whitelist_contract.is_some(),
+          "KYC whitelist contract is not set"
+        );
         match place_of_check {
           PlaceOfCheckKYC::CreatingClaim { .. } => {
             kyc_verification_method == KycVerificationMethod::WhenCreatingClaim
@@ -1094,6 +1095,15 @@ impl BountiesContract {
     self.assert_bounty_category_is_correct(bounty.clone().metadata.category);
     if bounty.clone().metadata.tags.is_some() {
       self.assert_bounty_tags_are_correct(bounty.clone().metadata.tags.unwrap());
+    }
+    match bounty.kyc_config {
+      KycConfig::KycRequired { .. } => {
+        assert!(
+          self.kyc_whitelist_contract.is_some(),
+          "KYC whitelist contract is not set"
+        );
+      },
+      _ => {}
     }
   }
 }
