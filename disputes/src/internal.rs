@@ -37,18 +37,18 @@ impl DisputesContract {
   pub(crate) fn internal_send_result_of_dispute(
     &self,
     id: DisputeIndex,
-    dispute: &mut Dispute,
+    bounty_id: U64,
     success: bool,
     canceled: bool,
   ) -> PromiseOrValue<()> {
     ext_bounty_contract::ext(self.bounties_contract.clone())
       .with_static_gas(GAS_FOR_SEND_RESULT_OF_DISPUTE)
       .with_attached_deposit(1)
-      .dispute_result(dispute.bounty_id.0, success)
+      .dispute_result(bounty_id.0, success)
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CLAIM_APPROVAL)
-          .after_claim_approval(id, dispute, success, canceled)
+          .after_claim_approval(id, success, canceled)
       )
       .into()
   }
@@ -64,14 +64,14 @@ impl DisputesContract {
   pub(crate) fn internal_add_proposal(
     &self,
     id: DisputeIndex,
-    dispute: &mut Dispute,
+    dispute: Dispute,
   ) -> PromiseOrValue<()> {
     Promise::new(self.dispute_dao.clone())
       .function_call(
         "add_proposal".to_string(),
         json!({
           "proposal": {
-            "description": self.internal_get_proposal_description(&id, dispute),
+            "description": self.internal_get_proposal_description(&id, &dispute),
             "kind": {
               "FunctionCall" : {
                 "receiver_id": env::current_account_id(),
@@ -101,7 +101,7 @@ impl DisputesContract {
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK)
-          .on_added_proposal_callback(id, dispute)
+          .on_added_proposal_callback(id)
       )
       .into()
   }
@@ -109,19 +109,19 @@ impl DisputesContract {
   pub(crate) fn internal_get_proposal(
     &mut self,
     id: DisputeIndex,
-    dispute: &mut Dispute,
+    proposal_id: U64,
   ) -> PromiseOrValue<()> {
     Promise::new(self.dispute_dao.clone())
       .function_call(
         "get_proposal".to_string(),
-        json!({"id": dispute.proposal_id.unwrap().0}).to_string().into_bytes(),
+        json!({"id": proposal_id.0}).to_string().into_bytes(),
         NO_DEPOSIT,
         GAS_FOR_CHECK_PROPOSAL,
       )
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CHECK_PROPOSAL)
-          .after_get_proposal(id, dispute)
+          .after_get_proposal(id)
       )
       .into()
   }
