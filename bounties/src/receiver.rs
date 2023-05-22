@@ -17,7 +17,6 @@ impl FungibleTokenReceiver for BountiesContract {
   ) -> PromiseOrValue<U128> {
     let token_id = &env::predecessor_account_id();
     self.assert_that_caller_is_allowed(token_id);
-    // TODO: check for NFT token in sender_id
 
     let ft_message: FtMessage = serde_json::from_str(&msg).unwrap();
     match ft_message {
@@ -28,11 +27,7 @@ impl FungibleTokenReceiver for BountiesContract {
           amount,
           self.config.clone().to_config()
         );
-        bounty.assert_new_valid();
-        self.assert_bounty_category_is_correct(bounty.clone().metadata.category);
-        if bounty.clone().metadata.tags.is_some() {
-          self.assert_bounty_tags_are_correct(bounty.clone().metadata.tags.unwrap());
-        }
+        self.check_bounty(&bounty);
         let index = self.internal_add_bounty(bounty);
         log!(
           "Created new bounty for {} with index {}",

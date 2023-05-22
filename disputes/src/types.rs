@@ -20,6 +20,8 @@ pub const DEFAULT_DECISION_PERIOD: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
 pub const DEFAULT_ADD_PROPOSAL_BOND: U128 = U128(ONE_NEAR);
 
 pub const NO_DEPOSIT: Balance = 0;
+pub const MESSAGE_DISPUTE_IS_NOT_NEW: &str = "This action can be performed only for a dispute with the status 'New'";
+pub const MESSAGE_DISPUTE_IS_NOT_PENDING: &str = "This action can be performed only for a dispute with the status 'DecisionPending'";
 
 #[ext_contract(ext_bounty_contract)]
 trait ExtBountyContract {
@@ -35,9 +37,9 @@ pub struct Proposal {
   pub status: String,
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub enum DisputeStatus {
   New,
   DecisionPending,

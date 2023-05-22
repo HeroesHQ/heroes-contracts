@@ -133,10 +133,9 @@ impl DisputesContract {
   pub fn provide_arguments(&mut self, id: DisputeIndex, description: String) -> usize {
     assert_one_yocto();
     let dispute = self.get_dispute(id);
-    assert!(
-      matches!(dispute.status, DisputeStatus::New),
-      "This action can be performed only for a dispute with the status 'New'",
-    );
+    if dispute.status != DisputeStatus::New {
+      env::panic_str(MESSAGE_DISPUTE_IS_NOT_NEW);
+    }
     assert!(
       !self.is_argument_period_expired(&dispute),
       "The period for providing arguments has expired, now you need to perform an 'escalation' action or cancel the dispute",
@@ -157,30 +156,28 @@ impl DisputesContract {
   #[payable]
   pub fn cancel_dispute(&mut self, id: DisputeIndex) -> PromiseOrValue<()> {
     assert_one_yocto();
-    let mut dispute = self.get_dispute(id);
-    assert!(
-      matches!(dispute.status, DisputeStatus::New),
-      "This action can be performed only for a dispute with the status 'New'",
-    );
+    let dispute = self.get_dispute(id);
+    if dispute.status != DisputeStatus::New {
+      env::panic_str(MESSAGE_DISPUTE_IS_NOT_NEW);
+    }
 
     let success = matches!(dispute.get_side_of_dispute(), Side::ProjectOwner);
-    self.internal_send_result_of_dispute(id, &mut dispute, success, true)
+    self.internal_send_result_of_dispute(id, dispute.bounty_id, success, true)
   }
 
   #[payable]
   pub fn escalation(&mut self, id: DisputeIndex) -> PromiseOrValue<()> {
     assert_one_yocto();
-    let mut dispute = self.get_dispute(id);
-    assert!(
-      matches!(dispute.status, DisputeStatus::New),
-      "This action can be performed only for a dispute with the status 'New'",
-    );
+    let dispute = self.get_dispute(id);
+    if dispute.status != DisputeStatus::New {
+      env::panic_str(MESSAGE_DISPUTE_IS_NOT_NEW);
+    }
     assert!(
       self.is_argument_period_expired(&dispute),
       "Escalation of the dispute is possible only after the end of the argumentation period",
     );
 
-    self.internal_add_proposal(id, &mut dispute)
+    self.internal_add_proposal(id, dispute)
   }
 
   #[payable]
@@ -190,22 +187,21 @@ impl DisputesContract {
     success: bool,
   ) -> PromiseOrValue<()> {
     assert_one_yocto();
-    let mut dispute = self.get_dispute(id);
+    let dispute = self.get_dispute(id);
     assert_eq!(
       self.dispute_dao,
       env::predecessor_account_id(),
       "This method can only invoke a dispute resolution DAO contract"
     );
-    assert!(
-      matches!(dispute.status, DisputeStatus::DecisionPending),
-      "This action can be performed only for a dispute with the status 'DecisionPending'",
-    );
+    if dispute.status != DisputeStatus::DecisionPending {
+      env::panic_str(MESSAGE_DISPUTE_IS_NOT_PENDING);
+    }
     assert!(
       !self.is_decision_period_expired(&dispute),
       "The decision period is over, now you need to perform the 'finalize' action",
     );
 
-    self.internal_send_result_of_dispute(id, &mut dispute, success, false)
+    self.internal_send_result_of_dispute(id, dispute.bounty_id, success, false)
   }
 
   #[payable]
@@ -214,13 +210,12 @@ impl DisputesContract {
     id: DisputeIndex,
   ) -> PromiseOrValue<()> {
     assert_one_yocto();
-    let mut dispute = self.get_dispute(id);
-    assert!(
-      matches!(dispute.status, DisputeStatus::DecisionPending),
-      "This action can be performed only for a dispute with the status 'DecisionPending'",
-    );
+    let dispute = self.get_dispute(id);
+    if dispute.status != DisputeStatus::DecisionPending {
+      env::panic_str(MESSAGE_DISPUTE_IS_NOT_PENDING);
+    }
 
-    self.internal_get_proposal(id, &mut dispute)
+    self.internal_get_proposal(id, dispute.proposal_id.unwrap())
   }
 
   /// Can be used only during migrations when updating contract versions
