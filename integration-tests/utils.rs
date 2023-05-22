@@ -7,8 +7,8 @@ use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               DaoFeeStats, FeeStats, ReviewersParams, TokenDetails, ValidatorsDaoParams,
-               VersionedConfig};
+               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, ReviewersParams, TokenDetails,
+               ValidatorsDaoParams, VersionedConfig};
 use disputes::{Dispute, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
@@ -468,6 +468,7 @@ impl Env {
     claimer_approval: String,
     reviewers: Option<ReviewersParams>,
     total_amount: Option<U128>,
+    kyc_required: Option<KycConfig>,
   ) -> anyhow::Result<()> {
     let metadata = json!({
       "title": "Test bounty title",
@@ -509,6 +510,11 @@ impl Env {
             Some(r) => json!(r),
             _ => json!(null),
           },
+          "kyc_config": if kyc_required.is_some() {
+            kyc_required
+          } else {
+            Some(KycConfig::KycNotRequired)
+          }
         })
           .to_string(),
       }))
@@ -546,15 +552,17 @@ impl Env {
     bounties: &Contract,
     bounty_id: u64,
     description: String,
+    freelancer: Option<&Account>,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
-    let res = self.freelancer
+    let res = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "bounty_done")
       .args_json((bounty_id, description))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res, None).await?;
+    Self::assert_contract_call_result(res, expected_msg).await?;
     Ok(())
   }
 
@@ -606,6 +614,8 @@ impl Env {
     user: &Account,
     approve: bool,
     freelancer: Option<&Account>,
+    kyc_postponed: Option<DefermentOfKYC>,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let freelancer = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer };
     let res = user
@@ -613,13 +623,14 @@ impl Env {
       .args_json((
         bounty_id,
         freelancer.id(),
-        approve
+        approve,
+        kyc_postponed,
       ))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res, None).await?;
+    Self::assert_contract_call_result(res, expected_msg).await?;
     Ok(())
   }
 

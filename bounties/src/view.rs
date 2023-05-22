@@ -125,4 +125,8 @@ impl BountiesContract {
       .get(&dao_account_id)
       .unwrap_or_default()
   }
+
+  pub fn get_version() -> String {
+    "2.0.0".to_string()
+  }
 }

@@ -62,4 +62,8 @@ impl DisputesContract {
     let arguments = self.arguments.get(&id).expect("No arguments");
     arguments
   }
+
+  pub fn get_version() -> String {
+    "2.0.0".to_string()
+  }
 }
