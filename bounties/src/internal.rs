@@ -836,7 +836,9 @@ impl BountiesContract {
           PlaceOfCheckKYC::CreatingClaim { .. } => {
             kyc_verification_method == KycVerificationMethod::WhenCreatingClaim
           },
-          PlaceOfCheckKYC::DecisionOnClaim { is_kyc_delayed, .. } => is_kyc_delayed.is_none(),
+          PlaceOfCheckKYC::DecisionOnClaim { approve, is_kyc_delayed } => {
+            approve && is_kyc_delayed.is_none()
+          },
           _ => {
             claim.is_some()
               && claim.unwrap().is_kyc_delayed.is_some()
