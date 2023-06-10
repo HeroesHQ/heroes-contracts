@@ -254,38 +254,79 @@ impl BountiesContract {
   }
 
   #[payable]
-  pub fn update_configuration_dictionary_entries(
-    &mut self,
-    dict: ReferenceType,
-    entry: Option<String>,
-    entries: Option<Vec<String>>
-  ) {
+  pub fn create_category(&mut self, category: String) {
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
-    let (reference, entries) = self.get_configuration_dictionary(dict, entry, entries);
 
-    for entry in entries {
-      reference.push(entry);
-    }
+    assert!(!category.is_empty(), "The category cannot be empty");
+    let mut config = self.config.clone().to_config();
+    let category_entry = config.categories.get(category.as_str());
+    assert!(category_entry.is_none(), "Category already exists");
+
+    config.categories.insert(category, vec![]);
+    self.config = config.into();
   }
 
   #[payable]
-  pub fn remove_configuration_dictionary_entries(
-    &mut self,
-    dict: ReferenceType,
-    entry: Option<String>,
-    entries: Option<Vec<String>>
-  ) {
+  pub fn update_category(&mut self, category: String, new_category: String) {
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
-    let (reference, entries) = self.get_configuration_dictionary(dict, entry, entries);
 
-    for entry in entries {
-      let index = reference.iter().position(|e| e.clone() == entry);
-      if index.is_some() {
-        reference.remove(index.unwrap());
-      }
-    }
+    assert!(!new_category.is_empty(), "The new category cannot be empty");
+    let mut config = self.config.clone().to_config();
+    let category_entry = config.categories.get(category.as_str());
+    assert!(category_entry.is_some(), "Category not found");
+
+    config.categories.insert(new_category, category_entry.unwrap().to_vec());
+    self.config = config.into();
+    self.remove_category(category);
+  }
+
+  #[payable]
+  pub fn remove_category(&mut self, category: String) {
+    assert_one_yocto();
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+
+    let mut config = self.config.clone().to_config();
+    let category_entry = config.categories.get(category.as_str());
+    assert!(category_entry.is_some(), "Category not found");
+
+    config.categories.remove(&category);
+    self.config = config.into();
+  }
+
+  #[payable]
+  pub fn create_tag(&mut self, category: String, tag: String) {
+    assert_one_yocto();
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+
+    assert!(!tag.is_empty(), "The tag cannot be empty");
+    let mut config = self.config.clone().to_config();
+    let category_entry = config.categories.get(category.as_str());
+    assert!(category_entry.is_some(), "Category not found");
+    assert!(!category_entry.unwrap().contains(&tag), "Tag already exists");
+
+    let mut tags = category_entry.unwrap().clone();
+    tags.push(tag);
+    config.categories.insert(category, tags);
+    self.config = config.into();
+  }
+
+  #[payable]
+  pub fn remove_tag(&mut self, category: String, tag: String) {
+    assert_one_yocto();
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+
+    let mut config = self.config.clone().to_config();
+    let category_entry = config.categories.get(category.as_str());
+    assert!(category_entry.is_some(), "Category not found");
+    assert!(category_entry.unwrap().contains(&tag), "Tag not found");
+
+    let mut tags = category_entry.unwrap().clone();
+    let index = tags.iter().position(|t| t.clone() == tag).unwrap();
+    tags.remove(index);
+    config.categories.insert(category, tags);
+    self.config = config.into();
   }
 
   #[payable]

@@ -29,18 +29,19 @@ impl BountiesContract {
     claimers_whitelist.is_some() && claimers_whitelist.unwrap().contains(claimer)
   }
 
-  pub(crate) fn assert_bounty_category_is_correct(&self, category: String) {
-    assert!(
-      self.config.clone().to_config().categories.contains(&category),
-      "Invalid bounty type {}",
-      category
-    );
-  }
-
-  pub(crate) fn assert_bounty_tags_are_correct(&self, tags: Vec<String>) {
-    tags.into_iter().for_each(|t| {
-      assert!(self.config.clone().to_config().tags.contains(&t), "Invalid bounty tag {}", t);
-    });
+  pub(crate) fn assert_bounty_category_and_tags_are_correct(
+    &self,
+    category: String,
+    tags: Option<Vec<String>>
+  ) {
+    let config = self.config.clone().to_config();
+    let category_entry = config.categories.get(category.as_str());
+    assert!(category_entry.is_some(), "Unknown bounty type {}", category);
+    if tags.is_some() {
+      tags.unwrap().into_iter().for_each(|t| {
+        assert!(category_entry.unwrap().contains(&t), "Unknown bounty tag {}", t);
+      });
+    }
   }
 
   pub(crate) fn internal_add_bounty(&mut self, bounty: Bounty) -> BountyIndex {
@@ -762,28 +763,6 @@ impl BountiesContract {
     }
   }
 
-  pub(crate) fn get_configuration_dictionary(
-    &mut self,
-    dict: ReferenceType,
-    entry: Option<String>,
-    entries: Option<Vec<String>>
-  ) -> (&mut Vec<String>, Vec<String>) {
-    let config = self.config.to_config_mut();
-    let (name_entry, name_entries, reference) = match dict {
-      ReferenceType::Categories => { ("category", "categories", config.categories.as_mut()) },
-      _ => { ("tag", "tags", config.tags.as_mut()) },
-    };
-
-    let entries = if let Some(entries) = entries {
-      entries
-    } else {
-      assert!(entry.is_some(), "Expected either {} or {}", name_entry, name_entries);
-      vec![entry.unwrap()]
-    };
-
-    (reference, entries)
-  }
-
   pub(crate) fn internal_claimer_approval(
     &mut self,
     id: BountyIndex,
@@ -1094,10 +1073,10 @@ impl BountiesContract {
 
   pub(crate) fn check_bounty(&self, bounty: &Bounty) {
     bounty.assert_new_valid();
-    self.assert_bounty_category_is_correct(bounty.clone().metadata.category);
-    if bounty.clone().metadata.tags.is_some() {
-      self.assert_bounty_tags_are_correct(bounty.clone().metadata.tags.unwrap());
-    }
+    self.assert_bounty_category_and_tags_are_correct(
+      bounty.clone().metadata.category,
+      bounty.clone().metadata.tags
+    );
     match bounty.kyc_config {
       KycConfig::KycRequired { .. } => {
         assert!(

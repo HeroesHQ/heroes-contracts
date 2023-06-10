@@ -255,6 +255,53 @@ impl Env {
     Self::register_user(&test_token, bounties_contract_admin.id()).await?;
     Self::register_user(&test_token, validators_dao.id()).await?;
     Self::add_token(&test_token, &disputed_bounties, &bounties_contract_admin).await?;
+    Self::create_category(&bounties_contract_admin, &bounties, "Marketing".to_string()).await?;
+    Self::create_tag(
+      &bounties_contract_admin,
+      &bounties,
+      "Marketing".to_string(),
+      "Community".to_string()
+    ).await?;
+    Self::create_tag(
+      &bounties_contract_admin,
+      &bounties,
+      "Marketing".to_string(),
+      "NFT".to_string()
+    ).await?;
+    Self::create_category(
+      &bounties_contract_admin,
+      &disputed_bounties,
+      "Marketing".to_string()
+    ).await?;
+    Self::create_tag(
+      &bounties_contract_admin,
+      &disputed_bounties,
+      "Marketing".to_string(),
+      "Community".to_string()
+    ).await?;
+    Self::create_tag(
+      &bounties_contract_admin,
+      &disputed_bounties,
+      "Marketing".to_string(),
+      "NFT".to_string()
+    ).await?;
+    Self::create_category(
+      &bounties_contract_admin,
+      &disputed_bounties,
+      "Design".to_string()
+    ).await?;
+    Self::create_tag(
+      &bounties_contract_admin,
+      &disputed_bounties,
+      "Design".to_string(),
+      "Community".to_string()
+    ).await?;
+    Self::create_tag(
+      &bounties_contract_admin,
+      &disputed_bounties,
+      "Design".to_string(),
+      "web3".to_string()
+    ).await?;
 
     Ok(
       Self {
@@ -984,6 +1031,39 @@ impl Env {
     let res = self.validators_dao.as_account()
       .call(self.disputed_bounties.id(), "withdraw_validators_dao_fee")
       .args_json((self.test_token.id(),))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn create_category(
+    contract_admin: &Account,
+    bounties: &Contract,
+    category: String
+  ) -> anyhow::Result<()> {
+    let res = contract_admin
+      .call(bounties.id(), "create_category")
+      .args_json((category,))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn create_tag(
+    contract_admin: &Account,
+    bounties: &Contract,
+    category: String,
+    tag: String
+  ) -> anyhow::Result<()> {
+    let res = contract_admin
+      .call(bounties.id(), "create_tag")
+      .args_json((category, tag,))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()

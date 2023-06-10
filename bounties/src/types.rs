@@ -2,6 +2,7 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::json_types::{Base64VecU8, U128, U64};
 use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, ext_contract, AccountId, Balance, BorshStorageKey, Gas, ONE_NEAR};
+use std::collections::HashMap;
 
 pub type BountyIndex = u64;
 
@@ -35,10 +36,6 @@ pub const DEFAULT_PENALTY_PLATFORM_FEE_PERCENTAGE: u32 = 0;
 pub const DEFAULT_PENALTY_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 0;
 
 pub const NO_DEPOSIT: Balance = 0;
-pub const INITIAL_CATEGORIES: [&str; 4] = ["Marketing", "Development", "Design", "Other"];
-pub const INITIAL_TAGS: [&str; 18] = ["API", "Blockchain", "Community", "CSS", "DAO", "dApp",
-  "DeFi", "Design", "Documentation", "HTML", "Javascript", "NFT", "React", "Rust", "Smart contract",
-  "Typescript", "UI/UX", "web3"];
 
 #[ext_contract(ext_ft_contract)]
 trait ExtFtContract {
@@ -752,13 +749,6 @@ impl BountyAction {
   }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
-#[serde(crate = "near_sdk::serde")]
-pub enum ReferenceType {
-  Categories,
-  Tags,
-}
-
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
@@ -783,7 +773,6 @@ impl ConfigCreate {
       penalty_platform_fee_percentage: self.penalty_platform_fee_percentage,
       penalty_validators_dao_fee_percentage: self.penalty_validators_dao_fee_percentage,
       categories: config.categories,
-      tags: config.tags,
     }
   }
 }
@@ -791,7 +780,7 @@ impl ConfigCreate {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct Config {
+pub struct ConfigV1 {
   pub bounty_claim_bond: U128,
   pub bounty_forgiveness_period: U64,
   pub period_for_opening_dispute: U64,
@@ -803,18 +792,18 @@ pub struct Config {
   pub penalty_validators_dao_fee_percentage: u32,
 }
 
-impl Config {
-  fn default_categories() -> Vec<String> {
-    let mut categories_set = vec![];
-    categories_set.extend(INITIAL_CATEGORIES.into_iter().map(|t| t.into()));
-    categories_set
-  }
-
-  fn default_tags() -> Vec<String> {
-    let mut tags_set = vec![];
-    tags_set.extend(INITIAL_TAGS.into_iter().map(|t| t.into()));
-    tags_set
-  }
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct Config {
+  pub bounty_claim_bond: U128,
+  pub bounty_forgiveness_period: U64,
+  pub period_for_opening_dispute: U64,
+  pub categories: HashMap<String, Vec<String>>,
+  pub platform_fee_percentage: u32,
+  pub validators_dao_fee_percentage: u32,
+  pub penalty_platform_fee_percentage: u32,
+  pub penalty_validators_dao_fee_percentage: u32,
 }
 
 impl Default for Config {
@@ -823,8 +812,7 @@ impl Default for Config {
       bounty_claim_bond: DEFAULT_BOUNTY_CLAIM_BOND,
       bounty_forgiveness_period: DEFAULT_BOUNTY_FORGIVENESS_PERIOD,
       period_for_opening_dispute: DEFAULT_PERIOD_FOR_OPENING_DISPUTE,
-      categories: Config::default_categories(),
-      tags: Config::default_tags(),
+      categories: HashMap::default(),
       platform_fee_percentage: DEFAULT_PLATFORM_FEE_PERCENTAGE,
       validators_dao_fee_percentage: DEFAULT_VALIDATORS_DAO_FEE_PERCENTAGE,
       penalty_platform_fee_percentage: DEFAULT_PENALTY_PLATFORM_FEE_PERCENTAGE,
@@ -836,19 +824,28 @@ impl Default for Config {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub enum VersionedConfig {
+  V1(ConfigV1),
   Current(Config),
 }
 
 impl VersionedConfig {
-  pub fn to_config(self) -> Config {
-    match self {
-      VersionedConfig::Current(config) => config,
+  fn upgrade_v1_to_v2(config: ConfigV1) -> Config {
+    Config {
+      bounty_claim_bond: config.bounty_claim_bond,
+      bounty_forgiveness_period: config.bounty_forgiveness_period,
+      period_for_opening_dispute: config.period_for_opening_dispute,
+      categories: HashMap::default(),
+      platform_fee_percentage: config.platform_fee_percentage,
+      validators_dao_fee_percentage: config.validators_dao_fee_percentage,
+      penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
+      penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
     }
   }
 
-  pub fn to_config_mut(&mut self) -> &mut Config {
+  pub fn to_config(self) -> Config {
     match self {
       VersionedConfig::Current(config) => config,
+      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v1_to_v2(config_v1),
     }
   }
 }
@@ -857,6 +854,7 @@ impl From<VersionedConfig> for Config {
   fn from(value: VersionedConfig) -> Self {
     match value {
       VersionedConfig::Current(config) => config,
+      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v1_to_v2(config_v1),
     }
   }
 }
