@@ -465,7 +465,7 @@ impl Env {
     &self,
     bounties: &Contract,
     deadline: Value,
-    claimer_approval: String,
+    claimer_approval: Value,
     reviewers: Option<ReviewersParams>,
     total_amount: Option<U128>,
     kyc_required: Option<KycConfig>,

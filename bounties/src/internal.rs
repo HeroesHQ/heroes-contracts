@@ -860,6 +860,8 @@ impl BountiesContract {
       ClaimerApproval::MultipleClaims => true,
       ClaimerApproval::ApprovalWithWhitelist =>
         !self.is_claimer_whitelisted(bounty.owner, claimer),
+      ClaimerApproval::ApprovalByWhitelist { claimers_whitelist } =>
+        !claimers_whitelist.contains(claimer),
       _ => false
     }
   }

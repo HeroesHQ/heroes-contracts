@@ -60,6 +60,7 @@ pub struct BountiesContract {
 
   /// Whitelist accounts for which claims do not require approval.
   /// Map of whitelists for each bounty owner account.
+  /// [deprecated]
   pub claimers_whitelist: LookupMap<AccountId, Vec<AccountId>>,
 
   /// Total platform fees map per token ID
@@ -155,6 +156,7 @@ impl BountiesContract {
     );
   }
 
+  /// [deprecated]
   #[payable]
   pub fn add_to_claimers_whitelist(
     &mut self,
@@ -170,6 +172,7 @@ impl BountiesContract {
     }
   }
 
+  /// [deprecated]
   #[payable]
   pub fn remove_from_claimers_whitelist(
     &mut self,
@@ -330,6 +333,12 @@ impl BountiesContract {
       "Bounty wrong deadline"
     );
     bounty.assert_account_is_not_owner_or_reviewer(sender_id.clone());
+    assert!(
+      !bounty.claimer_approval.is_approval_done_through_whitelist() ||
+        !self.is_approval_required(bounty.clone(), &sender_id),
+      "{} is not whitelisted",
+      sender_id
+    );
 
     let place_of_check = PlaceOfCheckKYC::CreatingClaim { deadline, description };
     if self.is_kyc_check_required(bounty, None, None, place_of_check.clone()) {
