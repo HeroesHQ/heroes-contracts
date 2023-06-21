@@ -15,6 +15,7 @@ impl BountiesContract {
     self.admins_whitelist.to_vec()
   }
 
+  /// [deprecated]
   pub fn get_claimers_whitelist(&self, account_id: AccountId) -> Vec<AccountId> {
     self.claimers_whitelist.get(&account_id).unwrap_or_default()
   }
