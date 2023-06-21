@@ -185,9 +185,19 @@ pub struct ContactDetails {
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum ClaimerApproval {
-  ApprovalWithWhitelist,
+  ApprovalWithWhitelist, /// [deprecated]
   MultipleClaims,
   WithoutApproval,
+  ApprovalByWhitelist { claimers_whitelist: Vec<AccountId> },
+}
+
+impl ClaimerApproval {
+  pub fn is_approval_done_through_whitelist(&self) -> bool {
+    match self.clone() {
+      Self::ApprovalByWhitelist { .. } => true,
+      _ => false
+    }
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]

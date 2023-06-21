@@ -36,6 +36,7 @@ async fn main() -> anyhow::Result<()> {
   test_kyc_whitelist_flow(&e).await?;
   test_use_commissions(&e).await?;
   test_creating_bounty_for_disabled_token(&e).await?;
+  test_approval_by_whitelist_flow(&e).await?;
   Ok(())
 }
 
@@ -48,7 +49,7 @@ async fn test_create_bounty(e: &Env) -> anyhow::Result<()> {
   e.add_bounty(
     &e.bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "WithoutApproval".to_string(),
+    json!("WithoutApproval"),
     Some(e.reviewer_is_dao().await?),
     None,
     None,
@@ -198,7 +199,7 @@ async fn test_claimer_give_up(e: &Env) -> anyhow::Result<()> {
   e.add_bounty(
     &e.bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "WithoutApproval".to_string(),
+    json!("WithoutApproval"),
     None,
     None,
     None,
@@ -314,7 +315,7 @@ async fn test_claim_result_reject_by_validators_dao(e: &Env) -> anyhow::Result<(
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "WithoutApproval".to_string(),
+    json!("WithoutApproval"),
     Some(e.reviewer_is_dao().await?),
     None,
     None,
@@ -747,7 +748,7 @@ async fn test_open_dispute_and_approve_by_dispute_dao(e: &Env) -> anyhow::Result
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "WithoutApproval".to_string(),
+    json!("WithoutApproval"),
     Some(e.reviewer_is_dao().await?),
     None,
     None,
@@ -854,7 +855,7 @@ async fn test_statistics_for_bounty_claim_approval(e: &Env) -> anyhow::Result<()
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "WithoutApproval".to_string(),
+    json!("WithoutApproval"),
     Some(e.reviewer_is_dao().await?),
     None,
     None,
@@ -932,7 +933,7 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "MultipleClaims".to_string(),
+    json!("MultipleClaims"),
     None,
     None,
     None,
@@ -1109,7 +1110,7 @@ async fn test_rejection_and_approval_of_claimers_by_validators_dao(e: &Env) -> a
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "MultipleClaims".to_string(),
+    json!("MultipleClaims"),
     Some(e.reviewer_is_dao().await?),
     None,
     None,
@@ -1227,7 +1228,7 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "MultipleClaims".to_string(),
+    json!("MultipleClaims"),
     Some(e.more_reviewers(&reviewer).await?),
     None,
     None,
@@ -1333,7 +1334,7 @@ async fn test_bounty_cancel(e: &Env) -> anyhow::Result<()> {
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "MultipleClaims".to_string(),
+    json!("MultipleClaims"),
     None,
     None,
     None,
@@ -1411,7 +1412,7 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "WithoutApproval".to_string(),
+    json!("WithoutApproval"),
     None,
     None,
     None,
@@ -1525,7 +1526,7 @@ async fn test_claimers_whitelist_flow(e: &Env) -> anyhow::Result<()> {
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "ApprovalWithWhitelist".to_string(),
+    json!("ApprovalWithWhitelist"),
     None,
     None,
     None,
@@ -1589,7 +1590,7 @@ async fn test_claimers_whitelist_flow(e: &Env) -> anyhow::Result<()> {
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "ApprovalWithWhitelist".to_string(),
+    json!("ApprovalWithWhitelist"),
     None,
     None,
     None,
@@ -1653,7 +1654,7 @@ async fn test_kyc_whitelist_flow(e: &Env) -> anyhow::Result<()> {
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "WithoutApproval".to_string(),
+    json!("WithoutApproval"),
     None,
     Some(U128((BOUNTY_AMOUNT.0 + PLATFORM_FEE.0) * 2)),
     Some(KycConfig::default())
@@ -1714,7 +1715,7 @@ async fn test_kyc_whitelist_flow(e: &Env) -> anyhow::Result<()> {
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "MultipleClaims".to_string(),
+    json!("MultipleClaims"),
     None,
     None,
     Some(KycConfig::KycRequired {
@@ -1826,7 +1827,7 @@ async fn test_use_commissions(e: &Env) -> anyhow::Result<()> {
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "WithoutApproval".to_string(),
+    json!("WithoutApproval"),
     Some(e.reviewer_is_dao().await?),
     None,
     None,
@@ -2010,7 +2011,7 @@ async fn test_creating_bounty_for_disabled_token(e: &Env) -> anyhow::Result<()> 
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
-    "WithoutApproval".to_string(),
+    json!("WithoutApproval"),
     None,
     None,
     None,
@@ -2025,6 +2026,91 @@ async fn test_creating_bounty_for_disabled_token(e: &Env) -> anyhow::Result<()> 
   // Bounty has not been created
   assert_eq!(last_bounty_id, 13);
 
+  e.update_token(
+    &e.disputed_bounties,
+    &TokenDetails {
+      enabled: true,
+      min_amount_for_kyc: Some(MIN_AMOUNT_FOR_KYC),
+    },
+  ).await?;
+
   println!("      Passed ✅ Test - creating a bounty for a disabled token");
+  Ok(())
+}
+
+async fn test_approval_by_whitelist_flow(e: &Env) -> anyhow::Result<()> {
+  let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
+  assert_eq!(last_bounty_id, 13);
+
+  let freelancer = e.add_account("freelancer10").await?;
+  let freelancer2 = e.add_account("freelancer11").await?;
+
+  e.add_bounty(
+    &e.disputed_bounties,
+    json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
+    json!(
+      {
+        "ApprovalByWhitelist": json!(
+          {
+            "claimers_whitelist": vec![
+              freelancer2.id().to_string()
+            ]
+          }
+        )
+      }
+    ),
+    None,
+    None,
+    None,
+  ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([14, 10, 5, 3, 1, 1, 4, 2]),
+    Some([14, 5, 1, 24, 16, 3, 5, 4, 2]),
+    None,
+  ).await?;
+
+  let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
+  assert_eq!(last_bounty_id, 14);
+
+  let bounty_id = 13;
+
+  let deadline = U64(1_000_000_000 * 60 * 60 * 24 * 2);
+
+  e.add_to_claimers_whitelist(&freelancer2).await?;
+
+  e.bounty_claim(
+    &e.disputed_bounties,
+    bounty_id,
+    deadline,
+    "Test claim".to_string(),
+    Some(&freelancer),
+    Some("freelancer10.test.near is not whitelisted"),
+  ).await?;
+  e.assert_reputation_stat_values_eq(
+    None,
+    Some([14, 5, 1, 24, 16, 3, 5, 4, 2]),
+    Some(freelancer.id()),
+  ).await?;
+
+  e.bounty_claim(
+    &e.disputed_bounties,
+    bounty_id,
+    deadline,
+    "Test claim 2".to_string(),
+    Some(&freelancer2),
+    None,
+  ).await?;
+  e.assert_reputation_stat_values_eq(
+    Some([1, 1, 0, 0, 0, 0, 0, 0]),
+    Some([14, 5, 1, 25, 17, 3, 5, 4, 2]),
+    Some(freelancer2.id()),
+  ).await?;
+
+  let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
+  assert_eq!(bounty_claims.len(), 1);
+  assert_eq!(bounty_claims[0].0.to_string(), freelancer2.id().to_string());
+  assert_eq!(bounty_claims[0].1.status, ClaimStatus::InProgress);
+
+  println!("      Passed ✅ Test - approval by whitelist flow");
   Ok(())
 }
