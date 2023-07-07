@@ -915,6 +915,7 @@ mod tests {
       status: BountyStatus::New,
       created_at: U64::from(0),
       kyc_config: KycConfig::KycNotRequired,
+      multitasking: None,
     };
     contract.bounties.insert(&bounty_index, &bounty.clone().into());
     contract.account_bounties.insert(owner, &vec![bounty_index]);
