@@ -192,12 +192,16 @@ pub enum ClaimerApproval {
   MultipleClaims,
   WithoutApproval,
   ApprovalByWhitelist { claimers_whitelist: Vec<AccountId> },
+  WhitelistWithApprovals { claimers_whitelist: Vec<AccountId> },
 }
 
 impl ClaimerApproval {
-  pub fn is_approval_done_through_whitelist(&self) -> bool {
+  pub fn not_allowed_to_create_claim(&self, account_id: &AccountId) -> bool {
     match self.clone() {
-      Self::ApprovalByWhitelist { .. } => true,
+      Self::ApprovalByWhitelist { claimers_whitelist } =>
+        !claimers_whitelist.contains(account_id),
+      Self::WhitelistWithApprovals { claimers_whitelist } =>
+        !claimers_whitelist.contains(account_id),
       _ => false
     }
   }
