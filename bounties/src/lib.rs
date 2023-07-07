@@ -334,8 +334,7 @@ impl BountiesContract {
     );
     bounty.assert_account_is_not_owner_or_reviewer(sender_id.clone());
     assert!(
-      !bounty.claimer_approval.is_approval_done_through_whitelist() ||
-        !self.is_approval_required(bounty.clone(), &sender_id),
+      !bounty.claimer_approval.not_allowed_to_create_claim(&sender_id),
       "{} is not whitelisted",
       sender_id
     );
