@@ -509,6 +509,7 @@ impl BountiesContract {
             matches!(claims[claim_idx].status, ClaimStatus::Completed),
             "The claim status does not allow approval of the execution result"
           );
+          bounty.assert_postpaid_is_ready();
 
           let result = if matches!(action, BountyAction::ClaimApproved { .. }) {
             self.internal_bounty_payout(id, receiver_id)
@@ -726,6 +727,71 @@ impl BountiesContract {
   }
 
   #[payable]
+  pub fn bounty_create(&mut self, bounty_create: BountyCreate, token_id: AccountId) {
+    assert_one_yocto();
+
+    let sender_id = env::predecessor_account_id();
+    self.assert_that_token_is_allowed(&token_id);
+
+    self.internal_create_bounty(bounty_create, &sender_id, &token_id, U128(0));
+  }
+
+  #[payable]
+  pub fn mark_as_paid(&mut self, id: BountyIndex) {
+    assert_one_yocto();
+
+    let sender_id = env::predecessor_account_id();
+    let mut bounty = self.get_bounty(id);
+
+    assert!(
+      bounty.postpaid.is_some() &&
+        matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract),
+      "This method is allowed to be used only when paying outside the contract"
+    );
+    assert!(
+      matches!(bounty.status, BountyStatus::New) ||
+        matches!(bounty.status, BountyStatus::Claimed),
+      "Bounty status does not allow this action"
+    );
+    assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
+    assert!(bounty.amount.0 > 0, "The price of the bounty has not yet been determined");
+    assert!(bounty.payment_at.is_none(), "This action has already been performed");
+
+    bounty.payment_at = Some(U64::from(env::block_timestamp()));
+    self.bounties.insert(&id, &bounty.into());
+  }
+
+  #[payable]
+  pub fn confirm_payment(&mut self, id: BountyIndex) {
+    assert_one_yocto();
+
+    let sender_id = env::predecessor_account_id();
+    let mut bounty = self.get_bounty(id);
+
+    assert!(
+      bounty.postpaid.is_some() &&
+        matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract),
+      "This method is allowed to be used only when paying outside the contract"
+    );
+    assert!(
+      matches!(bounty.status, BountyStatus::Claimed),
+      "Bounty status does not allow this action"
+    );
+    let (receiver_id, claims, claim_idx) = self.internal_find_active_claim(id);
+    assert_eq!(receiver_id, sender_id, "Only the owner of the claim is allowed this action");
+    assert!(
+      matches!(claims[claim_idx].status, ClaimStatus::InProgress) ||
+        matches!(claims[claim_idx].status, ClaimStatus::Completed),
+      "Claim status does not allow this action"
+    );
+    assert!(bounty.payment_at.is_some(), "Payment by the bounty owner has not yet been confirmed");
+    assert!(bounty.payment_confirmed_at.is_none(), "This action has already been performed");
+
+    bounty.payment_confirmed_at = Some(U64::from(env::block_timestamp()));
+    self.bounties.insert(&id, &bounty.into());
+  }
+
+  #[payable]
   pub fn withdraw_platform_fee(&mut self, token_id: AccountId) -> PromiseOrValue<()> {
     assert_one_yocto();
     assert_eq!(
@@ -914,6 +980,9 @@ mod tests {
       status: BountyStatus::New,
       created_at: U64::from(0),
       kyc_config: KycConfig::KycNotRequired,
+      postpaid: None,
+      payment_at: None,
+      payment_confirmed_at: None,
     };
     contract.bounties.insert(&bounty_index, &bounty.clone().into());
     contract.account_bounties.insert(owner, &vec![bounty_index]);

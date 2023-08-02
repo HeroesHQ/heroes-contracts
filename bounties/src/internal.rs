@@ -1,7 +1,7 @@
 use crate::*;
 
 impl BountiesContract {
-  pub(crate) fn assert_that_caller_is_allowed(&self, account_id: &AccountId) {
+  pub(crate) fn assert_that_token_is_allowed(&self, account_id: &AccountId) {
     let token_details = self.tokens.get(account_id);
     assert!(
       token_details.is_some(),
@@ -60,6 +60,87 @@ impl BountiesContract {
       ReputationActionKind::BountyCreated
     );
     id
+  }
+
+  pub(crate) fn internal_create_bounty(
+    &mut self,
+    bounty_create: BountyCreate,
+    payer_id: &AccountId,
+    token_id: &AccountId,
+    amount: U128
+  ) {
+    let bounty = bounty_create.to_bounty(
+      payer_id,
+      token_id,
+      amount,
+      self.config.clone().to_config()
+    );
+    self.check_bounty(&bounty);
+    let index = self.internal_add_bounty(bounty);
+    log!(
+          "Created new bounty for {} with index {}",
+          payer_id,
+          index
+        );
+  }
+
+  pub(crate) fn internal_bounty_deposit(
+    &mut self,
+    id: BountyIndex,
+    payer_id: &AccountId,
+    token_id: &AccountId,
+    amount: U128
+  ) {
+    let mut bounty = self.get_bounty(id);
+    let deposit_amount = amount.0;
+
+    assert!(bounty.postpaid.is_some(), "Bounty does not support postpaid");
+    assert!(
+      matches!(bounty.status, BountyStatus::New) ||
+        matches!(bounty.status, BountyStatus::Claimed),
+      "Bounty status does not allow adding a deposit"
+    );
+    assert_eq!(&bounty.owner, payer_id, "Only the owner of the bounty can make a deposit");
+    assert_eq!(&bounty.token, token_id, "The transfer token does not match the bounty token");
+    assert!(deposit_amount > 0, "The amount can only be a positive number");
+    if matches!(bounty.status, BountyStatus::Claimed) {
+      let (_, claims, claim_idx) = self.internal_find_active_claim(id);
+      assert!(
+        matches!(claims[claim_idx].status, ClaimStatus::InProgress) ||
+          matches!(claims[claim_idx].status, ClaimStatus::Completed),
+        "Claim status does not allow adding a deposit"
+      );
+    }
+
+    let config = self.config.clone().to_config();
+    let (percentage_platform, percentage_dao) = Bounty::get_percentage_of_commissions(
+      config,
+      bounty.reviewers.clone()
+    );
+
+    let bounty_amount: u128;
+    let platform_fee: u128;
+    let dao_fee: u128;
+
+    match bounty.postpaid.clone().unwrap() {
+      Postpaid::PaymentViaContract => {
+        bounty_amount = deposit_amount * 100_000 / (100_000 + percentage_platform + percentage_dao );
+        platform_fee = bounty_amount * percentage_platform / 100_000;
+        dao_fee = deposit_amount - bounty_amount - platform_fee;
+      },
+      Postpaid::PaymentOutsideContract => {
+        bounty_amount = deposit_amount * 100_000 / (percentage_platform + percentage_dao );
+        platform_fee = bounty_amount * percentage_platform / 100_000;
+        dao_fee = deposit_amount - platform_fee;
+        bounty.payment_at = None;
+        bounty.payment_confirmed_at = None;
+      }
+    }
+
+    bounty.amount = U128(bounty.amount.0 + bounty_amount);
+    bounty.platform_fee = U128(bounty.platform_fee.0 + platform_fee);
+    bounty.dao_fee = U128(bounty.dao_fee.0 + dao_fee);
+    self.bounties.insert(&id, &bounty.into());
   }
 
   pub(crate) fn internal_total_fees_receiving_funds(

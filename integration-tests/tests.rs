@@ -109,6 +109,9 @@ async fn test_create_bounty(e: &Env) -> anyhow::Result<()> {
       status: BountyStatus::New,
       created_at: bounty.created_at,
       kyc_config: KycConfig::KycNotRequired,
+      postpaid: None,
+      payment_at: None,
+      payment_confirmed_at: None,
     }
   );
 
@@ -1512,6 +1515,9 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
       status: BountyStatus::New,
       created_at: bounty.created_at,
       kyc_config: KycConfig::KycNotRequired,
+      postpaid: None,
+      payment_at: None,
+      payment_confirmed_at: None,
     }
   );
 

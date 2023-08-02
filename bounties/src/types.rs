@@ -309,24 +309,34 @@ pub enum PlaceOfCheckKYC {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum Postpaid {
+  PaymentViaContract,
+  PaymentOutsideContract,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
 pub struct BountyCreate {
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
   pub claimer_approval: ClaimerApproval,
   pub reviewers: Option<ReviewersParams>,
   pub kyc_config: Option<KycConfig>,
+  pub postpaid: Option<Postpaid>,
 }
 
 impl BountyCreate {
   pub fn to_bounty(&self, payer_id: &AccountId, token_id: &AccountId, amount: U128, config: Config) -> Bounty {
-    let percentage_platform: u128 = config.platform_fee_percentage.into();
-    let percentage_dao: u128 = if self.reviewers.is_some() {
-      match self.reviewers.clone().unwrap() {
-        ReviewersParams::ValidatorsDao { .. } =>
-          config.validators_dao_fee_percentage.into(),
-        _ => 0
+    let (percentage_platform, percentage_dao) = Bounty::get_percentage_of_commissions(
+      config,
+      if self.reviewers.is_some() {
+        Some(self.reviewers.clone().unwrap().to_reviewers())
+      } else {
+        None
       }
-    } else { 0 };
+    );
+
     let bounty_amount = amount.0 * 100_000 / (100_000 + percentage_platform + percentage_dao );
     let platform_fee = bounty_amount * percentage_platform / 100_000;
     let dao_fee = amount.0 - bounty_amount - platform_fee;
@@ -353,6 +363,9 @@ impl BountyCreate {
       status: BountyStatus::New,
       created_at: U64::from(env::block_timestamp()),
       kyc_config,
+      postpaid: self.postpaid.clone(),
+      payment_at: None,
+      payment_confirmed_at: None,
     }
   }
 }
@@ -397,6 +410,24 @@ pub struct BountyV1 {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyV2 {
+  pub token: AccountId,
+  pub amount: U128,
+  pub platform_fee: U128,
+  pub dao_fee: U128,
+  pub metadata: BountyMetadata,
+  pub deadline: Deadline,
+  pub claimer_approval: ClaimerApproval,
+  pub reviewers: Option<Reviewers>,
+  pub owner: AccountId,
+  pub status: BountyStatus,
+  pub created_at: U64,
+  pub kyc_config: KycConfig,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Bounty {
   pub token: AccountId,
   pub amount: U128,
@@ -410,6 +441,9 @@ pub struct Bounty {
   pub status: BountyStatus,
   pub created_at: U64,
   pub kyc_config: KycConfig,
+  pub postpaid: Option<Postpaid>,
+  pub payment_at: Option<U64>,
+  pub payment_confirmed_at: Option<U64>,
 }
 
 impl Bounty {
@@ -433,9 +467,14 @@ impl Bounty {
       );
     }
     let bounty_amount = self.amount.0;
+    let bounty_amount_is_correct = if self.postpaid.is_some() {
+      bounty_amount == 0
+    } else {
+      bounty_amount > 0
+    };
     assert!(
-      bounty_amount > 0,
-      "Expected bounty amount to be positive",
+      bounty_amount_is_correct,
+      "The bounty amount is incorrect",
     );
     match self.deadline {
       Deadline::DueDate { due_date } =>
@@ -551,18 +590,50 @@ impl Bounty {
       }
     }
   }
+
+  pub fn get_percentage_of_commissions(
+    config: Config,
+    reviewers: Option<Reviewers>
+  ) -> (u128, u128) {
+    let percentage_platform: u128 = config.platform_fee_percentage.into();
+    let percentage_dao: u128 = if reviewers.is_some() {
+      match reviewers.unwrap() {
+        Reviewers::ValidatorsDao { .. } =>
+          config.validators_dao_fee_percentage.into(),
+        _ => 0
+      }
+    } else { 0 };
+    (percentage_platform, percentage_dao)
+  }
+
+  pub fn assert_postpaid_is_ready(&self) {
+    if self.postpaid.is_some() {
+      match self.postpaid.clone().unwrap() {
+        Postpaid::PaymentViaContract => assert!(
+          self.amount.0 > 0,
+          "The price of the bounty has not yet been determined"
+        ),
+        _ => assert!(
+          self.amount.0 > 0 && self.payment_at.is_some() &&
+            self.payment_confirmed_at.is_some(),
+          "No payment confirmation"
+        )
+      }
+    }
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub enum VersionedBounty {
   V1(BountyV1),
+  V2(BountyV2),
   Current(Bounty),
 }
 
 impl VersionedBounty {
-  fn upgrade_v1_to_v2(bounty: BountyV1) -> Bounty {
-    Bounty {
+  fn upgrade_v1_to_v2(bounty: BountyV1) -> BountyV2 {
+    BountyV2 {
       token: bounty.token,
       amount: bounty.amount,
       platform_fee: bounty.platform_fee,
@@ -578,10 +649,34 @@ impl VersionedBounty {
     }
   }
 
+  fn upgrade_v2_to_v3(bounty: BountyV2) -> Bounty {
+    Bounty {
+      token: bounty.token,
+      amount: bounty.amount,
+      platform_fee: bounty.platform_fee,
+      dao_fee: bounty.dao_fee,
+      metadata: bounty.metadata,
+      deadline: bounty.deadline,
+      claimer_approval: bounty.claimer_approval,
+      reviewers: bounty.reviewers,
+      owner: bounty.owner,
+      status: bounty.status,
+      created_at: bounty.created_at,
+      kyc_config: bounty.kyc_config,
+      postpaid: None,
+      payment_at: None,
+      payment_confirmed_at: None,
+    }
+  }
+
   pub fn to_bounty(self) -> Bounty {
     match self {
       VersionedBounty::Current(bounty) => bounty,
-      VersionedBounty::V1(bounty_v1) => VersionedBounty::upgrade_v1_to_v2(bounty_v1),
+      VersionedBounty::V1(bounty_v1) =>
+        VersionedBounty::upgrade_v2_to_v3(
+          VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+        ),
+      VersionedBounty::V2(bounty_v2) => VersionedBounty::upgrade_v2_to_v3(bounty_v2),
     }
   }
 }
@@ -590,7 +685,11 @@ impl From<VersionedBounty> for Bounty {
   fn from(value: VersionedBounty) -> Self {
     match value {
       VersionedBounty::Current(bounty) => bounty,
-      VersionedBounty::V1(bounty_v1) => VersionedBounty::upgrade_v1_to_v2(bounty_v1),
+      VersionedBounty::V1(bounty_v1) =>
+        VersionedBounty::upgrade_v2_to_v3(
+          VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+        ),
+      VersionedBounty::V2(bounty_v2) => VersionedBounty::upgrade_v2_to_v3(bounty_v2),
     }
   }
 }

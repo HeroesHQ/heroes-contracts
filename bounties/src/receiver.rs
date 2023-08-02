@@ -5,6 +5,7 @@ use crate::*;
 #[serde(untagged)]
 pub enum FtMessage {
   BountyCreate(BountyCreate),
+  BountyDeposit(BountyIndex),
 }
 
 #[near_bindgen]
@@ -16,24 +17,15 @@ impl FungibleTokenReceiver for BountiesContract {
     msg: String,
   ) -> PromiseOrValue<U128> {
     let token_id = &env::predecessor_account_id();
-    self.assert_that_caller_is_allowed(token_id);
+    self.assert_that_token_is_allowed(token_id);
 
     let ft_message: FtMessage = serde_json::from_str(&msg).unwrap();
     match ft_message {
       FtMessage::BountyCreate(bounty_create) => {
-        let bounty = bounty_create.to_bounty(
-          &sender_id,
-          token_id,
-          amount,
-          self.config.clone().to_config()
-        );
-        self.check_bounty(&bounty);
-        let index = self.internal_add_bounty(bounty);
-        log!(
-          "Created new bounty for {} with index {}",
-          sender_id,
-          index
-        );
+        self.internal_create_bounty(bounty_create, &sender_id, token_id, amount);
+      },
+      FtMessage::BountyDeposit(id) => {
+        self.internal_bounty_deposit(id, &sender_id, token_id, amount);
       }
     }
 
