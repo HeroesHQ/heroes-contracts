@@ -140,7 +140,8 @@ impl BountiesContract {
     bounty.amount = U128(bounty.amount.0 + bounty_amount);
     bounty.platform_fee = U128(bounty.platform_fee.0 + platform_fee);
     bounty.dao_fee = U128(bounty.dao_fee.0 + dao_fee);
-    self.bounties.insert(&id, &bounty.into());
+    self.bounties.insert(&id, &bounty.clone().into());
+    self.internal_total_fees_receiving_funds(&bounty);
   }
 
   pub(crate) fn internal_total_fees_receiving_funds(
