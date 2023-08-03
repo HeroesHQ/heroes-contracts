@@ -303,7 +303,10 @@ impl BountiesContract {
         config.penalty_validators_dao_fee_percentage as u128 /
         config.platform_fee_percentage as u128
     } else { 0 };
-    let amount = bounty.amount.0 + bounty.platform_fee.0 - penalty_platform_fee +
+    let bounty_amount = if bounty.postpaid.is_some() &&
+      matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract)
+    { 0 } else { bounty.amount.0 };
+    let amount = bounty_amount + bounty.platform_fee.0 - penalty_platform_fee +
       bounty.dao_fee.0 - penalty_validators_dao_fee;
     U128(amount)
   }
