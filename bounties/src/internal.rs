@@ -479,12 +479,20 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_bounty_payout(
-    &self,
+    &mut self,
     id: BountyIndex,
     claimer: AccountId,
   ) -> PromiseOrValue<()> {
     let bounty = self.get_bounty(id);
     self.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty);
+
+    if bounty.postpaid.is_some() &&
+      matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract)
+    {
+      self.internal_bounty_completion(id, claimer);
+      return PromiseOrValue::Value(())
+    }
+
     ext_ft_contract::ext(bounty.token.clone())
       .with_attached_deposit(ONE_YOCTO)
       .with_static_gas(GAS_FOR_FT_TRANSFER)
