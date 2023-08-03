@@ -988,7 +988,7 @@ mod tests {
     contract.account_bounties.insert(owner, &vec![bounty_index]);
     contract.last_bounty_id = bounty_index.clone() + 1;
     add_token(contract);
-    contract.internal_total_fees_receiving_funds(&bounty);
+    contract.internal_total_fees_receiving_funds(&bounty, bounty.platform_fee, bounty.dao_fee);
 
     bounty_index
   }

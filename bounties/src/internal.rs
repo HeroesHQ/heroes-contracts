@@ -53,7 +53,7 @@ impl BountiesContract {
     indices.push(id);
     self.internal_save_account_bounties(&bounty.owner, indices);
     self.last_bounty_id += 1;
-    self.internal_total_fees_receiving_funds(&bounty);
+    self.internal_total_fees_receiving_funds(&bounty, bounty.platform_fee, bounty.dao_fee);
     self.internal_update_statistic(
       None,
       Some(bounty.owner.clone()),
@@ -141,21 +141,23 @@ impl BountiesContract {
     bounty.platform_fee = U128(bounty.platform_fee.0 + platform_fee);
     bounty.dao_fee = U128(bounty.dao_fee.0 + dao_fee);
     self.bounties.insert(&id, &bounty.clone().into());
-    self.internal_total_fees_receiving_funds(&bounty);
+    self.internal_total_fees_receiving_funds(&bounty, U128(platform_fee), U128(dao_fee));
   }
 
   pub(crate) fn internal_total_fees_receiving_funds(
     &mut self,
     bounty: &Bounty,
+    platform_fee: U128,
+    dao_fee: U128,
   ) {
     let mut total_fees = self.total_fees.get(&bounty.token).unwrap();
-    total_fees.receiving_commission(&bounty.platform_fee);
+    total_fees.receiving_commission(&platform_fee);
     self.total_fees.insert(&bounty.token, &total_fees);
 
     let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
     if dao_fee_stats.is_some() {
       let (dao_account_id, mut stats, stats_idx) = dao_fee_stats.unwrap();
-      stats[stats_idx].fee_stats.receiving_commission(&bounty.dao_fee);
+      stats[stats_idx].fee_stats.receiving_commission(&dao_fee);
       self.total_validators_dao_fees.insert(&dao_account_id, &stats);
     }
   }
