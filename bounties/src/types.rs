@@ -608,16 +608,16 @@ impl Bounty {
 
   pub fn assert_postpaid_is_ready(&self) {
     if self.postpaid.is_some() {
+      assert!(
+        self.amount.0 > 0,
+        "The price of the bounty has not yet been determined"
+      );
       match self.postpaid.clone().unwrap() {
-        Postpaid::PaymentViaContract => assert!(
-          self.amount.0 > 0,
-          "The price of the bounty has not yet been determined"
-        ),
-        _ => assert!(
-          self.amount.0 > 0 && self.payment_at.is_some() &&
-            self.payment_confirmed_at.is_some(),
+        Postpaid::PaymentOutsideContract => assert!(
+          self.payment_at.is_some() && self.payment_confirmed_at.is_some(),
           "No payment confirmation"
-        )
+        ),
+        _ => {}
       }
     }
   }
