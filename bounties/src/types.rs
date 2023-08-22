@@ -337,9 +337,9 @@ impl BountyCreate {
       }
     );
 
-    let bounty_amount = amount.0 * 100_000 / (100_000 + percentage_platform + percentage_dao );
-    let platform_fee = bounty_amount * percentage_platform / 100_000;
-    let dao_fee = amount.0 - bounty_amount - platform_fee;
+    let platform_fee = amount.0 * percentage_platform / (100_000 + percentage_dao);
+    let dao_fee = amount.0 * percentage_dao / (100_000 + percentage_dao);
+    let bounty_amount = amount.0 - platform_fee - dao_fee;
     let kyc_config = if self.kyc_config.is_some() {
       self.kyc_config.clone().unwrap()
     } else {

@@ -25,9 +25,9 @@ pub const DISPUTES_WASM: &str = "./disputes/res/disputes.wasm";
 pub const REPUTATION_WASM: &str = "./reputation/res/reputation.wasm";
 pub const KYC_WHITELIST_WASM: &str = "./kyc-whitelist/res/kyc_whitelist.wasm";
 
-pub const BOUNTY_AMOUNT: U128 = U128(10u128.pow(18)); // 1 TFT (Test fungible token)
-pub const PLATFORM_FEE: U128 = U128(10u128.pow(17)); // 0.1 TFT
-pub const DAO_FEE: U128 = U128(10u128.pow(17)); // 0.1 TFT
+pub const BOUNTY_AMOUNT: U128 = U128(99 * 10u128.pow(16)); // 0.99 TFT (Test fungible token)
+pub const PLATFORM_FEE: U128 = U128(11 * 10u128.pow(16)); // 0.11 TFT
+pub const DAO_FEE: U128 = U128(11 * 10u128.pow(16)); // 0.11 TFT
 pub const MIN_AMOUNT_FOR_KYC: U128 = U128(2 * 10u128.pow(18)); // 2 TFT
 pub const MAX_DEADLINE: U64 = U64(604_800_000_000_000);
 
