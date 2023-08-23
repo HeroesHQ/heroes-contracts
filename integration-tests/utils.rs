@@ -471,9 +471,9 @@ impl Env {
       amount = total_amount.unwrap().0;
     } else {
       amount = if postpaid.is_some() &&
-        matches!(postpaid.unwrap(), Postpaid::PaymentOutsideContract)
-      { 0 } else { BOUNTY_AMOUNT.0 } + PLATFORM_FEE.0;
-      if reviewers.is_some() {
+        matches!(postpaid.clone().unwrap(), Postpaid::PaymentViaContract)
+      { 0 } else { BOUNTY_AMOUNT.0 + if postpaid.is_none() { PLATFORM_FEE.0 } else { 0 } };
+      if reviewers.is_some() && postpaid.is_none() {
         amount += match reviewers.clone().unwrap() {
           Reviewers::ValidatorsDao { .. } => DAO_FEE.0,
           _ => 0,
@@ -492,6 +492,7 @@ impl Env {
     total_amount: Option<U128>,
     kyc_required: Option<KycConfig>,
     postpaid: Option<Postpaid>,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let metadata = json!({
       "title": "Test bounty title",
@@ -551,13 +552,14 @@ impl Env {
         .args_json(json!({
           "bounty_create": bounty_create,
           "token_id": self.test_token.id(),
+          "amount": if amount == 0 { json!(null) } else { json!(U128(amount)) },
         }))
         .max_gas()
         .deposit(ONE_YOCTO)
         .transact()
         .await?;
     }
-    Self::assert_contract_call_result(res, None).await?;
+    Self::assert_contract_call_result(res, expected_msg).await?;
     Ok(())
   }
 
@@ -565,10 +567,9 @@ impl Env {
     &self,
     bounties: &Contract,
     bounty_id: u64,
-    total_amount: Option<U128>,
+    total_amount: U128,
   ) -> anyhow::Result<()> {
-    let bounty = get_bounty(bounties, bounty_id).await?;
-    let amount = Self::get_bounty_amount(total_amount, bounty.reviewers, bounty.postpaid).await?;
+    let amount = total_amount.0;
 
     let res = self.project_owner
       .call(self.test_token.id(), "ft_transfer_call")
@@ -1011,13 +1012,12 @@ impl Env {
     Ok(proposal)
   }
 
-  pub async fn add_to_claimers_whitelist(
+  pub async fn add_to_owners_whitelist(
     &self,
-    freelancer: &Account,
   ) -> anyhow::Result<()> {
-    let res = self.project_owner
-      .call(self.disputed_bounties.id(), "add_to_claimers_whitelist")
-      .args_json((freelancer.id(),))
+    let res = self.bounties_contract_admin
+      .call(self.disputed_bounties.id(), "add_to_owners_whitelist")
+      .args_json((self.project_owner.id(), Option::<bool>::None))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -1026,13 +1026,12 @@ impl Env {
     Ok(())
   }
 
-  pub async fn remove_from_claimers_whitelist(
+  pub async fn remove_from_owners_whitelist(
     &self,
-    freelancer: &Account,
   ) -> anyhow::Result<()> {
-    let res = self.project_owner
-      .call(self.disputed_bounties.id(), "remove_from_claimers_whitelist")
-      .args_json((freelancer.id(),))
+    let res = self.bounties_contract_admin
+      .call(self.disputed_bounties.id(), "remove_from_owners_whitelist")
+      .args_json((self.project_owner.id(), Option::<bool>::None))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
