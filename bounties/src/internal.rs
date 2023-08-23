@@ -537,7 +537,9 @@ impl BountiesContract {
     claim_idx: usize,
     claims: &mut Vec<BountyClaim>,
   ) {
-    if self.dispute_contract.is_some() {
+    if self.dispute_contract.is_some() && (bounty.postpaid.is_none() ||
+      matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentViaContract))
+    {
       claims[claim_idx].status = ClaimStatus::Rejected;
       claims[claim_idx].rejected_timestamp = Some(env::block_timestamp().into());
       self.internal_save_claims(&claimer, &claims);

@@ -509,7 +509,7 @@ impl BountiesContract {
             matches!(claims[claim_idx].status, ClaimStatus::Completed),
             "The claim status does not allow approval of the execution result"
           );
-          bounty.assert_postpaid_is_ready();
+          bounty.assert_postpaid_is_ready(matches!(action, BountyAction::ClaimApproved { .. }));
 
           let result = if matches!(action, BountyAction::ClaimApproved { .. }) {
             self.internal_bounty_payout(id, receiver_id)
@@ -701,14 +701,6 @@ impl BountiesContract {
           matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract),
         "The amount of the bounty cannot be changed"
       );
-      if matches!(bounty.status, BountyStatus::Claimed) {
-        let (_, claims, claim_idx) = self.internal_find_active_claim(id.clone());
-        assert!(
-          matches!(claims[claim_idx].status, ClaimStatus::InProgress) ||
-            matches!(claims[claim_idx].status, ClaimStatus::Completed),
-          "Claim status does not allow update amount"
-        );
-      }
       bounty.amount = bounty_update.amount.unwrap();
       bounty.payment_at = None;
       bounty.payment_confirmed_at = None;
@@ -788,12 +780,6 @@ impl BountiesContract {
     assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
     assert!(bounty.amount.0 > 0, "The price of the bounty has not yet been determined");
     assert!(bounty.payment_at.is_none(), "This action has already been performed");
-    let (_, claims, claim_idx) = self.internal_find_active_claim(id);
-    assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::InProgress) ||
-        matches!(claims[claim_idx].status, ClaimStatus::Completed),
-      "Claim status does not allow this action"
-    );
 
     bounty.payment_at = Some(U64::from(env::block_timestamp()));
     self.bounties.insert(&id, &bounty.into());
@@ -815,13 +801,8 @@ impl BountiesContract {
       matches!(bounty.status, BountyStatus::Claimed),
       "Bounty status does not allow this action"
     );
-    let (receiver_id, claims, claim_idx) = self.internal_find_active_claim(id);
+    let (receiver_id, _, _) = self.internal_find_active_claim(id);
     assert_eq!(receiver_id, sender_id, "Only the owner of the claim is allowed this action");
-    assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::InProgress) ||
-        matches!(claims[claim_idx].status, ClaimStatus::Completed),
-      "Claim status does not allow this action"
-    );
     assert!(bounty.payment_at.is_some(), "Payment by the bounty owner has not yet been confirmed");
     assert!(bounty.payment_confirmed_at.is_none(), "This action has already been performed");
 

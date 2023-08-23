@@ -615,7 +615,7 @@ impl Bounty {
     (percentage_platform, percentage_dao)
   }
 
-  pub fn assert_postpaid_is_ready(&self) {
+  pub fn assert_postpaid_is_ready(&self, approve: bool) {
     if self.postpaid.is_some() {
       assert!(
         self.amount.0 > 0,
@@ -623,7 +623,7 @@ impl Bounty {
       );
       match self.postpaid.clone().unwrap() {
         Postpaid::PaymentOutsideContract => assert!(
-          self.payment_at.is_some() && self.payment_confirmed_at.is_some(),
+          !approve || self.payment_at.is_some() && self.payment_confirmed_at.is_some(),
           "No payment confirmation"
         ),
         _ => {}
