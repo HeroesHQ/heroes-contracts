@@ -58,10 +58,10 @@ pub struct BountiesContract {
   /// KYC whitelist contract (optional)
   pub kyc_whitelist_contract: Option<AccountId>,
 
-  /// Whitelist accounts for which claims do not require approval.
-  /// Map of whitelists for each bounty owner account.
-  /// [deprecated]
-  pub claimers_whitelist: LookupMap<AccountId, Vec<AccountId>>,
+  /// Whitelist accounts that can generate postpaid bounties.
+  /// A map whose keys are whitelist members, the values of map elements are not used
+  /// (deprecated part of the old structure)
+  pub owners_whitelist: LookupMap<AccountId, Vec<AccountId>>,
 
   /// Total platform fees map per token ID
   pub total_fees: LookupMap<AccountId, FeeStats>,
@@ -109,7 +109,7 @@ impl BountiesContract {
       reputation_contract,
       dispute_contract,
       kyc_whitelist_contract,
-      claimers_whitelist: LookupMap::new(StorageKey::ClaimersWhitelist),
+      owners_whitelist: LookupMap::new(StorageKey::OwnersWhitelist),
       total_fees: LookupMap::new(StorageKey::TotalFees),
       total_validators_dao_fees: LookupMap::new(StorageKey::TotalValidatorsDaoFees),
       recipient_of_platform_fee,
@@ -156,39 +156,39 @@ impl BountiesContract {
     );
   }
 
-  /// [deprecated]
   #[payable]
-  pub fn add_to_claimers_whitelist(
+  pub fn add_to_owners_whitelist(
     &mut self,
-    claimer: AccountId,
+    account_id: Option<AccountId>,
+    account_ids: Option<Vec<AccountId>>,
   ) {
     assert_one_yocto();
-    let owner = env::predecessor_account_id();
-    self.account_bounties.get(&owner).expect("No bounties found");
-    let mut whitelist = self.claimers_whitelist.get(&owner).unwrap_or_default();
-    if !whitelist.contains(&claimer) {
-      whitelist.push(claimer);
-      self.claimers_whitelist.insert(&owner, &whitelist);
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+    let account_ids = if let Some(account_ids) = account_ids {
+      account_ids
+    } else {
+      vec![account_id.expect("Expected either account_id or account_ids")]
+    };
+    for account_id in &account_ids {
+      self.owners_whitelist.insert(account_id, &vec![]);
     }
   }
 
-  /// [deprecated]
   #[payable]
-  pub fn remove_from_claimers_whitelist(
+  pub fn remove_from_owners_whitelist(
     &mut self,
-    claimer: AccountId,
+    account_id: Option<AccountId>,
+    account_ids: Option<Vec<AccountId>>,
   ) {
     assert_one_yocto();
-    let owner = env::predecessor_account_id();
-    let mut whitelist = self.claimers_whitelist.get(&owner).expect("Not a bounty owner");
-    let index = whitelist.iter().position(|c| c.clone() == claimer);
-    if index.is_some() {
-      whitelist.remove(index.unwrap());
-      if whitelist.is_empty() {
-        self.claimers_whitelist.remove(&owner);
-      } else {
-        self.claimers_whitelist.insert(&owner, &whitelist);
-      }
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+    let account_ids = if let Some(account_ids) = account_ids {
+      account_ids
+    } else {
+      vec![account_id.expect("Expected either account_id or account_ids")]
+    };
+    for account_id in &account_ids {
+      self.owners_whitelist.remove(&account_id);
     }
   }
 
@@ -691,9 +691,32 @@ impl BountiesContract {
       };
       changed = true;
     }
+    if bounty_update.amount.is_some() {
+      assert!(
+        bounty_update.amount.unwrap().0 > 0,
+        "The bounty amount cannot be zero"
+      );
+      assert!(
+        bounty.postpaid.is_some() &&
+          matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract),
+        "The amount of the bounty cannot be changed"
+      );
+      if matches!(bounty.status, BountyStatus::Claimed) {
+        let (_, claims, claim_idx) = self.internal_find_active_claim(id.clone());
+        assert!(
+          matches!(claims[claim_idx].status, ClaimStatus::InProgress) ||
+            matches!(claims[claim_idx].status, ClaimStatus::Completed),
+          "Claim status does not allow update amount"
+        );
+      }
+      bounty.amount = bounty_update.amount.unwrap();
+      bounty.payment_at = None;
+      bounty.payment_confirmed_at = None;
+      changed = true;
+    }
 
     assert!(changed, "No changes found");
-    self.check_bounty(&bounty);
+    self.check_bounty(&bounty, false);
     self.bounties.insert(&id, &bounty.into());
   }
 
@@ -727,13 +750,23 @@ impl BountiesContract {
   }
 
   #[payable]
-  pub fn bounty_create(&mut self, bounty_create: BountyCreate, token_id: AccountId) {
+  pub fn bounty_create(
+    &mut self,
+    bounty_create: BountyCreate,
+    token_id: AccountId,
+    amount: Option<U128>
+  ) {
     assert_one_yocto();
 
     let sender_id = env::predecessor_account_id();
+    assert!(bounty_create.postpaid.is_some(), "The postpaid parameter is incorrect");
+    assert!(
+      self.is_owner_whitelisted(sender_id.clone()),
+      "You are not allowed to create postpaid bounties"
+    );
     self.assert_that_token_is_allowed(&token_id);
 
-    self.internal_create_bounty(bounty_create, &sender_id, &token_id, U128(0));
+    self.internal_create_bounty(bounty_create, &sender_id, &token_id, amount.unwrap_or(U128(0)));
   }
 
   #[payable]
@@ -749,13 +782,18 @@ impl BountiesContract {
       "This method is allowed to be used only when paying outside the contract"
     );
     assert!(
-      matches!(bounty.status, BountyStatus::New) ||
-        matches!(bounty.status, BountyStatus::Claimed),
+      matches!(bounty.status, BountyStatus::Claimed),
       "Bounty status does not allow this action"
     );
     assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
     assert!(bounty.amount.0 > 0, "The price of the bounty has not yet been determined");
     assert!(bounty.payment_at.is_none(), "This action has already been performed");
+    let (_, claims, claim_idx) = self.internal_find_active_claim(id);
+    assert!(
+      matches!(claims[claim_idx].status, ClaimStatus::InProgress) ||
+        matches!(claims[claim_idx].status, ClaimStatus::Completed),
+      "Claim status does not allow this action"
+    );
 
     bounty.payment_at = Some(U64::from(env::block_timestamp()));
     self.bounties.insert(&id, &bounty.into());

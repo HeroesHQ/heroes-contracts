@@ -20,15 +20,6 @@ impl BountiesContract {
     );
   }
 
-  pub(crate) fn is_claimer_whitelisted(
-    &self,
-    bounty_owner: AccountId,
-    claimer: &AccountId
-  ) -> bool {
-    let claimers_whitelist = self.claimers_whitelist.get(&bounty_owner);
-    claimers_whitelist.is_some() && claimers_whitelist.unwrap().contains(claimer)
-  }
-
   pub(crate) fn assert_bounty_category_is_correct(&self, category: String) {
     assert!(
       self.config.clone().to_config().categories.contains(&category),
@@ -75,7 +66,7 @@ impl BountiesContract {
       amount,
       self.config.clone().to_config()
     );
-    self.check_bounty(&bounty);
+    self.check_bounty(&bounty, true);
     let index = self.internal_add_bounty(bounty);
     log!(
           "Created new bounty for {} with index {}",
@@ -94,7 +85,11 @@ impl BountiesContract {
     let mut bounty = self.get_bounty(id);
     let deposit_amount = amount.0;
 
-    assert!(bounty.postpaid.is_some(), "Bounty does not support postpaid");
+    assert!(
+      bounty.postpaid.is_some() &&
+        matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentViaContract),
+      "Bounty does not support postpaid"
+    );
     assert!(
       matches!(bounty.status, BountyStatus::New) ||
         matches!(bounty.status, BountyStatus::Claimed),
@@ -112,36 +107,8 @@ impl BountiesContract {
       );
     }
 
-    let config = self.config.clone().to_config();
-    let (percentage_platform, percentage_dao) = Bounty::get_percentage_of_commissions(
-      config,
-      bounty.reviewers.clone()
-    );
-
-    let bounty_amount: u128;
-    let platform_fee: u128;
-    let dao_fee: u128;
-
-    match bounty.postpaid.clone().unwrap() {
-      Postpaid::PaymentViaContract => {
-        bounty_amount = deposit_amount * 100_000 / (100_000 + percentage_platform + percentage_dao );
-        platform_fee = bounty_amount * percentage_platform / 100_000;
-        dao_fee = deposit_amount - bounty_amount - platform_fee;
-      },
-      Postpaid::PaymentOutsideContract => {
-        bounty_amount = deposit_amount * 100_000 / (percentage_platform + percentage_dao );
-        platform_fee = bounty_amount * percentage_platform / 100_000;
-        dao_fee = deposit_amount - platform_fee;
-        bounty.payment_at = None;
-        bounty.payment_confirmed_at = None;
-      }
-    }
-
-    bounty.amount = U128(bounty.amount.0 + bounty_amount);
-    bounty.platform_fee = U128(bounty.platform_fee.0 + platform_fee);
-    bounty.dao_fee = U128(bounty.dao_fee.0 + dao_fee);
+    bounty.amount = U128(bounty.amount.0 + deposit_amount);
     self.bounties.insert(&id, &bounty.clone().into());
-    self.internal_total_fees_receiving_funds(&bounty, U128(platform_fee), U128(dao_fee));
   }
 
   pub(crate) fn internal_total_fees_receiving_funds(
@@ -953,8 +920,6 @@ impl BountiesContract {
   pub(crate) fn is_approval_required(&self, bounty: Bounty, claimer: &AccountId) -> bool {
     match bounty.claimer_approval {
       ClaimerApproval::MultipleClaims => true,
-      ClaimerApproval::ApprovalWithWhitelist =>
-        !self.is_claimer_whitelisted(bounty.owner, claimer),
       ClaimerApproval::ApprovalByWhitelist { claimers_whitelist } =>
         !claimers_whitelist.contains(claimer),
       ClaimerApproval::WhitelistWithApprovals { .. } => true,
@@ -1190,8 +1155,8 @@ impl BountiesContract {
     (bounty, claims, index)
   }
 
-  pub(crate) fn check_bounty(&self, bounty: &Bounty) {
-    bounty.assert_new_valid();
+  pub(crate) fn check_bounty(&self, bounty: &Bounty, new: bool) {
+    bounty.assert_valid(new);
     self.assert_bounty_category_is_correct(bounty.clone().metadata.category);
     if bounty.clone().metadata.tags.is_some() {
       self.assert_bounty_tags_are_correct(bounty.clone().metadata.tags.unwrap());

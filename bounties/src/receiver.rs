@@ -22,6 +22,7 @@ impl FungibleTokenReceiver for BountiesContract {
     let ft_message: FtMessage = serde_json::from_str(&msg).unwrap();
     match ft_message {
       FtMessage::BountyCreate(bounty_create) => {
+        assert!(bounty_create.postpaid.is_none(), "The postpaid parameter is incorrect");
         self.internal_create_bounty(bounty_create, &sender_id, token_id, amount);
       },
       FtMessage::BountyDeposit(id) => {

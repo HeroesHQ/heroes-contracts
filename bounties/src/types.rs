@@ -185,7 +185,6 @@ pub struct ContactDetails {
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum ClaimerApproval {
-  ApprovalWithWhitelist, /// [deprecated]
   MultipleClaims,
   WithoutApproval,
   ApprovalByWhitelist { claimers_whitelist: Vec<AccountId> },
@@ -337,9 +336,16 @@ impl BountyCreate {
       }
     );
 
-    let platform_fee = amount.0 * percentage_platform / (100_000 + percentage_dao);
-    let dao_fee = amount.0 * percentage_dao / (100_000 + percentage_dao);
+    let platform_fee = if self.postpaid.is_none() {
+      amount.0 * percentage_platform / (100_000 + percentage_dao)
+    } else { 0 };
+
+    let dao_fee = if self.postpaid.is_none() {
+      amount.0 * percentage_dao / (100_000 + percentage_dao)
+    } else { 0 };
+
     let bounty_amount = amount.0 - platform_fee - dao_fee;
+
     let kyc_config = if self.kyc_config.is_some() {
       self.kyc_config.clone().unwrap()
     } else {
@@ -377,6 +383,7 @@ pub struct BountyUpdate {
   pub deadline: Option<Deadline>,
   pub claimer_approval: Option<ClaimerApproval>,
   pub reviewers: Option<ReviewersParams>,
+  pub amount: Option<U128>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -447,7 +454,7 @@ pub struct Bounty {
 }
 
 impl Bounty {
-  pub fn assert_new_valid(&self) {
+  pub fn assert_valid(&self, new: bool) {
     assert!(
       !self.metadata.title.is_empty(),
       "The title cannot be empty"
@@ -467,13 +474,15 @@ impl Bounty {
       );
     }
     let bounty_amount = self.amount.0;
-    let bounty_amount_is_correct = if self.postpaid.is_some() {
+    let bounty_amount_is_correct = if self.postpaid.is_some() &&
+      matches!(self.postpaid.clone().unwrap(), Postpaid::PaymentViaContract)
+    {
       bounty_amount == 0
     } else {
       bounty_amount > 0
     };
     assert!(
-      bounty_amount_is_correct,
+      !new || bounty_amount_is_correct,
       "The bounty amount is incorrect",
     );
     match self.deadline {
@@ -1066,7 +1075,7 @@ pub(crate) enum StorageKey {
   Bounties,
   BountyClaimerAccounts,
   BountyClaimers,
-  ClaimersWhitelist,
+  OwnersWhitelist,
   Tokens,
   TotalFees,
   TotalValidatorsDaoFees,
