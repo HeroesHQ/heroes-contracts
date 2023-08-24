@@ -925,6 +925,8 @@ impl BountiesContract {
       ClaimerApproval::ApprovalByWhitelist { claimers_whitelist } =>
         !claimers_whitelist.contains(claimer),
       ClaimerApproval::WhitelistWithApprovals { .. } => true,
+      ClaimerApproval::ApprovalWithWhitelist =>
+        env::panic_str("ApprovalWithWhitelist is not supported"),
       _ => false
     }
   }

@@ -185,6 +185,7 @@ pub struct ContactDetails {
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum ClaimerApproval {
+  ApprovalWithWhitelist, /// [deprecated]
   MultipleClaims,
   WithoutApproval,
   ApprovalByWhitelist { claimers_whitelist: Vec<AccountId> },
@@ -198,6 +199,8 @@ impl ClaimerApproval {
         !claimers_whitelist.contains(account_id),
       Self::WhitelistWithApprovals { claimers_whitelist } =>
         !claimers_whitelist.contains(account_id),
+      Self::ApprovalWithWhitelist =>
+        env::panic_str("ApprovalWithWhitelist is not supported"),
       _ => false
     }
   }
