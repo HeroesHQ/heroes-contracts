@@ -34,6 +34,14 @@ impl BountiesContract {
     });
   }
 
+  pub(crate) fn assert_bounty_currency_is_correct(&self, currency: String) {
+    assert!(
+      self.config.clone().to_config().currencies.contains(&currency),
+      "Invalid currency {}",
+      currency
+    );
+  }
+
   pub(crate) fn internal_add_bounty(&mut self, bounty: Bounty) -> BountyIndex {
     let id = self.last_bounty_id;
     self.bounties.insert(&id, &bounty.clone().into());
@@ -57,7 +65,7 @@ impl BountiesContract {
     &mut self,
     bounty_create: BountyCreate,
     payer_id: &AccountId,
-    token_id: &AccountId,
+    token_id: Option<AccountId>,
     amount: U128
   ) {
     let bounty = bounty_create.to_bounty(
@@ -66,7 +74,7 @@ impl BountiesContract {
       amount,
       self.config.clone().to_config()
     );
-    self.check_bounty(&bounty, true);
+    self.check_bounty(&bounty);
     let index = self.internal_add_bounty(bounty);
     log!(
           "Created new bounty for {} with index {}",
@@ -75,51 +83,18 @@ impl BountiesContract {
         );
   }
 
-  pub(crate) fn internal_bounty_deposit(
-    &mut self,
-    id: BountyIndex,
-    payer_id: &AccountId,
-    token_id: &AccountId,
-    amount: U128
-  ) {
-    let mut bounty = self.get_bounty(id);
-    let deposit_amount = amount.0;
-
-    assert!(
-      bounty.postpaid.is_some() &&
-        matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentViaContract),
-      "Bounty does not support postpaid"
-    );
-    assert!(
-      matches!(bounty.status, BountyStatus::New) ||
-        matches!(bounty.status, BountyStatus::Claimed),
-      "Bounty status does not allow adding a deposit"
-    );
-    assert_eq!(&bounty.owner, payer_id, "Only the owner of the bounty can make a deposit");
-    assert_eq!(&bounty.token, token_id, "The transfer token does not match the bounty token");
-    assert!(deposit_amount > 0, "The amount can only be a positive number");
-    if matches!(bounty.status, BountyStatus::Claimed) {
-      let (_, claims, claim_idx) = self.internal_find_active_claim(id);
-      assert!(
-        matches!(claims[claim_idx].status, ClaimStatus::InProgress) ||
-          matches!(claims[claim_idx].status, ClaimStatus::Completed),
-        "Claim status does not allow adding a deposit"
-      );
-    }
-
-    bounty.amount = U128(bounty.amount.0 + deposit_amount);
-    self.bounties.insert(&id, &bounty.clone().into());
-  }
-
   pub(crate) fn internal_total_fees_receiving_funds(
     &mut self,
     bounty: &Bounty,
     platform_fee: U128,
     dao_fee: U128,
   ) {
-    let mut total_fees = self.total_fees.get(&bounty.token).unwrap();
-    total_fees.receiving_commission(&platform_fee);
-    self.total_fees.insert(&bounty.token, &total_fees);
+    if bounty.token.is_some() {
+      let token_id = &bounty.token.clone().unwrap();
+      let mut total_fees = self.total_fees.get(token_id).unwrap();
+      total_fees.receiving_commission(&platform_fee);
+      self.total_fees.insert(token_id, &total_fees);
+    }
 
     let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
     if dao_fee_stats.is_some() {
@@ -133,11 +108,11 @@ impl BountiesContract {
     &self,
     bounty: &Bounty,
   ) -> Option<(AccountId, Vec<DaoFeeStats>, usize)> {
-    if bounty.reviewers.is_some() {
+    if bounty.reviewers.is_some() && bounty.token.is_some() {
       match bounty.reviewers.clone().unwrap() {
         Reviewers::ValidatorsDao { validators_dao } => {
           let mut stats = self.get_total_validators_dao_fees(validators_dao.clone().account_id);
-          let stats_idx = Self::internal_find_dao_fee_stats(bounty.clone().token, &mut stats);
+          let stats_idx = Self::internal_find_dao_fee_stats(bounty.token.clone().unwrap(), &mut stats);
           return Some((validators_dao.account_id, stats, stats_idx));
         },
         _ => {}
@@ -207,8 +182,11 @@ impl BountiesContract {
     &self,
     bounty: &Bounty,
   ) {
-    let total_fees = self.total_fees.get(&bounty.token).unwrap();
-    total_fees.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty.platform_fee);
+    if bounty.token.is_some() {
+      let token_id = &bounty.token.clone().unwrap();
+      let total_fees = self.total_fees.get(token_id).unwrap();
+      total_fees.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty.platform_fee);
+    }
     let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
     if dao_fee_stats.is_some() {
       let (_, stats, stats_idx) = dao_fee_stats.unwrap();
@@ -221,14 +199,17 @@ impl BountiesContract {
     &mut self,
     bounty: &Bounty,
   ) {
-    let mut total_fees = self.total_fees.get(&bounty.token).unwrap();
     let config = self.config.clone().to_config();
-    total_fees.refund_commission(
-      &bounty.platform_fee,
-      config.platform_fee_percentage,
-      config.penalty_platform_fee_percentage
-    );
-    self.total_fees.insert(&bounty.token, &total_fees);
+    if bounty.token.is_some() {
+      let token_id = &bounty.token.clone().unwrap();
+      let mut total_fees = self.total_fees.get(token_id).unwrap();
+      total_fees.refund_commission(
+        &bounty.platform_fee,
+        config.platform_fee_percentage,
+        config.penalty_platform_fee_percentage
+      );
+      self.total_fees.insert(token_id, &total_fees);
+    }
 
     let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
     if dao_fee_stats.is_some() {
@@ -246,9 +227,12 @@ impl BountiesContract {
     &mut self,
     bounty: &Bounty,
   ) {
-    let mut total_fees = self.total_fees.get(&bounty.token).unwrap();
-    total_fees.commission_unlocking(&bounty.platform_fee);
-    self.total_fees.insert(&bounty.token, &total_fees);
+    if bounty.token.is_some() {
+      let token_id = &bounty.token.clone().unwrap();
+      let mut total_fees = self.total_fees.get(token_id).unwrap();
+      total_fees.commission_unlocking(&bounty.platform_fee);
+      self.total_fees.insert(token_id, &total_fees);
+    }
 
     let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
     if dao_fee_stats.is_some() {
@@ -262,6 +246,14 @@ impl BountiesContract {
     &self,
     bounty: &Bounty,
   ) -> U128 {
+    if bounty.postpaid.is_some() {
+      return
+        if matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. }) {
+          U128(0)
+        } else {
+          bounty.amount
+        };
+    }
     let config = self.config.clone().to_config();
     let penalty_platform_fee: u128 = if config.platform_fee_percentage != 0 {
       bounty.platform_fee.0 *
@@ -273,10 +265,7 @@ impl BountiesContract {
         config.penalty_validators_dao_fee_percentage as u128 /
         config.platform_fee_percentage as u128
     } else { 0 };
-    let bounty_amount = if bounty.postpaid.is_some() &&
-      matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract)
-    { 0 } else { bounty.amount.0 };
-    let amount = bounty_amount + bounty.platform_fee.0 - penalty_platform_fee +
+    let amount = bounty.amount.0 + bounty.platform_fee.0 - penalty_platform_fee +
       bounty.dao_fee.0 - penalty_validators_dao_fee;
     U128(amount)
   }
@@ -460,13 +449,13 @@ impl BountiesContract {
     self.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty);
 
     if bounty.postpaid.is_some() &&
-      matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract)
+      matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. })
     {
       self.internal_bounty_completion(id, claimer);
       return PromiseOrValue::Value(())
     }
 
-    ext_ft_contract::ext(bounty.token.clone())
+    ext_ft_contract::ext(bounty.token.clone().unwrap())
       .with_attached_deposit(ONE_YOCTO)
       .with_static_gas(GAS_FOR_FT_TRANSFER)
       .ft_transfer(
@@ -483,14 +472,19 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_refund_bounty_amount(
-    &self,
+    &mut self,
     id: BountyIndex,
-    bounty: Bounty,
+    mut bounty: Bounty,
   ) -> PromiseOrValue<()> {
     self.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty);
     let full_amount = self.internal_get_full_bounty_amount(&bounty);
 
-    ext_ft_contract::ext(bounty.token.clone())
+    if full_amount.0 == 0 {
+      self.internal_change_status_and_save_bounty(&id, &mut bounty, BountyStatus::Canceled);
+      return PromiseOrValue::Value(())
+    }
+
+    ext_ft_contract::ext(bounty.token.clone().unwrap())
       .with_attached_deposit(ONE_YOCTO)
       .with_static_gas(GAS_FOR_FT_TRANSFER)
       .ft_transfer(
@@ -538,7 +532,7 @@ impl BountiesContract {
     claims: &mut Vec<BountyClaim>,
   ) {
     if self.dispute_contract.is_some() && (bounty.postpaid.is_none() ||
-      matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentViaContract))
+      !matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. }))
     {
       claims[claim_idx].status = ClaimStatus::Rejected;
       claims[claim_idx].rejected_timestamp = Some(env::block_timestamp().into());
@@ -835,7 +829,8 @@ impl BountiesContract {
     let config = self.config.to_config_mut();
     let (name_entry, name_entries, reference) = match dict {
       ReferenceType::Categories => { ("category", "categories", config.categories.as_mut()) },
-      _ => { ("tag", "tags", config.tags.as_mut()) },
+      ReferenceType::Tags => { ("tag", "tags", config.tags.as_mut()) },
+      _ => { ("currency", "currencies", config.currencies.as_mut()) },
     };
 
     let entries = if let Some(entries) = entries {
@@ -862,7 +857,7 @@ impl BountiesContract {
     claim.is_kyc_delayed = is_kyc_delayed;
     self.internal_update_statistic(
       Some(claimer.clone()),
-      Some(bounty.clone().owner),
+      Some(bounty.owner.clone()),
       ReputationActionKind::ClaimerApproved
     )
   }
@@ -911,7 +906,7 @@ impl BountiesContract {
                       DefermentOfKYC::BeforeDeadline
                     )
               || claimer.is_some()
-              && !self.is_approval_required(bounty.clone(), &claimer.unwrap())
+              && !self.is_approval_required(&bounty, &claimer.unwrap())
           }
         }
       },
@@ -919,8 +914,8 @@ impl BountiesContract {
     }
   }
 
-  pub(crate) fn is_approval_required(&self, bounty: Bounty, claimer: &AccountId) -> bool {
-    match bounty.claimer_approval {
+  pub(crate) fn is_approval_required(&self, bounty: &Bounty, claimer: &AccountId) -> bool {
+    match bounty.claimer_approval.clone() {
       ClaimerApproval::MultipleClaims => true,
       ClaimerApproval::ApprovalByWhitelist { claimers_whitelist } =>
         !claimers_whitelist.contains(claimer),
@@ -964,7 +959,7 @@ impl BountiesContract {
       is_kyc_delayed: None,
     };
 
-    if !self.is_approval_required(bounty.clone(), &claimer) {
+    if !self.is_approval_required(&bounty, &claimer) {
       self.internal_claimer_approval(id, &mut bounty, &mut bounty_claim, &claimer, None);
     }
     Self::internal_add_claim(id, &mut claims, bounty_claim);
@@ -973,7 +968,7 @@ impl BountiesContract {
     self.locked_amount += self.config.clone().to_config().bounty_claim_bond.0;
     self.internal_update_statistic(
       Some(claimer.clone()),
-      Some(bounty.clone().owner),
+      Some(bounty.owner.clone()),
       ReputationActionKind::ClaimCreated
     );
 
@@ -1017,7 +1012,7 @@ impl BountiesContract {
     };
     let bounty = self.get_bounty(id.clone());
     if bounty.is_validators_dao_used() &&
-      self.is_approval_required(bounty.clone(), &claimer)
+      self.is_approval_required(&bounty, &claimer)
     {
       self.internal_add_proposal_to_approve_claimer(
         id,
@@ -1141,7 +1136,7 @@ impl BountiesContract {
     claim_message: &str,
   ) -> (Bounty, Vec<BountyClaim>, Option<usize>) {
     let bounty = self.get_bounty(id.clone());
-    if bounty.clone().status != bounty_status {
+    if bounty.status.clone() != bounty_status {
       env::panic_str(bounty_message);
     }
 
@@ -1159,11 +1154,17 @@ impl BountiesContract {
     (bounty, claims, index)
   }
 
-  pub(crate) fn check_bounty(&self, bounty: &Bounty, new: bool) {
-    bounty.assert_valid(new);
-    self.assert_bounty_category_is_correct(bounty.clone().metadata.category);
-    if bounty.clone().metadata.tags.is_some() {
-      self.assert_bounty_tags_are_correct(bounty.clone().metadata.tags.unwrap());
+  pub(crate) fn check_bounty(&self, bounty: &Bounty) {
+    bounty.assert_valid();
+    self.assert_bounty_category_is_correct(bounty.metadata.category.clone());
+    if bounty.metadata.tags.is_some() {
+      self.assert_bounty_tags_are_correct(bounty.metadata.tags.clone().unwrap());
+    }
+    if bounty.postpaid.is_some() {
+      match bounty.postpaid.clone().unwrap() {
+        Postpaid::PaymentOutsideContract { currency } =>
+          self.assert_bounty_currency_is_correct(currency),
+      }
     }
     match bounty.kyc_config {
       KycConfig::KycRequired { .. } => {

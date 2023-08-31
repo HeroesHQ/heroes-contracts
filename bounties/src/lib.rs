@@ -698,17 +698,19 @@ impl BountiesContract {
       );
       assert!(
         bounty.postpaid.is_some() &&
-          matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract),
+          matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. }),
         "The amount of the bounty cannot be changed"
       );
+      assert!(
+        bounty.payment_at.is_none(),
+        "The amount of the bounty cannot be changed after the payment has been confirmed"
+      );
       bounty.amount = bounty_update.amount.unwrap();
-      bounty.payment_at = None;
-      bounty.payment_confirmed_at = None;
       changed = true;
     }
 
     assert!(changed, "No changes found");
-    self.check_bounty(&bounty, false);
+    self.check_bounty(&bounty);
     self.bounties.insert(&id, &bounty.into());
   }
 
@@ -745,8 +747,8 @@ impl BountiesContract {
   pub fn bounty_create(
     &mut self,
     bounty_create: BountyCreate,
-    token_id: AccountId,
-    amount: Option<U128>
+    token_id: Option<AccountId>,
+    amount: U128
   ) {
     assert_one_yocto();
 
@@ -756,9 +758,11 @@ impl BountiesContract {
       self.is_owner_whitelisted(sender_id.clone()),
       "You are not allowed to create postpaid bounties"
     );
-    self.assert_that_token_is_allowed(&token_id);
+    if token_id.is_some() {
+      self.assert_that_token_is_allowed(&token_id.clone().unwrap());
+    }
 
-    self.internal_create_bounty(bounty_create, &sender_id, &token_id, amount.unwrap_or(U128(0)));
+    self.internal_create_bounty(bounty_create, &sender_id, token_id, amount);
   }
 
   #[payable]
@@ -770,7 +774,7 @@ impl BountiesContract {
 
     assert!(
       bounty.postpaid.is_some() &&
-        matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract),
+        matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. }),
       "This method is allowed to be used only when paying outside the contract"
     );
     assert!(
@@ -778,7 +782,11 @@ impl BountiesContract {
       "Bounty status does not allow this action"
     );
     assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
-    assert!(bounty.amount.0 > 0, "The price of the bounty has not yet been determined");
+    let (_, claims, claim_idx) = self.internal_find_active_claim(id.clone());
+    assert!(
+      matches!(claims[claim_idx].status, ClaimStatus::Completed),
+      "The status of the claim does not allow this action"
+    );
     assert!(bounty.payment_at.is_none(), "This action has already been performed");
 
     bounty.payment_at = Some(U64::from(env::block_timestamp()));
@@ -794,7 +802,7 @@ impl BountiesContract {
 
     assert!(
       bounty.postpaid.is_some() &&
-        matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract),
+        matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. }),
       "This method is allowed to be used only when paying outside the contract"
     );
     assert!(
@@ -972,7 +980,7 @@ mod tests {
   ) -> BountyIndex {
     let bounty_index: BountyIndex = 0;
     let bounty = Bounty {
-      token: get_token_id(),
+      token: Some(get_token_id()),
       amount: U128(d(2_000, TOKEN_DECIMALS)),
       platform_fee: U128(d(200, TOKEN_DECIMALS)),
       dao_fee: if validators_dao.is_some() {
@@ -1040,7 +1048,7 @@ mod tests {
     contract.bounty_claim(id, deadline, description.clone());
 
     let bounty = contract.bounties.get(&id).unwrap().to_bounty();
-    if bounty.is_validators_dao_used() && contract.is_approval_required(bounty, &claimer) {
+    if bounty.is_validators_dao_used() && contract.is_approval_required(&bounty, &claimer) {
       contract.internal_create_claim(
         id,
         claimer.clone(),

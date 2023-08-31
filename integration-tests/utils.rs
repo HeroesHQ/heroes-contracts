@@ -7,7 +7,7 @@ use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Postpaid, Reviewers,
+               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Postpaid, ReferenceType, Reviewers,
                ReviewersParams, TokenDetails, ValidatorsDaoParams, VersionedConfig};
 use disputes::{Dispute, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
@@ -470,9 +470,7 @@ impl Env {
     if total_amount.is_some() {
       amount = total_amount.unwrap().0;
     } else {
-      amount = if postpaid.is_some() &&
-        matches!(postpaid.clone().unwrap(), Postpaid::PaymentViaContract)
-      { 0 } else { BOUNTY_AMOUNT.0 + if postpaid.is_none() { PLATFORM_FEE.0 } else { 0 } };
+      amount = BOUNTY_AMOUNT.0 + if postpaid.is_none() { PLATFORM_FEE.0 } else { 0 };
       if reviewers.is_some() && postpaid.is_none() {
         amount += match reviewers.clone().unwrap() {
           Reviewers::ValidatorsDao { .. } => DAO_FEE.0,
@@ -547,11 +545,18 @@ impl Env {
         .transact()
         .await?;
     } else {
+      let token_id = if postpaid.is_some() &&
+        matches!(postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. })
+      {
+        json!(null)
+      } else {
+        json!(self.test_token.id())
+      };
       res = self.project_owner
         .call(bounties.id(), "bounty_create")
         .args_json(json!({
           "bounty_create": bounty_create,
-          "token_id": self.test_token.id(),
+          "token_id": token_id,
           "amount": if amount == 0 { json!(null) } else { json!(U128(amount)) },
         }))
         .max_gas()
@@ -560,29 +565,6 @@ impl Env {
         .await?;
     }
     Self::assert_contract_call_result(res, expected_msg).await?;
-    Ok(())
-  }
-
-  pub async fn bounty_deposit(
-    &self,
-    bounties: &Contract,
-    bounty_id: u64,
-    total_amount: U128,
-  ) -> anyhow::Result<()> {
-    let amount = total_amount.0;
-
-    let res = self.project_owner
-      .call(self.test_token.id(), "ft_transfer_call")
-      .args_json(json!({
-          "receiver_id": bounties.id(),
-          "amount": U128(amount),
-          "msg": bounty_id.to_string(),
-        }))
-      .max_gas()
-      .deposit(ONE_YOCTO)
-      .transact()
-      .await?;
-    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 
@@ -1057,7 +1039,7 @@ impl Env {
   pub async fn get_platform_fees(&self) -> anyhow::Result<FeeStats> {
     let stats = self.disputed_bounties
       .call("get_total_fees")
-      .args_json((self.test_token.id(), ))
+      .args_json((self.test_token.id(),))
       .view()
       .await?
       .json::<FeeStats>()?;
@@ -1067,7 +1049,7 @@ impl Env {
   pub async fn get_dao_fees(&self) -> anyhow::Result<FeeStats> {
     let result = self.disputed_bounties
       .call("get_total_validators_dao_fees")
-      .args_json((self.validators_dao.id(), ))
+      .args_json((self.validators_dao.id(),))
       .view()
       .await?
       .json::<Vec<DaoFeeStats>>()?;
@@ -1096,6 +1078,22 @@ impl Env {
     let res = self.validators_dao.as_account()
       .call(self.disputed_bounties.id(), "withdraw_validators_dao_fee")
       .args_json((self.test_token.id(),))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn update_configuration_dictionary_entries(
+    &self,
+    dict: ReferenceType,
+    currency: String
+  ) -> anyhow::Result<()> {
+    let res = self.bounties_contract_admin
+      .call(self.disputed_bounties.id(), "update_configuration_dictionary_entries")
+      .args_json((dict, currency, Option::<bool>::None))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
