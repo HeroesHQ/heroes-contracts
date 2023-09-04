@@ -627,10 +627,13 @@ impl Bounty {
       match self.postpaid.clone().unwrap() {
         Postpaid::PaymentOutsideContract { .. } => {
           assert!(
+            self.payment_at.is_none() || approve,
+            "The result cannot be rejected after the payment has been confirmed"
+          );
+          assert!(
             self.payment_at.is_some() && self.payment_confirmed_at.is_some(),
             "No payment confirmation"
           );
-          assert!(approve, "The result cannot be rejected after the payment has been confirmed");
         },
       }
     }
