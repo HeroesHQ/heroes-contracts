@@ -7,8 +7,8 @@ use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, ReviewersParams, TokenDetails,
-               ValidatorsDaoParams, VersionedConfig};
+               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Postpaid, ReferenceType, Reviewers,
+               ReviewersParams, TokenDetails, ValidatorsDaoParams, VersionedConfig};
 use disputes::{Dispute, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
@@ -278,7 +278,7 @@ impl Env {
     )
   }
 
-  async fn register_user(test_token: &Contract, user: &AccountId) -> anyhow::Result<()> {
+  pub async fn register_user(test_token: &Contract, user: &AccountId) -> anyhow::Result<()> {
     let res = test_token
       .call("storage_deposit")
       .args_json((user, Option::<bool>::None))
@@ -461,14 +461,36 @@ impl Env {
     Ok(bounty_indexes)
   }
 
+  async fn get_bounty_amount(
+    total_amount: Option<U128>,
+    reviewers: Option<Reviewers>,
+    postpaid: Option<Postpaid>,
+  ) -> anyhow::Result<u128> {
+    let mut amount;
+    if total_amount.is_some() {
+      amount = total_amount.unwrap().0;
+    } else {
+      amount = BOUNTY_AMOUNT.0 + if postpaid.is_none() { PLATFORM_FEE.0 } else { 0 };
+      if reviewers.is_some() && postpaid.is_none() {
+        amount += match reviewers.clone().unwrap() {
+          Reviewers::ValidatorsDao { .. } => DAO_FEE.0,
+          _ => 0,
+        };
+      }
+    }
+    Ok(amount)
+  }
+
   pub async fn add_bounty(
     &self,
     bounties: &Contract,
     deadline: Value,
     claimer_approval: Value,
-    reviewers: Option<ReviewersParams>,
+    reviewers_params: Option<ReviewersParams>,
     total_amount: Option<U128>,
     kyc_required: Option<KycConfig>,
+    postpaid: Option<Postpaid>,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let metadata = json!({
       "title": "Test bounty title",
@@ -484,40 +506,113 @@ impl Env {
       }),
     });
 
-    let mut amount;
-    if total_amount.is_some() {
-      amount = total_amount.unwrap().0;
-    } else {
-      amount = BOUNTY_AMOUNT.0 + PLATFORM_FEE.0;
-      if reviewers.is_some() {
-        amount += match reviewers.clone().unwrap() {
-          ReviewersParams::ValidatorsDao { .. } => DAO_FEE.0,
-          _ => 0,
-        };
-      }
-    }
+    let bounty_create = json!({
+      "metadata": metadata,
+      "deadline": deadline,
+      "claimer_approval": claimer_approval,
+      "reviewers": match reviewers_params.clone() {
+        Some(r) => json!(r),
+        _ => json!(null),
+      },
+      "kyc_config": if kyc_required.is_some() {
+        kyc_required
+      } else {
+        Some(KycConfig::KycNotRequired)
+      },
+      "postpaid": match postpaid.clone() {
+        Some(r) => json!(r),
+        _ => json!(null),
+      },
+    });
 
-    let res = self.project_owner
-      .call(self.test_token.id(), "ft_transfer_call")
+    let reviewers = match reviewers_params {
+      Some(p) => Some(p.to_reviewers()),
+      _ => None
+    };
+    let amount = Self::get_bounty_amount(total_amount, reviewers, postpaid.clone()).await?;
+    let res;
+
+    if postpaid.is_none() {
+      res = self.project_owner
+        .call(self.test_token.id(), "ft_transfer_call")
+        .args_json(json!({
+          "receiver_id": bounties.id(),
+          "amount": U128(amount),
+          "msg": bounty_create.to_string(),
+        }))
+        .max_gas()
+        .deposit(ONE_YOCTO)
+        .transact()
+        .await?;
+    } else {
+      let token_id = if postpaid.is_some() &&
+        matches!(postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. })
+      {
+        json!(null)
+      } else {
+        json!(self.test_token.id())
+      };
+      res = self.project_owner
+        .call(bounties.id(), "bounty_create")
+        .args_json(json!({
+          "bounty_create": bounty_create,
+          "token_id": token_id,
+          "amount": if amount == 0 { json!(null) } else { json!(U128(amount)) },
+        }))
+        .max_gas()
+        .deposit(ONE_YOCTO)
+        .transact()
+        .await?;
+    }
+    Self::assert_contract_call_result(res, expected_msg).await?;
+    Ok(())
+  }
+
+  pub async fn external_ft_transfer(
+    &self,
+    payer: &Account,
+    receiver: &Account,
+    amount: U128,
+  ) -> anyhow::Result<()> {
+    let res = payer
+      .call(self.test_token.id(), "ft_transfer")
       .args_json(json!({
-        "receiver_id": bounties.id(),
-        "amount": U128(amount),
-        "msg": json!({
-          "metadata": metadata,
-          "deadline": deadline,
-          "claimer_approval": claimer_approval,
-          "reviewers": match reviewers {
-            Some(r) => json!(r),
-            _ => json!(null),
-          },
-          "kyc_config": if kyc_required.is_some() {
-            kyc_required
-          } else {
-            Some(KycConfig::KycNotRequired)
-          }
-        })
-          .to_string(),
-      }))
+          "receiver_id": receiver.id(),
+          "amount": amount,
+        }))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn mark_as_paid(
+    &self,
+    bounties: &Contract,
+    bounty_id: u64,
+  ) -> anyhow::Result<()> {
+    let res = self.project_owner
+      .call(bounties.id(), "mark_as_paid")
+      .args_json((bounty_id,))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn confirm_payment(
+    &self,
+    bounties: &Contract,
+    bounty_id: u64,
+    user: Option<&Account>,
+  ) -> anyhow::Result<()> {
+    let res = if user.is_some() { user.unwrap() } else { &self.freelancer }
+      .call(bounties.id(), "confirm_payment")
+      .args_json((bounty_id,))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -595,6 +690,7 @@ impl Env {
     bounty_id: u64,
     user: &Account,
     action: &BountyAction,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let res = user
       .call(bounties.id(), "bounty_action")
@@ -603,7 +699,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res, None).await?;
+    Self::assert_contract_call_result(res, expected_msg).await?;
     Ok(())
   }
 
@@ -898,13 +994,12 @@ impl Env {
     Ok(proposal)
   }
 
-  pub async fn add_to_claimers_whitelist(
+  pub async fn add_to_owners_whitelist(
     &self,
-    freelancer: &Account,
   ) -> anyhow::Result<()> {
-    let res = self.project_owner
-      .call(self.disputed_bounties.id(), "add_to_claimers_whitelist")
-      .args_json((freelancer.id(),))
+    let res = self.bounties_contract_admin
+      .call(self.disputed_bounties.id(), "add_to_owners_whitelist")
+      .args_json((self.project_owner.id(), Option::<bool>::None))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -913,13 +1008,12 @@ impl Env {
     Ok(())
   }
 
-  pub async fn remove_from_claimers_whitelist(
+  pub async fn remove_from_owners_whitelist(
     &self,
-    freelancer: &Account,
   ) -> anyhow::Result<()> {
-    let res = self.project_owner
-      .call(self.disputed_bounties.id(), "remove_from_claimers_whitelist")
-      .args_json((freelancer.id(),))
+    let res = self.bounties_contract_admin
+      .call(self.disputed_bounties.id(), "remove_from_owners_whitelist")
+      .args_json((self.project_owner.id(), Option::<bool>::None))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -945,7 +1039,7 @@ impl Env {
   pub async fn get_platform_fees(&self) -> anyhow::Result<FeeStats> {
     let stats = self.disputed_bounties
       .call("get_total_fees")
-      .args_json((self.test_token.id(), ))
+      .args_json((self.test_token.id(),))
       .view()
       .await?
       .json::<FeeStats>()?;
@@ -955,7 +1049,7 @@ impl Env {
   pub async fn get_dao_fees(&self) -> anyhow::Result<FeeStats> {
     let result = self.disputed_bounties
       .call("get_total_validators_dao_fees")
-      .args_json((self.validators_dao.id(), ))
+      .args_json((self.validators_dao.id(),))
       .view()
       .await?
       .json::<Vec<DaoFeeStats>>()?;
@@ -984,6 +1078,22 @@ impl Env {
     let res = self.validators_dao.as_account()
       .call(self.disputed_bounties.id(), "withdraw_validators_dao_fee")
       .args_json((self.test_token.id(),))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn update_configuration_dictionary_entries(
+    &self,
+    dict: ReferenceType,
+    currency: String
+  ) -> anyhow::Result<()> {
+    let res = self.bounties_contract_admin
+      .call(self.disputed_bounties.id(), "update_configuration_dictionary_entries")
+      .args_json((dict, currency, Option::<bool>::None))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
