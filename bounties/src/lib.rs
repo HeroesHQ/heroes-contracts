@@ -58,10 +58,10 @@ pub struct BountiesContract {
   /// KYC whitelist contract (optional)
   pub kyc_whitelist_contract: Option<AccountId>,
 
-  /// Whitelist accounts for which claims do not require approval.
-  /// Map of whitelists for each bounty owner account.
-  /// [deprecated]
-  pub claimers_whitelist: LookupMap<AccountId, Vec<AccountId>>,
+  /// Whitelist accounts that can generate postpaid bounties.
+  /// A map whose keys are whitelist members, the values of map elements are not used
+  /// (deprecated part of the old structure)
+  pub owners_whitelist: LookupMap<AccountId, Vec<AccountId>>,
 
   /// Total platform fees map per token ID
   pub total_fees: LookupMap<AccountId, FeeStats>,
@@ -109,7 +109,7 @@ impl BountiesContract {
       reputation_contract,
       dispute_contract,
       kyc_whitelist_contract,
-      claimers_whitelist: LookupMap::new(StorageKey::ClaimersWhitelist),
+      owners_whitelist: LookupMap::new(StorageKey::OwnersWhitelist),
       total_fees: LookupMap::new(StorageKey::TotalFees),
       total_validators_dao_fees: LookupMap::new(StorageKey::TotalValidatorsDaoFees),
       recipient_of_platform_fee,
@@ -156,39 +156,39 @@ impl BountiesContract {
     );
   }
 
-  /// [deprecated]
   #[payable]
-  pub fn add_to_claimers_whitelist(
+  pub fn add_to_owners_whitelist(
     &mut self,
-    claimer: AccountId,
+    account_id: Option<AccountId>,
+    account_ids: Option<Vec<AccountId>>,
   ) {
     assert_one_yocto();
-    let owner = env::predecessor_account_id();
-    self.account_bounties.get(&owner).expect("No bounties found");
-    let mut whitelist = self.claimers_whitelist.get(&owner).unwrap_or_default();
-    if !whitelist.contains(&claimer) {
-      whitelist.push(claimer);
-      self.claimers_whitelist.insert(&owner, &whitelist);
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+    let account_ids = if let Some(account_ids) = account_ids {
+      account_ids
+    } else {
+      vec![account_id.expect("Expected either account_id or account_ids")]
+    };
+    for account_id in &account_ids {
+      self.owners_whitelist.insert(account_id, &vec![]);
     }
   }
 
-  /// [deprecated]
   #[payable]
-  pub fn remove_from_claimers_whitelist(
+  pub fn remove_from_owners_whitelist(
     &mut self,
-    claimer: AccountId,
+    account_id: Option<AccountId>,
+    account_ids: Option<Vec<AccountId>>,
   ) {
     assert_one_yocto();
-    let owner = env::predecessor_account_id();
-    let mut whitelist = self.claimers_whitelist.get(&owner).expect("Not a bounty owner");
-    let index = whitelist.iter().position(|c| c.clone() == claimer);
-    if index.is_some() {
-      whitelist.remove(index.unwrap());
-      if whitelist.is_empty() {
-        self.claimers_whitelist.remove(&owner);
-      } else {
-        self.claimers_whitelist.insert(&owner, &whitelist);
-      }
+    self.assert_admins_whitelist(&env::predecessor_account_id());
+    let account_ids = if let Some(account_ids) = account_ids {
+      account_ids
+    } else {
+      vec![account_id.expect("Expected either account_id or account_ids")]
+    };
+    for account_id in &account_ids {
+      self.owners_whitelist.remove(&account_id);
     }
   }
 
@@ -509,6 +509,7 @@ impl BountiesContract {
             matches!(claims[claim_idx].status, ClaimStatus::Completed),
             "The claim status does not allow approval of the execution result"
           );
+          bounty.assert_postpaid_is_ready(matches!(action, BountyAction::ClaimApproved { .. }));
 
           let result = if matches!(action, BountyAction::ClaimApproved { .. }) {
             self.internal_bounty_payout(id, receiver_id)
@@ -690,6 +691,23 @@ impl BountiesContract {
       };
       changed = true;
     }
+    if bounty_update.amount.is_some() {
+      assert!(
+        bounty_update.amount.unwrap().0 > 0,
+        "The bounty amount cannot be zero"
+      );
+      assert!(
+        bounty.postpaid.is_some() &&
+          matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. }),
+        "The amount of the bounty cannot be changed"
+      );
+      assert!(
+        bounty.payment_at.is_none(),
+        "The amount of the bounty cannot be changed after the payment has been confirmed"
+      );
+      bounty.amount = bounty_update.amount.unwrap();
+      changed = true;
+    }
 
     assert!(changed, "No changes found");
     self.check_bounty(&bounty);
@@ -723,6 +741,81 @@ impl BountiesContract {
     bounty_claim.deadline = deadline;
     claims.insert(claim_idx, bounty_claim);
     self.internal_save_claims(&claimer, &claims);
+  }
+
+  #[payable]
+  pub fn bounty_create(
+    &mut self,
+    bounty_create: BountyCreate,
+    token_id: Option<AccountId>,
+    amount: U128
+  ) {
+    assert_one_yocto();
+
+    let sender_id = env::predecessor_account_id();
+    assert!(bounty_create.postpaid.is_some(), "The postpaid parameter is incorrect");
+    assert!(
+      self.is_owner_whitelisted(sender_id.clone()),
+      "You are not allowed to create postpaid bounties"
+    );
+    if token_id.is_some() {
+      self.assert_that_token_is_allowed(&token_id.clone().unwrap());
+    }
+
+    self.internal_create_bounty(bounty_create, &sender_id, token_id, amount);
+  }
+
+  #[payable]
+  pub fn mark_as_paid(&mut self, id: BountyIndex) {
+    assert_one_yocto();
+
+    let sender_id = env::predecessor_account_id();
+    let mut bounty = self.get_bounty(id);
+
+    assert!(
+      bounty.postpaid.is_some() &&
+        matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. }),
+      "This method is allowed to be used only when paying outside the contract"
+    );
+    assert!(
+      matches!(bounty.status, BountyStatus::Claimed),
+      "Bounty status does not allow this action"
+    );
+    assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
+    let (_, claims, claim_idx) = self.internal_find_active_claim(id.clone());
+    assert!(
+      matches!(claims[claim_idx].status, ClaimStatus::Completed),
+      "The status of the claim does not allow this action"
+    );
+    assert!(bounty.payment_at.is_none(), "This action has already been performed");
+
+    bounty.payment_at = Some(U64::from(env::block_timestamp()));
+    self.bounties.insert(&id, &bounty.into());
+  }
+
+  #[payable]
+  pub fn confirm_payment(&mut self, id: BountyIndex) {
+    assert_one_yocto();
+
+    let sender_id = env::predecessor_account_id();
+    let mut bounty = self.get_bounty(id);
+
+    assert!(
+      bounty.postpaid.is_some() &&
+        matches!(bounty.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. }),
+      "This method is allowed to be used only when paying outside the contract"
+    );
+    assert!(
+      matches!(bounty.status, BountyStatus::Claimed),
+      "Bounty status does not allow this action"
+    );
+    let (receiver_id, _, _) = self.internal_find_active_claim(id);
+    assert_eq!(receiver_id, sender_id, "Only the owner of the claim is allowed this action");
+    assert!(bounty.payment_at.is_some(), "Payment by the bounty owner has not yet been confirmed");
+    assert!(bounty.payment_confirmed_at.is_none(), "This action has already been performed");
+
+    bounty.payment_confirmed_at = Some(U64::from(env::block_timestamp()));
+    self.bounties.insert(&id, &bounty.into());
   }
 
   #[payable]
@@ -887,7 +980,7 @@ mod tests {
   ) -> BountyIndex {
     let bounty_index: BountyIndex = 0;
     let bounty = Bounty {
-      token: get_token_id(),
+      token: Some(get_token_id()),
       amount: U128(d(2_000, TOKEN_DECIMALS)),
       platform_fee: U128(d(200, TOKEN_DECIMALS)),
       dao_fee: if validators_dao.is_some() {
@@ -914,12 +1007,15 @@ mod tests {
       status: BountyStatus::New,
       created_at: U64::from(0),
       kyc_config: KycConfig::KycNotRequired,
+      postpaid: None,
+      payment_at: None,
+      payment_confirmed_at: None,
     };
     contract.bounties.insert(&bounty_index, &bounty.clone().into());
     contract.account_bounties.insert(owner, &vec![bounty_index]);
     contract.last_bounty_id = bounty_index.clone() + 1;
     add_token(contract);
-    contract.internal_total_fees_receiving_funds(&bounty);
+    contract.internal_total_fees_receiving_funds(&bounty, bounty.platform_fee, bounty.dao_fee);
 
     bounty_index
   }
@@ -952,7 +1048,7 @@ mod tests {
     contract.bounty_claim(id, deadline, description.clone());
 
     let bounty = contract.bounties.get(&id).unwrap().to_bounty();
-    if bounty.is_validators_dao_used() && contract.is_approval_required(bounty, &claimer) {
+    if bounty.is_validators_dao_used() && contract.is_approval_required(&bounty, &claimer) {
       contract.internal_create_claim(
         id,
         claimer.clone(),

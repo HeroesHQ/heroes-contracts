@@ -15,9 +15,8 @@ impl BountiesContract {
     self.admins_whitelist.to_vec()
   }
 
-  /// [deprecated]
-  pub fn get_claimers_whitelist(&self, account_id: AccountId) -> Vec<AccountId> {
-    self.claimers_whitelist.get(&account_id).unwrap_or_default()
+  pub fn is_owner_whitelisted(&self, account_id: AccountId) -> bool {
+    self.owners_whitelist.contains_key(&account_id)
   }
 
   pub fn get_reputation_contract_account_id(&self) -> Option<AccountId> {
@@ -128,6 +127,6 @@ impl BountiesContract {
   }
 
   pub fn get_version() -> String {
-    "2.0.2".to_string()
+    "2.0.4".to_string()
   }
 }
