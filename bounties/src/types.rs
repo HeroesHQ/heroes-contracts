@@ -108,9 +108,6 @@ pub enum BountyStatus {
   Claimed,
   Completed,
   Canceled,
-  ManyClaimed,
-  AwaitingClaims,
-  PartiallyCompleted,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -202,6 +199,8 @@ impl ClaimerApproval {
         !claimers_whitelist.contains(account_id),
       Self::WhitelistWithApprovals { claimers_whitelist } =>
         !claimers_whitelist.contains(account_id),
+      Self::ApprovalWithWhitelist =>
+        env::panic_str("ApprovalWithWhitelist is not supported"),
       _ => false
     }
   }
@@ -313,128 +312,8 @@ pub enum PlaceOfCheckKYC {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub enum DateOrPeriod {
-  Date { date: U64 },
-  Period { period: U64 },
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub enum StartConditions {
-  MinAmountToStart { amount: u16 },
-  ManuallyStart,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct Subtask {
-  pub subtask_description: String,
-  pub subtask_percent: u32,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct ContestOrHackathonEnv {
-  pub started_at: Option<U64>,
-  pub finished_at: Option<U64>,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct OneForAllEnv {
-  pub occupied_slots: u16,
-  pub paid_slots: u16,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub enum Multitasking {
-  ContestOrHackathon {
-    allowed_create_claim_to: Option<DateOrPeriod>,
-    successful_claims_for_result: Option<u16>,
-    start_conditions: Option<StartConditions>,
-    runtime_env: Option<ContestOrHackathonEnv>,
-  },
-  OneForAll {
-    number_of_slots: u16,
-    amount_per_slot: U128,
-    min_slots_to_start: Option<u16>,
-    runtime_env: Option<OneForAllEnv>,
-  },
-  DifferentTasks { subtasks: Vec<Subtask> },
-}
-
-impl Multitasking {
-  pub fn init(self) -> Self {
-    match self {
-      Multitasking::ContestOrHackathon {
-        allowed_create_claim_to,
-        successful_claims_for_result,
-        start_conditions,
-        ..
-      } => {
-        Multitasking::ContestOrHackathon {
-          allowed_create_claim_to,
-          successful_claims_for_result,
-          start_conditions,
-          runtime_env: Some(ContestOrHackathonEnv {
-            started_at: None,
-            finished_at: None,
-          })
-        }
-      },
-      Multitasking::OneForAll {
-        number_of_slots,
-        amount_per_slot,
-        min_slots_to_start,
-        ..
-      } => {
-        Multitasking::OneForAll {
-          number_of_slots,
-          amount_per_slot,
-          min_slots_to_start,
-          runtime_env: Some(OneForAllEnv {
-            occupied_slots: 0,
-            paid_slots: 0,
-          })
-        }
-      },
-      _ => self.clone(),
-    }
-  }
-
-  pub fn is_allowed_to_create_claim(&self) -> bool {
-    match self {
-      Multitasking::ContestOrHackathon {
-        allowed_create_claim_to,
-        runtime_env,
-        ..
-      } => {
-        if allowed_create_claim_to.is_none() {
-          true
-        } else {
-          match allowed_create_claim_to.clone().unwrap() {
-            DateOrPeriod::Date { date } => date.0 > env::block_timestamp(),
-            DateOrPeriod::Period { period } => {
-              if runtime_env.is_some() && runtime_env.clone().unwrap().started_at.is_some() {
-                let started_at = runtime_env.clone().unwrap().started_at.unwrap();
-                period.0 > env::block_timestamp() - started_at.0
-              } else {
-                true
-              }
-            }
-          }
-        }
-      },
-      // TODO
-      _ => env::panic_str("This is temporarily not supported")
-    }
-  }
+pub enum Postpaid {
+  PaymentOutsideContract { currency: String },
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -445,22 +324,36 @@ pub struct BountyCreate {
   pub claimer_approval: ClaimerApproval,
   pub reviewers: Option<ReviewersParams>,
   pub kyc_config: Option<KycConfig>,
-  pub multitasking: Option<Multitasking>,
+  pub postpaid: Option<Postpaid>,
 }
 
 impl BountyCreate {
-  pub fn to_bounty(&self, payer_id: &AccountId, token_id: &AccountId, amount: U128, config: Config) -> Bounty {
-    let percentage_platform: u128 = config.platform_fee_percentage.into();
-    let percentage_dao: u128 = if self.reviewers.is_some() {
-      match self.reviewers.clone().unwrap() {
-        ReviewersParams::ValidatorsDao { .. } =>
-          config.validators_dao_fee_percentage.into(),
-        _ => 0
+  pub fn to_bounty(
+    &self,
+    payer_id: &AccountId,
+    token_id: Option<AccountId>,
+    amount: U128,
+    config: Config
+  ) -> Bounty {
+    let (percentage_platform, percentage_dao) = Bounty::get_percentage_of_commissions(
+      config,
+      if self.reviewers.is_some() {
+        Some(self.reviewers.clone().unwrap().to_reviewers())
+      } else {
+        None
       }
+    );
+
+    let platform_fee = if self.postpaid.is_none() {
+      amount.0 * percentage_platform / (100_000 + percentage_dao)
     } else { 0 };
-    let bounty_amount = amount.0 * 100_000 / (100_000 + percentage_platform + percentage_dao );
-    let platform_fee = bounty_amount * percentage_platform / 100_000;
-    let dao_fee = amount.0 - bounty_amount - platform_fee;
+
+    let dao_fee = if self.postpaid.is_none() {
+      amount.0 * percentage_dao / (100_000 + percentage_dao)
+    } else { 0 };
+
+    let bounty_amount = amount.0 - platform_fee - dao_fee;
+
     let kyc_config = if self.kyc_config.is_some() {
       self.kyc_config.clone().unwrap()
     } else {
@@ -468,7 +361,7 @@ impl BountyCreate {
     };
 
     Bounty {
-      token: token_id.clone(),
+      token: token_id,
       amount: U128(bounty_amount),
       platform_fee: U128(platform_fee),
       dao_fee: U128(dao_fee),
@@ -484,11 +377,9 @@ impl BountyCreate {
       status: BountyStatus::New,
       created_at: U64::from(env::block_timestamp()),
       kyc_config,
-      multitasking: if self.multitasking.is_some() {
-        Some(self.multitasking.clone().unwrap().init())
-      } else {
-        None
-      },
+      postpaid: self.postpaid.clone(),
+      payment_at: None,
+      payment_confirmed_at: None,
     }
   }
 }
@@ -500,6 +391,7 @@ pub struct BountyUpdate {
   pub deadline: Option<Deadline>,
   pub claimer_approval: Option<ClaimerApproval>,
   pub reviewers: Option<ReviewersParams>,
+  pub amount: Option<U128>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -552,7 +444,7 @@ pub struct BountyV2 {
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Bounty {
-  pub token: AccountId,
+  pub token: Option<AccountId>,
   pub amount: U128,
   pub platform_fee: U128,
   pub dao_fee: U128,
@@ -564,11 +456,13 @@ pub struct Bounty {
   pub status: BountyStatus,
   pub created_at: U64,
   pub kyc_config: KycConfig,
-  pub multitasking: Option<Multitasking>,
+  pub postpaid: Option<Postpaid>,
+  pub payment_at: Option<U64>,
+  pub payment_confirmed_at: Option<U64>,
 }
 
 impl Bounty {
-  pub fn assert_new_valid(&self) {
+  pub fn assert_valid(&self) {
     assert!(
       !self.metadata.title.is_empty(),
       "The title cannot be empty"
@@ -587,11 +481,17 @@ impl Bounty {
         "The expected number of attachments is greater than zero"
       );
     }
-    let bounty_amount = self.amount.0;
     assert!(
-      bounty_amount > 0,
-      "Expected bounty amount to be positive",
+      self.amount.0 > 0,
+      "The bounty amount is incorrect",
     );
+    if self.postpaid.is_some() {
+      if matches!(self.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. }) {
+        assert!(self.token.is_none(), "Invalid token_id value");
+      }
+    } else {
+      assert!(self.token.is_some(), "Invalid token_id value");
+    }
     match self.deadline {
       Deadline::DueDate { due_date } =>
         assert!(
@@ -613,100 +513,6 @@ impl Bounty {
             "The expected number of reviewers is greater than zero",
           ),
         _ => (),
-      }
-    }
-    if self.multitasking.is_some() {
-      match self.multitasking.clone().unwrap() {
-        Multitasking::ContestOrHackathon {
-          allowed_create_claim_to,
-          successful_claims_for_result,
-          start_conditions,
-          runtime_env,
-        } => {
-          assert!(
-            runtime_env.is_none(),
-            "The Multitasking instance is already initialized"
-          );
-          if allowed_create_claim_to.is_some() {
-            match allowed_create_claim_to.unwrap() {
-              DateOrPeriod::Date { date } => {
-                assert!(
-                  env::block_timestamp() < date.0 &&
-                    (
-                      self.deadline.get_deadline_type() != 1 ||
-                        date.0 <= self.deadline.get_deadline_value().0
-                    ),
-                  "The date until which it is allowed to create claims is incorrect"
-                );
-              },
-              DateOrPeriod::Period { period } =>
-                assert!(
-                  period.0 > 0,
-                  "Incorrect claim period"
-                ),
-            }
-          }
-          if successful_claims_for_result.is_some() {
-            assert!(
-              successful_claims_for_result.unwrap() > 1,
-              "Incorrect number of successful claims to obtain a result"
-            );
-          }
-          if start_conditions.is_some() {
-            match start_conditions.unwrap() {
-              StartConditions::MinAmountToStart { amount } =>
-                assert!(
-                  amount > 1,
-                  "The minimum number of claims to start is incorrect"
-                ),
-              _ => (),
-            }
-          }
-        },
-        Multitasking::OneForAll {
-          number_of_slots,
-          amount_per_slot,
-          min_slots_to_start,
-          runtime_env,
-        } => {
-          assert!(
-            runtime_env.is_none(),
-            "The Multitasking instance is already initialized"
-          );
-          assert!(
-            number_of_slots > 1,
-            "The number of slots must be greater than one"
-          );
-          assert!(
-            amount_per_slot.0 > 0,
-            "The cost of one slot cannot be zero"
-          );
-          if min_slots_to_start.is_some() {
-            assert!(
-              min_slots_to_start.unwrap() > 1,
-              "The minimum number of claims to start is incorrect"
-            );
-          }
-        },
-        Multitasking::DifferentTasks { subtasks } => {
-          assert!(
-            subtasks.len() > 1,
-            "The number of subtasks must be greater than one"
-          );
-          assert!(
-            subtasks
-              .clone()
-              .into_iter()
-              .find(|subtask| subtask.subtask_description.is_empty())
-              .is_none(),
-            "The subtask description cannot be empty"
-          );
-          assert_eq!(
-            subtasks.into_iter().map(|subtask| subtask.subtask_percent).sum::<u32>(),
-            100_000,
-            "The sum of the cost of all subtasks must equal 100%"
-          );
-        },
       }
     }
   }
@@ -800,6 +606,38 @@ impl Bounty {
       }
     }
   }
+
+  pub fn get_percentage_of_commissions(
+    config: Config,
+    reviewers: Option<Reviewers>
+  ) -> (u128, u128) {
+    let percentage_platform: u128 = config.platform_fee_percentage.into();
+    let percentage_dao: u128 = if reviewers.is_some() {
+      match reviewers.unwrap() {
+        Reviewers::ValidatorsDao { .. } =>
+          config.validators_dao_fee_percentage.into(),
+        _ => 0
+      }
+    } else { 0 };
+    (percentage_platform, percentage_dao)
+  }
+
+  pub fn assert_postpaid_is_ready(&self, approve: bool) {
+    if self.postpaid.is_some() {
+      match self.postpaid.clone().unwrap() {
+        Postpaid::PaymentOutsideContract { .. } => {
+          assert!(
+            self.payment_at.is_none() || approve,
+            "The result cannot be rejected after the payment has been confirmed"
+          );
+          assert!(
+            self.payment_at.is_some() && self.payment_confirmed_at.is_some(),
+            "No payment confirmation"
+          );
+        },
+      }
+    }
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -830,7 +668,7 @@ impl VersionedBounty {
 
   fn upgrade_v2_to_v3(bounty: BountyV2) -> Bounty {
     Bounty {
-      token: bounty.token,
+      token: Some(bounty.token),
       amount: bounty.amount,
       platform_fee: bounty.platform_fee,
       dao_fee: bounty.dao_fee,
@@ -842,7 +680,9 @@ impl VersionedBounty {
       status: bounty.status,
       created_at: bounty.created_at,
       kyc_config: bounty.kyc_config,
-      multitasking: None,
+      postpaid: None,
+      payment_at: None,
+      payment_confirmed_at: None,
     }
   }
 
@@ -899,8 +739,6 @@ pub enum ClaimStatus {
   Disputed,
   NotCompleted,
   NotHired,
-  ApprovedCandidate,
-  CompetitionLost,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -1049,6 +887,7 @@ impl BountyAction {
 pub enum ReferenceType {
   Categories,
   Tags,
+  Currencies,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -1076,8 +915,24 @@ impl ConfigCreate {
       penalty_validators_dao_fee_percentage: self.penalty_validators_dao_fee_percentage,
       categories: config.categories,
       tags: config.tags,
+      currencies: config.currencies,
     }
   }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct ConfigV1 {
+  pub bounty_claim_bond: U128,
+  pub bounty_forgiveness_period: U64,
+  pub period_for_opening_dispute: U64,
+  pub categories: Vec<String>,
+  pub tags: Vec<String>,
+  pub platform_fee_percentage: u32,
+  pub validators_dao_fee_percentage: u32,
+  pub penalty_platform_fee_percentage: u32,
+  pub penalty_validators_dao_fee_percentage: u32,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -1093,6 +948,7 @@ pub struct Config {
   pub validators_dao_fee_percentage: u32,
   pub penalty_platform_fee_percentage: u32,
   pub penalty_validators_dao_fee_percentage: u32,
+  pub currencies: Vec<String>,
 }
 
 impl Config {
@@ -1121,6 +977,7 @@ impl Default for Config {
       validators_dao_fee_percentage: DEFAULT_VALIDATORS_DAO_FEE_PERCENTAGE,
       penalty_platform_fee_percentage: DEFAULT_PENALTY_PLATFORM_FEE_PERCENTAGE,
       penalty_validators_dao_fee_percentage: DEFAULT_PENALTY_VALIDATORS_DAO_FEE_PERCENTAGE,
+      currencies: vec![],
     }
   }
 }
@@ -1128,19 +985,39 @@ impl Default for Config {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub enum VersionedConfig {
+  V1(ConfigV1),
   Current(Config),
 }
 
 impl VersionedConfig {
+  fn upgrade_v1_to_v2(config: ConfigV1) -> Config {
+    Config {
+      bounty_claim_bond: config.bounty_claim_bond,
+      bounty_forgiveness_period: config.bounty_forgiveness_period,
+      period_for_opening_dispute: config.period_for_opening_dispute,
+      categories: config.categories,
+      tags: config.tags,
+      platform_fee_percentage: config.platform_fee_percentage,
+      validators_dao_fee_percentage: config.validators_dao_fee_percentage,
+      penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
+      penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
+      currencies: vec![],
+    }
+  }
+
   pub fn to_config(self) -> Config {
     match self {
       VersionedConfig::Current(config) => config,
+      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v1_to_v2(config_v1),
     }
   }
 
   pub fn to_config_mut(&mut self) -> &mut Config {
-    match self {
-      VersionedConfig::Current(config) => config,
+    *self = self.clone().to_config().into();
+    if let Self::Current(config) = self {
+      config
+    } else {
+      unreachable!();
     }
   }
 }
@@ -1149,6 +1026,7 @@ impl From<VersionedConfig> for Config {
   fn from(value: VersionedConfig) -> Self {
     match value {
       VersionedConfig::Current(config) => config,
+      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v1_to_v2(config_v1),
     }
   }
 }
@@ -1245,7 +1123,7 @@ pub(crate) enum StorageKey {
   Bounties,
   BountyClaimerAccounts,
   BountyClaimers,
-  ClaimersWhitelist,
+  OwnersWhitelist,
   Tokens,
   TotalFees,
   TotalValidatorsDaoFees,
