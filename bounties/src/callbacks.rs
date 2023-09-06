@@ -113,7 +113,7 @@ impl BountiesContract {
       let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         receiver_id.clone(),
-        BountyStatus::Claimed,
+        vec![BountyStatus::Claimed],
         vec![ClaimStatus::Completed],
         false,
         "Bounty status does not allow completion",
@@ -171,7 +171,7 @@ impl BountiesContract {
       let (_, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         claimer.clone(),
-        BountyStatus::Claimed,
+        vec![BountyStatus::Claimed],
         vec![ClaimStatus::Rejected],
         false,
         "Bounty status does not allow opening a dispute",
@@ -199,7 +199,7 @@ impl BountiesContract {
       let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         receiver_id.clone(),
-        BountyStatus::Claimed,
+        vec![BountyStatus::Claimed],
         vec![ClaimStatus::Disputed],
         false,
         "Bounty status does not allow to reject a claim as a result of a dispute",

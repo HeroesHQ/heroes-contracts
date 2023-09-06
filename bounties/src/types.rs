@@ -312,6 +312,7 @@ pub enum PlaceOfCheckKYC {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum DateOrPeriod {
   Date { date: U64 },
   Period { period: U64 },
@@ -319,6 +320,7 @@ pub enum DateOrPeriod {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum StartConditions {
   MinAmountToStart { amount: u16 },
   ManuallyStart,
@@ -326,27 +328,31 @@ pub enum StartConditions {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Subtask {
-  subtask_description: String,
-  subtask_percent: u32,
+  pub subtask_description: String,
+  pub subtask_percent: u32,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct ContestOrHackathonEnv {
-  started_at: Option<U64>,
-  finished_at: Option<U64>,
+  pub started_at: Option<U64>,
+  pub finished_at: Option<U64>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct OneForAllEnv {
-  occupied_slots: u16,
-  paid_slots: u16,
+  pub occupied_slots: u16,
+  pub paid_slots: u16,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum Multitasking {
   ContestOrHackathon {
     allowed_create_claim_to: Option<DateOrPeriod>,
@@ -399,6 +405,34 @@ impl Multitasking {
         }
       },
       _ => self.clone(),
+    }
+  }
+
+  pub fn is_allowed_to_create_claim(&self) -> bool {
+    match self {
+      Multitasking::ContestOrHackathon {
+        allowed_create_claim_to,
+        runtime_env,
+        ..
+      } => {
+        if allowed_create_claim_to.is_none() {
+          true
+        } else {
+          match allowed_create_claim_to.clone().unwrap() {
+            DateOrPeriod::Date { date } => date.0 > env::block_timestamp(),
+            DateOrPeriod::Period { period } => {
+              if runtime_env.is_some() && runtime_env.clone().unwrap().started_at.is_some() {
+                let started_at = runtime_env.clone().unwrap().started_at.unwrap();
+                period.0 > env::block_timestamp() - started_at.0
+              } else {
+                true
+              }
+            }
+          }
+        }
+      },
+      // TODO
+      _ => env::panic_str("This is temporarily not supported")
     }
   }
 }
