@@ -318,15 +318,7 @@ impl BountiesContract {
     );
 
     let sender_id = env::predecessor_account_id();
-    let (bounty, _, _) = self.internal_get_and_check_bounty_and_claim(
-      id.clone(),
-      sender_id.clone(),
-      BountyStatus::New,
-      vec![ClaimStatus::New],
-      true,
-      "Bounty status does not allow to submit a claim",
-      "You already have a claim with the status 'New'"
-    );
+    let (bounty, _, _) = self.check_if_allowed_to_create_claim_by_status(id, sender_id.clone());
 
     assert!(
       bounty.is_claim_deadline_correct(deadline),
@@ -357,20 +349,17 @@ impl BountiesContract {
     kyc_postponed: Option<DefermentOfKYC>
   ) -> PromiseOrValue<()> {
     assert_one_yocto();
-    let bounty = self.get_bounty(id.clone());
-    assert!(
-      matches!(bounty.status, BountyStatus::New),
-      "Bounty status does not allow to make a decision on a claim"
-    );
+    let (
+      bounty,
+      claims,
+      claim_idx
+    ) = self.check_if_allowed_to_approve_claim_by_status(id, claimer.clone());
+    assert!(claim_idx.is_some(), "No claimer found");
+    let claim = claims[claim_idx.unwrap()].clone();
+
     bounty.check_access_rights();
-    let (claims, claim_idx) = self.internal_get_claims(id, &claimer);
-    let bounty_claim= claims[claim_idx].clone();
     assert!(
-      matches!(bounty_claim.status, ClaimStatus::New),
-      "Claim status does not allow a decision to be made"
-    );
-    assert!(
-      bounty.is_claim_deadline_correct(bounty_claim.deadline),
+      bounty.is_claim_deadline_correct(claim.deadline),
       "The claim deadline is no longer correct"
     );
 
@@ -395,7 +384,9 @@ impl BountiesContract {
 
     let mut bounty = self.get_bounty(id.clone());
     assert!(
-      matches!(bounty.status, BountyStatus::Claimed),
+      matches!(bounty.status, BountyStatus::Claimed) ||
+        matches!(bounty.status, BountyStatus::ManyClaimed) ||
+        matches!(bounty.status, BountyStatus::Completed),
       "Bounty status does not allow to completion"
     );
 
@@ -408,6 +399,10 @@ impl BountiesContract {
 
     if claims[claim_idx].is_claim_expired() {
       return self.internal_set_claim_expiry_status(id, &sender_id, &mut bounty, claim_idx, &mut claims);
+    }
+
+    if matches!(bounty.status, BountyStatus::Completed) {
+      return self.internal_claim_closure(&sender_id, &bounty.owner, claim_idx, &mut claims);
     }
 
     let place_of_check = PlaceOfCheckKYC::ClaimDone { description };
@@ -494,6 +489,7 @@ impl BountiesContract {
     let mut bounty = self.get_bounty(id.clone());
 
     if !action.need_to_finalize_claim() {
+      // TODO
       assert!(
         matches!(bounty.status, BountyStatus::Claimed),
         "Bounty status does not allow approval of the execution result"
@@ -521,6 +517,7 @@ impl BountiesContract {
           result
         }
         BountyAction::Finalize { .. } => {
+          // TODO
           let (receiver_id, mut claims, claim_idx) = self.internal_find_active_claim(id.clone());
 
           let result = if matches!(claims[claim_idx].status, ClaimStatus::InProgress) &&
@@ -1010,6 +1007,7 @@ mod tests {
       postpaid: None,
       payment_at: None,
       payment_confirmed_at: None,
+      multitasking: None,
     };
     contract.bounties.insert(&bounty_index, &bounty.clone().into());
     contract.account_bounties.insert(owner, &vec![bounty_index]);

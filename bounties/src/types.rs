@@ -108,6 +108,9 @@ pub enum BountyStatus {
   Claimed,
   Completed,
   Canceled,
+  ManyClaimed,
+  AwaitingClaims,
+  PartiallyCompleted,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -312,6 +315,133 @@ pub enum PlaceOfCheckKYC {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum DateOrPeriod {
+  Date { date: U64 },
+  Period { period: U64 },
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum StartConditions {
+  MinAmountToStart { amount: u16 },
+  ManuallyStart,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct Subtask {
+  pub subtask_description: String,
+  pub subtask_percent: u32,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct ContestOrHackathonEnv {
+  pub started_at: Option<U64>,
+  pub finished_at: Option<U64>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct OneForAllEnv {
+  pub occupied_slots: u16,
+  pub paid_slots: u16,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum Multitasking {
+  ContestOrHackathon {
+    allowed_create_claim_to: Option<DateOrPeriod>,
+    successful_claims_for_result: Option<u16>,
+    start_conditions: Option<StartConditions>,
+    runtime_env: Option<ContestOrHackathonEnv>,
+  },
+  OneForAll {
+    number_of_slots: u16,
+    amount_per_slot: U128,
+    min_slots_to_start: Option<u16>,
+    runtime_env: Option<OneForAllEnv>,
+  },
+  DifferentTasks { subtasks: Vec<Subtask> },
+}
+
+impl Multitasking {
+  pub fn init(self) -> Self {
+    match self {
+      Multitasking::ContestOrHackathon {
+        allowed_create_claim_to,
+        successful_claims_for_result,
+        start_conditions,
+        ..
+      } => {
+        Multitasking::ContestOrHackathon {
+          allowed_create_claim_to,
+          successful_claims_for_result,
+          start_conditions,
+          runtime_env: Some(ContestOrHackathonEnv {
+            started_at: None,
+            finished_at: None,
+          })
+        }
+      },
+      Multitasking::OneForAll {
+        number_of_slots,
+        amount_per_slot,
+        min_slots_to_start,
+        ..
+      } => {
+        Multitasking::OneForAll {
+          number_of_slots,
+          amount_per_slot,
+          min_slots_to_start,
+          runtime_env: Some(OneForAllEnv {
+            occupied_slots: 0,
+            paid_slots: 0,
+          })
+        }
+      },
+      _ => self.clone(),
+    }
+  }
+
+  pub fn is_allowed_to_create_claim(&self) -> bool {
+    match self {
+      Multitasking::ContestOrHackathon {
+        allowed_create_claim_to,
+        runtime_env,
+        ..
+      } => {
+        if allowed_create_claim_to.is_none() {
+          true
+        } else {
+          match allowed_create_claim_to.clone().unwrap() {
+            DateOrPeriod::Date { date } => date.0 > env::block_timestamp(),
+            DateOrPeriod::Period { period } => {
+              if runtime_env.is_some() && runtime_env.clone().unwrap().started_at.is_some() {
+                let started_at = runtime_env.clone().unwrap().started_at.unwrap();
+                period.0 > env::block_timestamp() - started_at.0
+              } else {
+                true
+              }
+            }
+          }
+        }
+      },
+      // TODO
+      _ => env::panic_str("This is temporarily not supported")
+    }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum Postpaid {
   PaymentOutsideContract { currency: String },
 }
@@ -325,6 +455,7 @@ pub struct BountyCreate {
   pub reviewers: Option<ReviewersParams>,
   pub kyc_config: Option<KycConfig>,
   pub postpaid: Option<Postpaid>,
+  pub multitasking: Option<Multitasking>,
 }
 
 impl BountyCreate {
@@ -380,6 +511,11 @@ impl BountyCreate {
       postpaid: self.postpaid.clone(),
       payment_at: None,
       payment_confirmed_at: None,
+      multitasking: if self.multitasking.is_some() {
+        Some(self.multitasking.clone().unwrap().init())
+      } else {
+        None
+      },
     }
   }
 }
@@ -443,6 +579,27 @@ pub struct BountyV2 {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyV3 {
+  pub token: Option<AccountId>,
+  pub amount: U128,
+  pub platform_fee: U128,
+  pub dao_fee: U128,
+  pub metadata: BountyMetadata,
+  pub deadline: Deadline,
+  pub claimer_approval: ClaimerApproval,
+  pub reviewers: Option<Reviewers>,
+  pub owner: AccountId,
+  pub status: BountyStatus,
+  pub created_at: U64,
+  pub kyc_config: KycConfig,
+  pub postpaid: Option<Postpaid>,
+  pub payment_at: Option<U64>,
+  pub payment_confirmed_at: Option<U64>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Bounty {
   pub token: Option<AccountId>,
   pub amount: U128,
@@ -459,6 +616,7 @@ pub struct Bounty {
   pub postpaid: Option<Postpaid>,
   pub payment_at: Option<U64>,
   pub payment_confirmed_at: Option<U64>,
+  pub multitasking: Option<Multitasking>,
 }
 
 impl Bounty {
@@ -513,6 +671,100 @@ impl Bounty {
             "The expected number of reviewers is greater than zero",
           ),
         _ => (),
+      }
+    }
+    if self.multitasking.is_some() {
+      match self.multitasking.clone().unwrap() {
+        Multitasking::ContestOrHackathon {
+          allowed_create_claim_to,
+          successful_claims_for_result,
+          start_conditions,
+          runtime_env,
+        } => {
+          assert!(
+            runtime_env.is_none(),
+            "The Multitasking instance is already initialized"
+          );
+          if allowed_create_claim_to.is_some() {
+            match allowed_create_claim_to.unwrap() {
+              DateOrPeriod::Date { date } => {
+                assert!(
+                  env::block_timestamp() < date.0 &&
+                    (
+                      self.deadline.get_deadline_type() != 1 ||
+                        date.0 <= self.deadline.get_deadline_value().0
+                    ),
+                  "The date until which it is allowed to create claims is incorrect"
+                );
+              },
+              DateOrPeriod::Period { period } =>
+                assert!(
+                  period.0 > 0,
+                  "Incorrect claim period"
+                ),
+            }
+          }
+          if successful_claims_for_result.is_some() {
+            assert!(
+              successful_claims_for_result.unwrap() > 1,
+              "Incorrect number of successful claims to obtain a result"
+            );
+          }
+          if start_conditions.is_some() {
+            match start_conditions.unwrap() {
+              StartConditions::MinAmountToStart { amount } =>
+                assert!(
+                  amount > 1,
+                  "The minimum number of claims to start is incorrect"
+                ),
+              _ => (),
+            }
+          }
+        },
+        Multitasking::OneForAll {
+          number_of_slots,
+          amount_per_slot,
+          min_slots_to_start,
+          runtime_env,
+        } => {
+          assert!(
+            runtime_env.is_none(),
+            "The Multitasking instance is already initialized"
+          );
+          assert!(
+            number_of_slots > 1,
+            "The number of slots must be greater than one"
+          );
+          assert!(
+            amount_per_slot.0 > 0,
+            "The cost of one slot cannot be zero"
+          );
+          if min_slots_to_start.is_some() {
+            assert!(
+              min_slots_to_start.unwrap() > 1,
+              "The minimum number of claims to start is incorrect"
+            );
+          }
+        },
+        Multitasking::DifferentTasks { subtasks } => {
+          assert!(
+            subtasks.len() > 1,
+            "The number of subtasks must be greater than one"
+          );
+          assert!(
+            subtasks
+              .clone()
+              .into_iter()
+              .find(|subtask| subtask.subtask_description.is_empty())
+              .is_none(),
+            "The subtask description cannot be empty"
+          );
+          assert_eq!(
+            subtasks.into_iter().map(|subtask| subtask.subtask_percent).sum::<u32>(),
+            100_000,
+            "The sum of the cost of all subtasks must equal 100%"
+          );
+        },
       }
     }
   }
@@ -645,6 +897,7 @@ impl Bounty {
 pub enum VersionedBounty {
   V1(BountyV1),
   V2(BountyV2),
+  V3(BountyV3),
   Current(Bounty),
 }
 
@@ -666,8 +919,8 @@ impl VersionedBounty {
     }
   }
 
-  fn upgrade_v2_to_v3(bounty: BountyV2) -> Bounty {
-    Bounty {
+  fn upgrade_v2_to_v3(bounty: BountyV2) -> BountyV3 {
+    BountyV3 {
       token: Some(bounty.token),
       amount: bounty.amount,
       platform_fee: bounty.platform_fee,
@@ -686,14 +939,41 @@ impl VersionedBounty {
     }
   }
 
+  fn upgrade_v3_to_v4(bounty: BountyV3) -> Bounty {
+    Bounty {
+      token: bounty.token,
+      amount: bounty.amount,
+      platform_fee: bounty.platform_fee,
+      dao_fee: bounty.dao_fee,
+      metadata: bounty.metadata,
+      deadline: bounty.deadline,
+      claimer_approval: bounty.claimer_approval,
+      reviewers: bounty.reviewers,
+      owner: bounty.owner,
+      status: bounty.status,
+      created_at: bounty.created_at,
+      kyc_config: bounty.kyc_config,
+      postpaid: None,
+      payment_at: None,
+      payment_confirmed_at: None,
+      multitasking: None,
+    }
+  }
+
   pub fn to_bounty(self) -> Bounty {
     match self {
       VersionedBounty::Current(bounty) => bounty,
       VersionedBounty::V1(bounty_v1) =>
-        VersionedBounty::upgrade_v2_to_v3(
-          VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+        VersionedBounty::upgrade_v3_to_v4(
+          VersionedBounty::upgrade_v2_to_v3(
+            VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+          )
         ),
-      VersionedBounty::V2(bounty_v2) => VersionedBounty::upgrade_v2_to_v3(bounty_v2),
+      VersionedBounty::V2(bounty_v2) =>
+        VersionedBounty::upgrade_v3_to_v4(
+          VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+        ),
+      VersionedBounty::V3(bounty_v3) => VersionedBounty::upgrade_v3_to_v4(bounty_v3),
     }
   }
 }
@@ -703,10 +983,16 @@ impl From<VersionedBounty> for Bounty {
     match value {
       VersionedBounty::Current(bounty) => bounty,
       VersionedBounty::V1(bounty_v1) =>
-        VersionedBounty::upgrade_v2_to_v3(
-          VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+        VersionedBounty::upgrade_v3_to_v4(
+          VersionedBounty::upgrade_v2_to_v3(
+            VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+          )
         ),
-      VersionedBounty::V2(bounty_v2) => VersionedBounty::upgrade_v2_to_v3(bounty_v2),
+      VersionedBounty::V2(bounty_v2) =>
+        VersionedBounty::upgrade_v3_to_v4(
+          VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+        ),
+      VersionedBounty::V3(bounty_v3) => VersionedBounty::upgrade_v3_to_v4(bounty_v3),
     }
   }
 }
@@ -739,6 +1025,8 @@ pub enum ClaimStatus {
   Disputed,
   NotCompleted,
   NotHired,
+  ApprovedCandidate,
+  CompetitionLost,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
