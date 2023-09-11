@@ -410,7 +410,7 @@ impl Multitasking {
     }
   }
 
-  pub fn is_allowed_to_create_claim(&self) -> bool {
+  pub fn is_allowed_to_create_or_approve_claims(&self) -> bool {
     match self {
       Multitasking::ContestOrHackathon {
         allowed_create_claim_to,
@@ -435,6 +435,45 @@ impl Multitasking {
       },
       // TODO
       _ => env::panic_str("This is temporarily not supported")
+    }
+  }
+
+  pub fn is_competition(&self) -> bool {
+    match self {
+      Multitasking::ContestOrHackathon { .. } => true,
+      _ => false
+    }
+  }
+
+  pub fn set_competition_timestamp(self, started_at: Option<U64>) -> Self {
+    match self {
+      Multitasking::ContestOrHackathon {
+        allowed_create_claim_to,
+        successful_claims_for_result,
+        start_conditions,
+        runtime_env,
+      } => {
+        let finished_at = if started_at.is_none() {
+          Some(U64::from(env::block_timestamp()))
+        } else {
+          None
+        };
+        let started_at = if started_at.is_some() {
+          started_at
+        } else {
+          match runtime_env {
+            Some(value) => value.started_at,
+            _ => None
+          }
+        };
+        Multitasking::ContestOrHackathon {
+          allowed_create_claim_to,
+          successful_claims_for_result,
+          start_conditions,
+          runtime_env: Some(ContestOrHackathonEnv { started_at, finished_at }),
+        }
+      },
+      _ => unreachable!(),
     }
   }
 }
@@ -643,13 +682,14 @@ impl Bounty {
       self.amount.0 > 0,
       "The bounty amount is incorrect",
     );
-    if self.postpaid.is_some() {
-      if matches!(self.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. }) {
-        assert!(self.token.is_none(), "Invalid token_id value");
-      }
-    } else {
-      assert!(self.token.is_some(), "Invalid token_id value");
-    }
+    assert!(
+      if self.is_payment_outside_contract() {
+        self.token.is_none()
+      } else {
+        self.token.is_some()
+      },
+      "Invalid token_id value"
+    );
     match self.deadline {
       Deadline::DueDate { due_date } =>
         assert!(
@@ -674,6 +714,10 @@ impl Bounty {
       }
     }
     if self.multitasking.is_some() {
+      assert!(
+        !self.is_payment_outside_contract(),
+        "Multitasking and off-contract payment are incompatible"
+      );
       match self.multitasking.clone().unwrap() {
         Multitasking::ContestOrHackathon {
           allowed_create_claim_to,
@@ -697,11 +741,7 @@ impl Bounty {
                   "The date until which it is allowed to create claims is incorrect"
                 );
               },
-              DateOrPeriod::Period { period } =>
-                assert!(
-                  period.0 > 0,
-                  "Incorrect claim period"
-                ),
+              _ => (),
             }
           }
           if successful_claims_for_result.is_some() {
@@ -875,20 +915,25 @@ impl Bounty {
   }
 
   pub fn assert_postpaid_is_ready(&self, approve: bool) {
-    if self.postpaid.is_some() {
-      match self.postpaid.clone().unwrap() {
-        Postpaid::PaymentOutsideContract { .. } => {
-          assert!(
-            self.payment_at.is_none() || approve,
-            "The result cannot be rejected after the payment has been confirmed"
-          );
-          assert!(
-            self.payment_at.is_some() && self.payment_confirmed_at.is_some(),
-            "No payment confirmation"
-          );
-        },
-      }
+    if self.is_payment_outside_contract() {
+      assert!(
+        self.payment_at.is_none() || approve,
+        "The result cannot be rejected after the payment has been confirmed"
+      );
+      assert!(
+        self.payment_at.is_some() && self.payment_confirmed_at.is_some(),
+        "No payment confirmation"
+      );
     }
+  }
+
+  pub fn is_contest_or_hackathon(&self) -> bool {
+    self.multitasking.is_some() && self.multitasking.clone().unwrap().is_competition()
+  }
+
+  pub fn is_payment_outside_contract(&self) -> bool {
+    self.postpaid.is_some() &&
+      matches!(self.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. })
   }
 }
 
@@ -1025,7 +1070,7 @@ pub enum ClaimStatus {
   Disputed,
   NotCompleted,
   NotHired,
-  ApprovedCandidate,
+  ReadyToStart,
   CompetitionLost,
 }
 

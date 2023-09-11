@@ -67,9 +67,8 @@ impl BountiesContract {
       env::log_str("Bounty refund failed");
       false
     } else {
-      let mut bounty = self.get_bounty(id);
-      self.internal_total_fees_refunding_funds(&bounty);
-      self.internal_change_status_and_save_bounty(&id, &mut bounty, BountyStatus::Canceled);
+      let bounty = self.get_bounty(id);
+      self.internal_bounty_cancellation(id, bounty);
       true
     }
   }
@@ -113,7 +112,7 @@ impl BountiesContract {
       let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         receiver_id.clone(),
-        vec![BountyStatus::Claimed],
+        vec![BountyStatus::Claimed, BountyStatus::ManyClaimed],
         vec![ClaimStatus::Completed],
         false,
         "Bounty status does not allow completion",
@@ -123,8 +122,7 @@ impl BountiesContract {
       if proposal.status == "Approved" {
         self.internal_bounty_payout(id, receiver_id)
       } else if proposal.status == "Rejected" {
-        self.internal_reject_claim(id, receiver_id, &mut bounty, index.unwrap(), &mut claims);
-        PromiseOrValue::Value(())
+        self.internal_reject_claim(id, receiver_id, &mut bounty, index.unwrap(), &mut claims)
       } else {
         env::panic_str("The proposal status is not being processed");
       }
@@ -209,8 +207,15 @@ impl BountiesContract {
         self.internal_bounty_payout(id, receiver_id)
       } else if dispute.status == "InFavorOfProjectOwner" || dispute.status == "CanceledByClaimer" {
         let claim_idx = index.unwrap();
-        self.internal_reset_bounty_to_initial_state(id, &receiver_id, &mut bounty, claim_idx, &mut claims);
-        PromiseOrValue::Value(())
+        self.internal_reset_bounty_to_initial_state(
+          id,
+          &receiver_id,
+          &mut bounty,
+          claim_idx,
+          &mut claims,
+          None,
+          true
+        )
       } else {
         env::panic_str("The dispute status is not being processed");
       }
