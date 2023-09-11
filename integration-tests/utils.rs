@@ -7,8 +7,9 @@ use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Postpaid, ReferenceType, Reviewers,
-               ReviewersParams, TokenDetails, ValidatorsDaoParams, VersionedConfig};
+               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Multitasking, Postpaid,
+               ReferenceType, Reviewers, ReviewersParams, TokenDetails, ValidatorsDaoParams,
+               VersionedConfig};
 use disputes::{Dispute, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
@@ -490,6 +491,7 @@ impl Env {
     total_amount: Option<U128>,
     kyc_required: Option<KycConfig>,
     postpaid: Option<Postpaid>,
+    multitasking: Option<Multitasking>,
     expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let metadata = json!({
@@ -520,6 +522,10 @@ impl Env {
         Some(KycConfig::KycNotRequired)
       },
       "postpaid": match postpaid.clone() {
+        Some(r) => json!(r),
+        _ => json!(null),
+      },
+      "multitasking": match multitasking.clone() {
         Some(r) => json!(r),
         _ => json!(null),
       },
@@ -1094,6 +1100,21 @@ impl Env {
     let res = self.bounties_contract_admin
       .call(self.disputed_bounties.id(), "update_configuration_dictionary_entries")
       .args_json((dict, currency, Option::<bool>::None))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn start_competition(
+    &self,
+    bounty_id: u64,
+  ) -> anyhow::Result<()> {
+    let res = self.project_owner
+      .call(self.disputed_bounties.id(), "start_competition")
+      .args_json((bounty_id,))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
