@@ -378,8 +378,12 @@ impl Multitasking {
         allowed_create_claim_to,
         successful_claims_for_result,
         start_conditions,
-        ..
+        runtime_env,
       } => {
+        assert!(
+          runtime_env.is_none(),
+          "The Multitasking instance is already initialized"
+        );
         Multitasking::ContestOrHackathon {
           allowed_create_claim_to,
           successful_claims_for_result,
@@ -394,8 +398,12 @@ impl Multitasking {
         number_of_slots,
         amount_per_slot,
         min_slots_to_start,
-        ..
+        runtime_env
       } => {
+        assert!(
+          runtime_env.is_none(),
+          "The Multitasking instance is already initialized"
+        );
         Multitasking::OneForAll {
           number_of_slots,
           amount_per_slot,
@@ -723,12 +731,8 @@ impl Bounty {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
-          runtime_env,
+          ..
         } => {
-          assert!(
-            runtime_env.is_none(),
-            "The Multitasking instance is already initialized"
-          );
           if allowed_create_claim_to.is_some() {
             match allowed_create_claim_to.unwrap() {
               DateOrPeriod::Date { date } => {
@@ -765,12 +769,8 @@ impl Bounty {
           number_of_slots,
           amount_per_slot,
           min_slots_to_start,
-          runtime_env,
+          ..
         } => {
-          assert!(
-            runtime_env.is_none(),
-            "The Multitasking instance is already initialized"
-          );
           assert!(
             number_of_slots > 1,
             "The number of slots must be greater than one"
