@@ -438,6 +438,7 @@ impl BountiesContract {
     let was_status_in_progress = matches!(claims[claim_idx].status, ClaimStatus::InProgress);
     assert!(
       matches!(claims[claim_idx].status, ClaimStatus::New) ||
+        matches!(claims[claim_idx].status, ClaimStatus::ReadyToStart) ||
         was_status_in_progress &&
           (matches!(bounty.status, BountyStatus::Claimed) ||
             matches!(bounty.status, BountyStatus::ManyClaimed)),

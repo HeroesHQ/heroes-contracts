@@ -431,7 +431,8 @@ impl BountiesContract {
     return_bond: bool,
   ) -> PromiseOrValue<()> {
     let with_dispute = matches!(claims[claim_idx].status, ClaimStatus::Disputed);
-    let is_new = matches!(claims[claim_idx].status, ClaimStatus::New);
+    let is_new = matches!(claims[claim_idx].status, ClaimStatus::New) ||
+      matches!(claims[claim_idx].status, ClaimStatus::ReadyToStart);
 
     let new_status = if claim_status.is_none() {
       ClaimStatus::NotCompleted
