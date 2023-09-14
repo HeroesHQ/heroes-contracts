@@ -15,7 +15,7 @@ use crate::utils::*;
 async fn main() -> anyhow::Result<()> {
   let e = Env::init().await?;
   // begin tests
-  /*test_create_bounty(&e).await?;
+  test_create_bounty(&e).await?;
   test_bounty_claim(&e).await?;
   test_claim_done(&e).await?;
   test_claim_result_approve_by_validators_dao(&e).await?;
@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
   test_use_commissions(&e).await?;
   test_creating_bounty_for_disabled_token(&e).await?;
   test_approval_by_whitelist_flow(&e).await?;
-  test_postpaid_flow(&e).await?;*/
+  test_postpaid_flow(&e).await?;
   test_competition_flow(&e).await?;
   Ok(())
 }

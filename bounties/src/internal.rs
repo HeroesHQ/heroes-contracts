@@ -341,14 +341,13 @@ impl BountiesContract {
     id: BountyIndex,
     sender_id: &AccountId
   ) -> (Vec<BountyClaim>, usize) {
-    let versioned_claims= self
+    let claims = self
       .bounty_claimers
       .get(&sender_id)
-      .expect("No claimer found");
-    let claims: Vec<BountyClaim> = versioned_claims
+      .expect("No claimer found")
       .into_iter()
       .map(|c| c.into())
-      .collect();
+      .collect::<Vec<_>>();
     let claim_idx = Self::internal_find_claim(id, &claims)
       .expect("No bounty claim found");
     (claims, claim_idx)
