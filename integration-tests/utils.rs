@@ -598,10 +598,11 @@ impl Env {
     &self,
     bounties: &Contract,
     bounty_id: u64,
+    claimer: Option<&AccountId>,
   ) -> anyhow::Result<()> {
     let res = self.project_owner
       .call(bounties.id(), "mark_as_paid")
-      .args_json((bounty_id,))
+      .args_json((bounty_id, claimer))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()

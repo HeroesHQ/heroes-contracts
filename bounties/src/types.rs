@@ -632,6 +632,7 @@ impl BountyCreate {
       } else {
         None
       },
+      competition_winner: None,
     }
   }
 }
@@ -733,6 +734,7 @@ pub struct Bounty {
   pub payment_at: Option<U64>,
   pub payment_confirmed_at: Option<U64>,
   pub multitasking: Option<Multitasking>,
+  pub competition_winner: Option<AccountId>,
 }
 
 impl Bounty {
@@ -791,10 +793,6 @@ impl Bounty {
       }
     }
     if self.multitasking.is_some() {
-      assert!(
-        !self.is_payment_outside_contract(),
-        "Multitasking and off-contract payment are incompatible"
-      );
       match self.multitasking.clone().unwrap() {
         Multitasking::ContestOrHackathon {
           allowed_create_claim_to,
@@ -1071,6 +1069,7 @@ impl VersionedBounty {
       payment_at: None,
       payment_confirmed_at: None,
       multitasking: None,
+      competition_winner: None,
     }
   }
 

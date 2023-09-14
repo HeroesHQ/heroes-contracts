@@ -46,7 +46,8 @@ impl BountiesContract {
     &self,
     id: BountyIndex,
     bounty: &Bounty,
-    approve: bool
+    approve: bool,
+    claimer: &AccountId,
   ) {
     if approve && bounty.multitasking.is_some() {
       let multitasking = bounty.multitasking.clone().unwrap();
@@ -67,6 +68,13 @@ impl BountiesContract {
             assert!(
               claims.len() as u16 >= successful_claims_for_result.unwrap(),
               "Not enough participants finished"
+            );
+          }
+          if bounty.is_payment_outside_contract() {
+            assert!(
+              bounty.competition_winner.is_some() &&
+                bounty.competition_winner.clone().unwrap() == claimer.clone(),
+              "Only the winner of the competition can be approved"
             );
           }
         },
@@ -402,7 +410,7 @@ impl BountiesContract {
       if bounty.status == BountyStatus::ManyClaimed &&
         bounty.multitasking.clone().unwrap().get_participants() == 1
       {
-        self.internal_finish_competition(bounty);
+        self.internal_finish_competition(bounty, None);
         bounty.status = BountyStatus::New;
       }
     } else {
@@ -996,10 +1004,18 @@ impl BountiesContract {
     );
   }
 
-  pub(crate) fn internal_finish_competition(&mut self, bounty: &mut Bounty) {
+  pub(crate) fn internal_finish_competition(
+    &mut self,
+    bounty:
+    &mut Bounty,
+    winner: Option<AccountId>
+  ) {
     bounty.multitasking = Some(
       bounty.multitasking.clone().unwrap().set_competition_timestamp(None)
     );
+    if winner.is_some() {
+      bounty.competition_winner = winner;
+    }
   }
 
   pub(crate) fn internal_participants_increment(&mut self, bounty: &mut Bounty) {
@@ -1450,7 +1466,7 @@ impl BountiesContract {
     self.internal_save_claims(&claimer, &claims);
     if bounty.is_contest_or_hackathon() {
       self.internal_participants_decrement(&mut bounty);
-      self.internal_finish_competition(&mut bounty);
+      self.internal_finish_competition(&mut bounty, Some(claimer.clone()));
     }
     self.internal_change_status_and_save_bounty(&id, &mut bounty, BountyStatus::Completed);
     self.internal_update_statistic(

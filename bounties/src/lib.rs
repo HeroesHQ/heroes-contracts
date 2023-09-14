@@ -523,7 +523,7 @@ impl BountiesContract {
 
           let approve = matches!(action, BountyAction::ClaimApproved { .. });
           bounty.assert_postpaid_is_ready(approve);
-          self.assert_multitasking_requirements(id, &bounty, approve);
+          self.assert_multitasking_requirements(id, &bounty, approve, &receiver_id);
 
           let result = if approve {
             self.internal_bounty_payout(id, receiver_id)
@@ -735,7 +735,7 @@ impl BountiesContract {
   }
 
   #[payable]
-  pub fn mark_as_paid(&mut self, id: BountyIndex) {
+  pub fn mark_as_paid(&mut self, id: BountyIndex, claimer: Option<AccountId>) {
     assert_one_yocto();
 
     let sender_id = env::predecessor_account_id();
@@ -746,15 +746,28 @@ impl BountiesContract {
       "This method is allowed to be used only when paying outside the contract"
     );
     assert!(
-      matches!(bounty.status, BountyStatus::Claimed),
+      bounty.status == BountyStatus::Claimed || bounty.status == BountyStatus::ManyClaimed,
       "Bounty status does not allow this action"
     );
     assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
-    let (_, claims, claim_idx) = self.internal_find_active_claim(id.clone());
-    assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::Completed),
-      "The status of the claim does not allow this action"
-    );
+
+    if bounty.is_contest_or_hackathon() {
+      assert!(claimer.is_some(), "The claimer parameter is mandatory for the competition");
+      let (claims, claim_idx) = self.internal_get_claims(id.clone(), &claimer.clone().unwrap());
+      assert!(
+        matches!(claims[claim_idx].status, ClaimStatus::Completed),
+        "The status of the claim does not allow this action"
+      );
+      bounty.competition_winner = claimer;
+    } else {
+      assert!(claimer.is_none(), "The claimer parameter is required only for the competition");
+      let (_, claims, claim_idx) = self.internal_find_active_claim(id.clone());
+      assert!(
+        matches!(claims[claim_idx].status, ClaimStatus::Completed),
+        "The status of the claim does not allow this action"
+      );
+    }
+
     assert!(bounty.payment_at.is_none(), "This action has already been performed");
 
     bounty.payment_at = Some(U64::from(env::block_timestamp()));
@@ -773,11 +786,20 @@ impl BountiesContract {
       "This method is allowed to be used only when paying outside the contract"
     );
     assert!(
-      matches!(bounty.status, BountyStatus::Claimed),
+      bounty.status == BountyStatus::Claimed || bounty.status == BountyStatus::ManyClaimed,
       "Bounty status does not allow this action"
     );
-    let (receiver_id, _, _) = self.internal_find_active_claim(id);
-    assert_eq!(receiver_id, sender_id, "Only the owner of the claim is allowed this action");
+    if bounty.is_contest_or_hackathon() {
+      assert!(
+        bounty.competition_winner.is_some() &&
+          bounty.competition_winner.clone().unwrap() == sender_id,
+        "You aren't a contest winner"
+      );
+    } else {
+      let (receiver_id, _, _) = self.internal_find_active_claim(id);
+      assert_eq!(receiver_id, sender_id, "Only the owner of the claim is allowed this action");
+    }
+
     assert!(bounty.payment_at.is_some(), "Payment by the bounty owner has not yet been confirmed");
     assert!(bounty.payment_confirmed_at.is_none(), "This action has already been performed");
 
@@ -1036,6 +1058,7 @@ mod tests {
       payment_at: None,
       payment_confirmed_at: None,
       multitasking: None,
+      competition_winner: None,
     };
     contract.internal_update_bounty(&bounty_index, bounty.clone());
     contract.account_bounties.insert(owner, &vec![bounty_index]);

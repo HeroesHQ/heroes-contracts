@@ -119,6 +119,7 @@ async fn test_create_bounty(e: &Env) -> anyhow::Result<()> {
       payment_at: None,
       payment_confirmed_at: None,
       multitasking: None,
+      competition_winner: None,
     }
   );
 
@@ -1566,6 +1567,7 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
       payment_at: None,
       payment_confirmed_at: None,
       multitasking: None,
+      competition_winner: None,
     }
   );
 
@@ -2253,7 +2255,7 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     freelancer_balance + BOUNTY_AMOUNT.0
   );
 
-  e.mark_as_paid(&e.disputed_bounties, bounty_id).await?;
+  e.mark_as_paid(&e.disputed_bounties, bounty_id, None).await?;
 
   Env::bounty_action_by_user(
     &e.disputed_bounties,
@@ -2636,6 +2638,84 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
 
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
   assert_eq!(bounty_claims[0].1.status, ClaimStatus::NotCompleted);
+
+  e.add_to_owners_whitelist().await?;
+  e.add_bounty(
+    &e.disputed_bounties,
+    json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
+    json!("WithoutApproval"),
+    None,
+    Some(BOUNTY_AMOUNT),
+    None,
+    Some(Postpaid::PaymentOutsideContract { currency: "USD".to_string() }),
+    Some(Multitasking::ContestOrHackathon {
+      allowed_create_claim_to: None,
+      successful_claims_for_result: None,
+      start_conditions: None,
+      runtime_env: None,
+    }),
+    None,
+  ).await?;
+  e.remove_from_owners_whitelist().await?;
+
+  let next_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
+  assert_eq!(next_bounty_id, last_bounty_id + 4);
+  let bounty_id = last_bounty_id + 3;
+  let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
+  assert_eq!(bounty.status, BountyStatus::New);
+  //println!("{:#?}", bounty);
+
+  let mut freelancers: Vec<Account> = vec![];
+  for x in 0..2 {
+    let freelancer_name = format!("freelancer{}", x + 25);
+    let freelancer = e.add_account(freelancer_name.as_str()).await?;
+    //println!("{}", freelancer.id());
+
+    Env::register_user(&e.test_token, freelancer.id()).await?;
+
+    e.bounty_claim(
+      &e.disputed_bounties,
+      bounty_id,
+      U64(1_000_000_000 * 60 * 60 * 24 * 2),
+      "Test claim".to_string(),
+      Some(&freelancer),
+      None
+    ).await?;
+
+    e.bounty_done(
+      &e.disputed_bounties,
+      bounty_id,
+      "test description".to_string(),
+      Some(&freelancer),
+      None
+    ).await?;
+
+    freelancers.push(freelancer)
+  }
+
+  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancers[0].id())).await?;
+  e.confirm_payment(&e.disputed_bounties, bounty_id, Some(&freelancers[0])).await?;
+
+  Env::bounty_action_by_user(
+    &e.disputed_bounties,
+    bounty_id,
+    &e.project_owner,
+    &BountyAction::ClaimApproved {
+      receiver_id: freelancers[0].id().to_string().parse().unwrap()
+    },
+    None,
+  ).await?;
+
+  let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
+  assert_eq!(bounty.status, BountyStatus::Completed);
+  //println!("{:#?}", bounty);
+  let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
+  //println!("{:#?}", bounty_claims);
+  assert_eq!(bounty_claims.len(), 2);
+  assert_eq!(bounty_claims[0].0.to_string(), freelancers[0].id().to_string());
+  assert_eq!(bounty_claims[0].1.status, ClaimStatus::Approved);
+  assert_eq!(bounty_claims[1].0.to_string(), freelancers[1].id().to_string());
+  assert_eq!(bounty_claims[1].1.status, ClaimStatus::Completed);
 
   println!("      Passed ✅ Test - competition flow");
   Ok(())
