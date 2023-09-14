@@ -49,13 +49,18 @@ impl BountiesContract {
     approve: bool
   ) {
     if approve && bounty.multitasking.is_some() {
-      match bounty.multitasking.clone().unwrap() {
+      let multitasking = bounty.multitasking.clone().unwrap();
+      match multitasking {
         Multitasking::ContestOrHackathon { successful_claims_for_result, .. } => {
           let deadline = bounty.deadline.clone();
           assert!(
             deadline.get_deadline_type() != 1 ||
               env::block_timestamp() > deadline.get_deadline_value().0,
             "The winner of the competition can be determined only after the deadline."
+          );
+          assert!(
+            multitasking.has_competition_started(),
+            "The competition does not continue"
           );
           if successful_claims_for_result.is_some() {
             let claims = self.get_claims_with_statuses(id, vec![ClaimStatus::Completed], None);
@@ -73,7 +78,7 @@ impl BountiesContract {
 
   pub(crate) fn internal_add_bounty(&mut self, bounty: Bounty) -> BountyIndex {
     let id = self.last_bounty_id;
-    self.bounties.insert(&id, &bounty.clone().into());
+    self.internal_update_bounty(&id, bounty.clone());
     let mut indices = self
       .account_bounties
       .get(&bounty.owner)
@@ -393,27 +398,21 @@ impl BountiesContract {
     claim_status: Option<ClaimStatus>,
     return_bond: bool,
   ) -> PromiseOrValue<()> {
-    let mut without_change_status = false;
     if bounty.is_contest_or_hackathon() {
-      let claims = self.get_claims_with_statuses(
-        id,
-        vec![ClaimStatus::Completed, ClaimStatus::InProgress],
-        Some(receiver_id.clone())
-      );
-      if matches!(bounty.status, BountyStatus::ManyClaimed) && claims.len() == 0 {
-        bounty.multitasking = Some(
-          bounty.multitasking.clone().unwrap().set_competition_timestamp(None)
-        );
-      } else {
-        without_change_status = true;
+      self.internal_participants_decrement(bounty);
+      if bounty.status == BountyStatus::ManyClaimed &&
+        bounty.multitasking.clone().unwrap().get_participants() == 1
+      {
+        self.internal_finish_competition(bounty);
+        bounty.status = BountyStatus::New;
       }
+    } else {
+      bounty.status = BountyStatus::New;
     }
-    if !without_change_status {
-      self.internal_change_status_and_save_bounty(&id, bounty, BountyStatus::New);
-    }
+    self.internal_update_bounty(&id, bounty.clone());
     self.internal_claim_closure(
       receiver_id,
-      bounty.owner.clone(),
+      &bounty,
       claim_idx,
       claims,
       claim_status,
@@ -424,15 +423,15 @@ impl BountiesContract {
   pub(crate) fn internal_claim_closure(
     &mut self,
     receiver_id: &AccountId,
-    bounty_owner: AccountId,
+    bounty: &Bounty,
     claim_idx: usize,
     claims: &mut Vec<BountyClaim>,
     claim_status: Option<ClaimStatus>,
     return_bond: bool,
   ) -> PromiseOrValue<()> {
-    let with_dispute = matches!(claims[claim_idx].status, ClaimStatus::Disputed);
-    let is_new = matches!(claims[claim_idx].status, ClaimStatus::New) ||
-      matches!(claims[claim_idx].status, ClaimStatus::ReadyToStart);
+    let with_dispute = claims[claim_idx].status == ClaimStatus::Disputed;
+    let is_new = claims[claim_idx].status == ClaimStatus::New ||
+      claims[claim_idx].status == ClaimStatus::Competes && bounty.status == BountyStatus::New;
 
     let new_status = if claim_status.is_none() {
       ClaimStatus::NotCompleted
@@ -447,14 +446,16 @@ impl BountiesContract {
       _ => unreachable!(),
     };
 
+    let bounty_owner = if new_status == ClaimStatus::NotCompleted {
+      Some(bounty.owner.clone())
+    } else {
+      None
+    };
+
     claims[claim_idx].status = new_status;
     self.internal_save_claims(receiver_id, &claims);
-    if !is_new || !matches!(new_status, ClaimStatus::Canceled) {
-      self.internal_update_statistic(
-        Some(receiver_id.clone()),
-        if matches!(new_status, ClaimStatus::NotCompleted) { Some(bounty_owner) } else { None },
-        action_kind,
-      );
+    if !is_new || new_status != ClaimStatus::Canceled {
+      self.internal_update_statistic(Some(receiver_id.clone()), bounty_owner, action_kind);
     }
 
     if return_bond {
@@ -489,6 +490,14 @@ impl BountiesContract {
     )
   }
 
+  pub(crate) fn internal_update_bounty(
+    &mut self,
+    id: &BountyIndex,
+    bounty: Bounty,
+  ) {
+    self.bounties.insert(&id, &bounty.clone().into());
+  }
+
   pub(crate) fn internal_change_status_and_save_bounty(
     &mut self,
     id: &BountyIndex,
@@ -496,15 +505,24 @@ impl BountiesContract {
     status: BountyStatus,
   ) {
     bounty.status = status;
-    self.bounties.insert(&id, &bounty.clone().into());
+    self.internal_update_bounty(&id, bounty.clone());
   }
 
   pub(crate) fn is_claim_active(claim: &BountyClaim) -> bool {
-    matches!(claim.status, ClaimStatus::InProgress)
-      || matches!(claim.status, ClaimStatus::Completed)
-      || matches!(claim.status, ClaimStatus::Rejected)
-      || matches!(claim.status, ClaimStatus::Disputed)
+    claim.status == ClaimStatus::InProgress
+      || claim.status == ClaimStatus::Completed
+      || claim.status == ClaimStatus::Rejected
+      || claim.status == ClaimStatus::Disputed
   }
+
+  /*pub(crate) fn is_claim_status_in_progress(claim_status: ClaimStatus, bounty: &Bounty) -> bool {
+    if bounty.is_contest_or_hackathon() {
+      let multitasking = bounty.multitasking.clone().unwrap();
+      claim_status == ClaimStatus::Competes && multitasking.has_competition_started()
+    } else {
+      claim_status == ClaimStatus::InProgress
+    }
+  }*/
 
   pub(crate) fn internal_find_active_claim(
     &self,
@@ -872,7 +890,7 @@ impl BountiesContract {
   ) -> Option<AccountId> {
     let claims = self.get_bounty_claims_by_id(id.clone());
     for claim in claims {
-      if matches!(claim.1.status, ClaimStatus::Disputed) {
+      if claim.1.status == ClaimStatus::Disputed {
         return Some(claim.0.clone())
       }
     }
@@ -972,34 +990,30 @@ impl BountiesContract {
   pub(crate) fn internal_start_competition(
     &mut self,
     bounty: &mut Bounty,
-    claims: Vec<(AccountId, BountyClaim)>,
     start_time: Option<U64>
   ) {
-    bounty.multitasking = Some(bounty.multitasking.clone().unwrap().set_competition_timestamp(start_time));
-
-    self.internal_update_status_of_many_claims(
-      claims,
-      vec![ClaimStatus::ReadyToStart],
-      ClaimStatus::InProgress,
-      start_time,
+    bounty.multitasking = Some(
+      bounty.multitasking.clone().unwrap().set_competition_timestamp(start_time)
     );
   }
 
-  pub(crate) fn internal_finish_competition(&mut self, id: BountyIndex, bounty: &mut Bounty) {
-    bounty.multitasking = Some(bounty.multitasking.clone().unwrap().set_competition_timestamp(None));
-
-    let claims = self.get_claims_with_statuses(
-      id,
-      // vec![ClaimStatus::Completed, ClaimStatus::InProgress],
-      vec![ClaimStatus::Completed],
-      None
+  pub(crate) fn internal_finish_competition(&mut self, bounty: &mut Bounty) {
+    bounty.multitasking = Some(
+      bounty.multitasking.clone().unwrap().set_competition_timestamp(None)
     );
-    self.internal_update_status_of_many_claims(
-      claims,
-      // vec![ClaimStatus::Completed, ClaimStatus::InProgress],
-      vec![ClaimStatus::Completed],
-      ClaimStatus::CompetitionLost,
-      None,
+  }
+
+  pub(crate) fn internal_participants_increment(&mut self, bounty: &mut Bounty) {
+    let multitasking = bounty.multitasking.clone().unwrap();
+    bounty.multitasking = Some(
+      multitasking.clone().set_competition_participants(multitasking.clone().get_participants() + 1)
+    );
+  }
+
+  pub(crate) fn internal_participants_decrement(&mut self, bounty: &mut Bounty) {
+    let multitasking = bounty.multitasking.clone().unwrap();
+    bounty.multitasking = Some(
+      multitasking.clone().set_competition_participants(multitasking.clone().get_participants() - 1)
     );
   }
 
@@ -1011,14 +1025,11 @@ impl BountiesContract {
     claimer: &AccountId,
     is_kyc_delayed: Option<DefermentOfKYC>,
   ) {
-    let mut bounty_status = bounty.status.clone();
-    let mut need_to_update_status = false;
     let start_time = Some(U64::from(env::block_timestamp()));
 
     if bounty.multitasking.is_none() {
-      bounty_status = BountyStatus::Claimed;
+      bounty.status = BountyStatus::Claimed;
       claim.status = ClaimStatus::InProgress;
-      need_to_update_status = true;
 
     } else {
       assert!(
@@ -1026,48 +1037,30 @@ impl BountiesContract {
         "It is no longer possible to approve the claim"
       );
 
-      match bounty.multitasking.clone().unwrap() {
+      let multitasking = bounty.multitasking.clone().unwrap();
+      match multitasking.clone() {
         Multitasking::ContestOrHackathon { start_conditions, .. } => {
-          let started = matches!(bounty.status, BountyStatus::ManyClaimed);
-          let claims = self.get_claims_with_statuses(
-            id,
-            vec![ClaimStatus::ReadyToStart],
-            Some(claimer.clone())
-          );
+          let started = multitasking.clone().has_competition_started();
 
           if start_conditions.is_none() {
             if !started {
-              bounty_status = BountyStatus::ManyClaimed;
-              need_to_update_status = true;
+              bounty.status = BountyStatus::ManyClaimed;
             }
-            claim.status = ClaimStatus::InProgress;
           } else {
             match start_conditions.clone().unwrap() {
               StartConditions::MinAmountToStart { amount } => {
-                if started {
-                  claim.status = ClaimStatus::InProgress;
-                } else {
-                  if claims.len() as u16 == amount - 1 {
-                    bounty_status = BountyStatus::ManyClaimed;
-                    claim.status = ClaimStatus::InProgress;
-                    need_to_update_status = true;
-                  } else {
-                    claim.status = ClaimStatus::ReadyToStart;
-                  }
+                if !started && multitasking.clone().get_participants() == amount as u32 - 1 {
+                  bounty.status = BountyStatus::ManyClaimed;
                 }
               },
-              _ => {
-                claim.status = if started {
-                  ClaimStatus::InProgress
-                } else {
-                  ClaimStatus::ReadyToStart
-                };
-              }
+              _ => {},
             }
           }
 
-          if !started && matches!(bounty_status, BountyStatus::ManyClaimed) {
-            self.internal_start_competition(bounty, claims, start_time);
+          self.internal_participants_increment(bounty);
+          claim.status = ClaimStatus::Competes;
+          if !started && bounty.status == BountyStatus::ManyClaimed {
+            self.internal_start_competition(bounty, start_time);
           }
         },
         // TODO
@@ -1075,12 +1068,8 @@ impl BountiesContract {
       }
     }
 
-    if need_to_update_status {
-      self.internal_change_status_and_save_bounty(&id, bounty, bounty_status);
-    }
-    if claim.status == ClaimStatus::InProgress {
-      claim.start_time = start_time;
-    }
+    self.internal_update_bounty(&id, bounty.clone());
+    claim.start_time = start_time;
     claim.is_kyc_delayed = is_kyc_delayed;
 
     self.internal_update_statistic(
@@ -1090,7 +1079,7 @@ impl BountiesContract {
     );
   }
 
-  pub(crate) fn internal_update_status_of_many_claims(
+  /*pub(crate) fn internal_update_status_of_many_claims(
     &mut self,
     claims: Vec<(AccountId, BountyClaim)>,
     old_statuses: Vec<ClaimStatus>,
@@ -1111,7 +1100,7 @@ impl BountiesContract {
           self.internal_save_claims(&claimer, &claims);
         }
       });
-  }
+  }*/
 
   pub(crate) fn internal_get_ft_metadata(
     &self,
@@ -1153,9 +1142,9 @@ impl BountiesContract {
             claim.is_some()
               && claim.unwrap().is_kyc_delayed.is_some()
               && matches!(
-                      claim.unwrap().is_kyc_delayed.clone().unwrap(),
-                      DefermentOfKYC::BeforeDeadline
-                    )
+                   claim.unwrap().is_kyc_delayed.clone().unwrap(),
+                   DefermentOfKYC::BeforeDeadline
+                 )
               || claimer.is_some()
               && !self.is_approval_required(&bounty, &claimer.unwrap())
           }
@@ -1251,10 +1240,8 @@ impl BountiesContract {
             vec![BountyStatus::New, BountyStatus::ManyClaimed],
             vec![
               ClaimStatus::New,
-              ClaimStatus::ReadyToStart,
-              ClaimStatus::InProgress,
+              ClaimStatus::Competes,
               ClaimStatus::Completed,
-              ClaimStatus::CompetitionLost,
               ClaimStatus::NotHired,
             ],
             true,
@@ -1434,7 +1421,7 @@ impl BountiesContract {
       id.clone(),
       claimer.clone(),
       vec![BountyStatus::Claimed, BountyStatus::ManyClaimed],
-      vec![ClaimStatus::InProgress],
+      vec![ClaimStatus::InProgress, ClaimStatus::Competes],
       false,
       "Bounty status does not allow to completion",
       "The claim status does not allow to complete the bounty"
@@ -1458,12 +1445,13 @@ impl BountiesContract {
     );
 
     let claim_idx = index.unwrap();
-    let with_dispute = matches!(claims[claim_idx].status, ClaimStatus::Disputed);
+    let with_dispute = claims[claim_idx].status == ClaimStatus::Disputed;
     claims[claim_idx].status = ClaimStatus::Approved;
     self.internal_total_fees_unlocking_funds(&bounty);
     self.internal_save_claims(&claimer, &claims);
     if bounty.is_contest_or_hackathon() {
-      self.internal_finish_competition(id, &mut bounty);
+      self.internal_participants_decrement(&mut bounty);
+      self.internal_finish_competition(&mut bounty);
     }
     self.internal_change_status_and_save_bounty(&id, &mut bounty, BountyStatus::Completed);
     self.internal_update_statistic(
@@ -1534,17 +1522,19 @@ impl BountiesContract {
     mut claims: Vec<BountyClaim>,
     claim_idx: usize,
   ) -> Option<PromiseOrValue<()>> {
-    if matches!(claims[claim_idx].status, ClaimStatus::InProgress) &&
-      (matches!(bounty.status, BountyStatus::Claimed) ||
-        matches!(bounty.status, BountyStatus::ManyClaimed)) &&
-      claims[claim_idx].is_claim_expired()
+    if (claims[claim_idx].status == ClaimStatus::InProgress ||
+      claims[claim_idx].status == ClaimStatus::Competes) &&
+      (bounty.status == BountyStatus::Claimed ||
+        bounty.status == BountyStatus::ManyClaimed ||
+        bounty.status == BountyStatus::Completed) &&
+      claims[claim_idx].is_claim_expired(&bounty)
     {
       Some(self.internal_set_claim_expiry_status(id, &receiver_id, &mut bounty, claim_idx, &mut claims))
     }
 
-    else if matches!(claims[claim_idx].status, ClaimStatus::Completed) &&
-      (matches!(bounty.status, BountyStatus::Claimed) ||
-        matches!(bounty.status, BountyStatus::ManyClaimed)) &&
+    else if claims[claim_idx].status == ClaimStatus::Completed &&
+      (bounty.status == BountyStatus::Claimed ||
+        bounty.status == BountyStatus::ManyClaimed) &&
       bounty.is_validators_dao_used()
     {
       Some(self.internal_check_bounty_payout_proposal(
@@ -1555,8 +1545,8 @@ impl BountiesContract {
       ))
     }
 
-    else if matches!(claims[claim_idx].status, ClaimStatus::Rejected) &&
-      matches!(bounty.status, BountyStatus::Claimed) &&
+    else if claims[claim_idx].status == ClaimStatus::Rejected &&
+      bounty.status == BountyStatus::Claimed &&
       self.is_deadline_for_opening_dispute_expired(&claims[claim_idx])
     {
       Some(self.internal_reset_bounty_to_initial_state(
@@ -1570,8 +1560,8 @@ impl BountiesContract {
       ))
     }
 
-    else if matches!(claims[claim_idx].status, ClaimStatus::Disputed) &&
-      matches!(bounty.status, BountyStatus::Claimed)
+    else if claims[claim_idx].status == ClaimStatus::Disputed &&
+      bounty.status == BountyStatus::Claimed
     {
       Some(self.internal_get_dispute(id, receiver_id, claims[claim_idx].dispute_id.unwrap()))
     }
@@ -1585,7 +1575,7 @@ impl BountiesContract {
     &mut self,
     id: BountyIndex,
     receiver_id: AccountId,
-    bounty: Bounty,
+    bounty: &mut Bounty,
   ) -> PromiseOrValue<()> {
     let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &receiver_id);
     let is_competition = bounty.is_contest_or_hackathon();
@@ -1603,8 +1593,8 @@ impl BountiesContract {
       }
     }
 
-    if matches!(claims[claim_idx].status, ClaimStatus::New) &&
-      matches!(bounty.status, BountyStatus::New) &&
+    if claims[claim_idx].status == ClaimStatus::New &&
+      bounty.status == BountyStatus::New &&
       bounty.is_validators_dao_used()
     {
       self.internal_check_approve_claimer_proposal(
@@ -1615,13 +1605,13 @@ impl BountiesContract {
       )
     }
 
-    else if matches!(claims[claim_idx].status, ClaimStatus::New) &&
-      (matches!(bounty.status, BountyStatus::Completed) ||
-        matches!(bounty.status, BountyStatus::Canceled))
+    else if claims[claim_idx].status == ClaimStatus::New &&
+      (bounty.status == BountyStatus::Completed ||
+        bounty.status == BountyStatus::Canceled)
     {
       self.internal_claim_closure(
         &receiver_id,
-        bounty.owner,
+        &bounty,
         claim_idx,
         &mut claims,
         Some(ClaimStatus::Canceled),
@@ -1629,17 +1619,25 @@ impl BountiesContract {
       )
     }
 
-    else if matches!(bounty.status, BountyStatus::Completed) &&
-      (matches!(claims[claim_idx].status, ClaimStatus::InProgress) ||
-        matches!(claims[claim_idx].status, ClaimStatus::CompetitionLost)) &&
+    else if (bounty.status == BountyStatus::Completed ||
+      bounty.status == BountyStatus::Canceled) &&
+      (claims[claim_idx].status == ClaimStatus::Competes ||
+        claims[claim_idx].status == ClaimStatus::Completed) &&
       is_competition
     {
+      self.internal_participants_decrement(bounty);
+      self.internal_update_bounty(&id, bounty.clone());
+      let new_status = if bounty.status == BountyStatus::Canceled {
+        Some(ClaimStatus::Canceled)
+      } else {
+        None
+      };
       self.internal_claim_closure(
         &receiver_id,
-        bounty.owner,
+        &bounty,
         claim_idx,
         &mut claims,
-        None,
+        new_status,
         true
       )
     }

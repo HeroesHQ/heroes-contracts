@@ -342,6 +342,17 @@ pub struct Subtask {
 pub struct ContestOrHackathonEnv {
   pub started_at: Option<U64>,
   pub finished_at: Option<U64>,
+  pub participants: u32,
+}
+
+impl Default for ContestOrHackathonEnv {
+  fn default() -> Self {
+    ContestOrHackathonEnv {
+      started_at: None,
+      finished_at: None,
+      participants: 0,
+    }
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -350,6 +361,15 @@ pub struct ContestOrHackathonEnv {
 pub struct OneForAllEnv {
   pub occupied_slots: u16,
   pub paid_slots: u16,
+}
+
+impl Default for OneForAllEnv {
+  fn default() -> Self {
+    OneForAllEnv {
+      occupied_slots: 0,
+      paid_slots: 0,
+    }
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -388,10 +408,7 @@ impl Multitasking {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
-          runtime_env: Some(ContestOrHackathonEnv {
-            started_at: None,
-            finished_at: None,
-          })
+          runtime_env: Some(ContestOrHackathonEnv::default())
         }
       },
       Multitasking::OneForAll {
@@ -408,10 +425,7 @@ impl Multitasking {
           number_of_slots,
           amount_per_slot,
           min_slots_to_start,
-          runtime_env: Some(OneForAllEnv {
-            occupied_slots: 0,
-            paid_slots: 0,
-          })
+          runtime_env: Some(OneForAllEnv::default())
         }
       },
       _ => self.clone(),
@@ -453,6 +467,42 @@ impl Multitasking {
     }
   }
 
+  pub fn has_competition_started(&self) -> bool {
+    match self {
+      Multitasking::ContestOrHackathon { runtime_env, .. } =>
+        runtime_env.is_some() &&
+          runtime_env.clone().unwrap().started_at.is_some() &&
+          runtime_env.clone().unwrap().finished_at.is_none(),
+      _ => unreachable!(),
+    }
+  }
+
+  /*pub fn has_competition_finished(&self) -> bool {
+    match self {
+      Multitasking::ContestOrHackathon { runtime_env, .. } =>
+        runtime_env.clone().is_some() && runtime_env.clone().unwrap().finished_at.is_some(),
+      _ => unreachable!(),
+    }
+  }*/
+
+  pub fn get_competition_timestamps(&self) -> (Option<U64>, Option<U64>) {
+    match self {
+      Multitasking::ContestOrHackathon { runtime_env, .. } => {
+        let env = runtime_env.clone().unwrap_or_default();
+        (env.started_at, env.finished_at)
+      },
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn get_participants(&self) -> u32 {
+    match self {
+      Multitasking::ContestOrHackathon { runtime_env, .. } =>
+        if runtime_env.is_some() { runtime_env.clone().unwrap().participants } else { 0 },
+      _ => unreachable!(),
+    }
+  }
+
   pub fn set_competition_timestamp(self, started_at: Option<U64>) -> Self {
     match self {
       Multitasking::ContestOrHackathon {
@@ -469,16 +519,35 @@ impl Multitasking {
         let started_at = if started_at.is_some() {
           started_at
         } else {
-          match runtime_env {
-            Some(value) => value.started_at,
-            _ => None
-          }
+          runtime_env.clone().unwrap_or_default().started_at
         };
+        let participants = runtime_env.clone().unwrap_or_default().participants;
         Multitasking::ContestOrHackathon {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
-          runtime_env: Some(ContestOrHackathonEnv { started_at, finished_at }),
+          runtime_env: Some(ContestOrHackathonEnv { started_at, finished_at, participants }),
+        }
+      },
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn set_competition_participants(self, participants: u32) -> Self {
+    match self {
+      Multitasking::ContestOrHackathon {
+        allowed_create_claim_to,
+        successful_claims_for_result,
+        start_conditions,
+        runtime_env,
+      } => {
+        let mut new_runtime_env = runtime_env.unwrap_or_default();
+        new_runtime_env.participants = participants;
+        Multitasking::ContestOrHackathon {
+          allowed_create_claim_to,
+          successful_claims_for_result,
+          start_conditions,
+          runtime_env: Some(new_runtime_env),
         }
       },
       _ => unreachable!(),
@@ -1070,8 +1139,9 @@ pub enum ClaimStatus {
   Disputed,
   NotCompleted,
   NotHired,
-  ReadyToStart,
-  CompetitionLost,
+  //ReadyToStart,
+  //CompetitionLost,
+  Competes,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -1137,8 +1207,17 @@ pub struct BountyClaim {
 }
 
 impl BountyClaim {
-  pub fn is_claim_expired(&self) -> bool {
-    env::block_timestamp() > self.start_time.unwrap().0 + self.deadline.0
+  pub fn get_start_time(&self, bounty: &Bounty) -> U64 {
+    if bounty.is_contest_or_hackathon() {
+      let multitasking = bounty.multitasking.clone().unwrap();
+      self.start_time.unwrap_or(multitasking.get_competition_timestamps().0.unwrap())
+    } else {
+      self.start_time.unwrap()
+    }
+  }
+
+  pub fn is_claim_expired(&self, bounty: &Bounty) -> bool {
+    env::block_timestamp() > self.get_start_time(bounty).0 + self.deadline.0
   }
 }
 

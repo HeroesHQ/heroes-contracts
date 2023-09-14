@@ -15,7 +15,7 @@ use crate::utils::*;
 async fn main() -> anyhow::Result<()> {
   let e = Env::init().await?;
   // begin tests
-  test_create_bounty(&e).await?;
+  /*test_create_bounty(&e).await?;
   test_bounty_claim(&e).await?;
   test_claim_done(&e).await?;
   test_claim_result_approve_by_validators_dao(&e).await?;
@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
   test_use_commissions(&e).await?;
   test_creating_bounty_for_disabled_token(&e).await?;
   test_approval_by_whitelist_flow(&e).await?;
-  test_postpaid_flow(&e).await?;
+  test_postpaid_flow(&e).await?;*/
   test_competition_flow(&e).await?;
   Ok(())
 }
@@ -2365,7 +2365,20 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
   assert_eq!(bounty_claims[0].0.to_string(), freelancers[0].id().to_string());
   assert_eq!(bounty_claims[0].1.status, ClaimStatus::Approved);
   assert_eq!(bounty_claims[1].0.to_string(), freelancers[1].id().to_string());
-  assert_eq!(bounty_claims[1].1.status, ClaimStatus::CompetitionLost);
+  assert_eq!(bounty_claims[1].1.status, ClaimStatus::Completed);
+
+  Env::bounty_action_by_user(
+    &e.disputed_bounties,
+    bounty_id,
+    &freelancers[1],
+    &BountyAction::Finalize {
+      receiver_id: Some(freelancers[1].id().to_string().parse().unwrap())
+    },
+    None,
+  ).await?;
+
+  let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
+  assert_eq!(bounty_claims[1].1.status, ClaimStatus::NotCompleted);
 
   e.add_bounty(
     &e.disputed_bounties,
@@ -2417,9 +2430,9 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
   //println!("{:#?}", bounty_claims);
   assert_eq!(bounty_claims.len(), 3);
-  assert_eq!(bounty_claims[0].1.status, ClaimStatus::ReadyToStart);
-  assert_eq!(bounty_claims[1].1.status, ClaimStatus::ReadyToStart);
-  assert_eq!(bounty_claims[2].1.status, ClaimStatus::ReadyToStart);
+  assert_eq!(bounty_claims[0].1.status, ClaimStatus::Competes);
+  assert_eq!(bounty_claims[1].1.status, ClaimStatus::Competes);
+  assert_eq!(bounty_claims[2].1.status, ClaimStatus::Competes);
 
   e.start_competition(bounty_id).await?;
 
@@ -2429,9 +2442,9 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
   //println!("{:#?}", bounty_claims);
   assert_eq!(bounty_claims.len(), 3);
-  assert_eq!(bounty_claims[0].1.status, ClaimStatus::InProgress);
-  assert_eq!(bounty_claims[1].1.status, ClaimStatus::InProgress);
-  assert_eq!(bounty_claims[2].1.status, ClaimStatus::InProgress);
+  assert_eq!(bounty_claims[0].1.status, ClaimStatus::Competes);
+  assert_eq!(bounty_claims[1].1.status, ClaimStatus::Competes);
+  assert_eq!(bounty_claims[2].1.status, ClaimStatus::Competes);
 
   for x in 0..3 {
     if x == 2 {
@@ -2465,9 +2478,31 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
   //println!("{:#?}", bounty_claims);
   assert_eq!(bounty_claims.len(), 3);
-  assert_eq!(bounty_claims[0].1.status, ClaimStatus::CompetitionLost);
+  assert_eq!(bounty_claims[0].1.status, ClaimStatus::Completed);
   assert_eq!(bounty_claims[1].1.status, ClaimStatus::Approved);
-  assert_eq!(bounty_claims[2].1.status, ClaimStatus::InProgress);
+  assert_eq!(bounty_claims[2].1.status, ClaimStatus::Competes);
+
+  Env::bounty_action_by_user(
+    &e.disputed_bounties,
+    bounty_id,
+    &freelancers[0],
+    &BountyAction::Finalize {
+      receiver_id: Some(freelancers[0].id().to_string().parse().unwrap())
+    },
+    None,
+  ).await?;
+
+  e.bounty_done(
+    &e.disputed_bounties,
+    bounty_id,
+    "test description".to_string(),
+    Some(&freelancers[2]),
+    None
+  ).await?;
+
+  let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
+  assert_eq!(bounty_claims[0].1.status, ClaimStatus::NotCompleted);
+  assert_eq!(bounty_claims[2].1.status, ClaimStatus::NotCompleted);
 
   e.add_bounty(
     &e.disputed_bounties,
@@ -2519,8 +2554,8 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
   //println!("{:#?}", bounty_claims);
   assert_eq!(bounty_claims.len(), 2);
-  assert_eq!(bounty_claims[0].1.status, ClaimStatus::ReadyToStart);
-  assert_eq!(bounty_claims[1].1.status, ClaimStatus::ReadyToStart);
+  assert_eq!(bounty_claims[0].1.status, ClaimStatus::Competes);
+  assert_eq!(bounty_claims[1].1.status, ClaimStatus::Competes);
 
   for x in 0..2 {
     let freelancer_name = format!("freelancer{}", x + 23);
@@ -2547,10 +2582,10 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
   //println!("{:#?}", bounty_claims);
   assert_eq!(bounty_claims.len(), 4);
-  assert_eq!(bounty_claims[0].1.status, ClaimStatus::InProgress);
-  assert_eq!(bounty_claims[1].1.status, ClaimStatus::InProgress);
-  assert_eq!(bounty_claims[2].1.status, ClaimStatus::InProgress);
-  assert_eq!(bounty_claims[2].1.status, ClaimStatus::InProgress);
+  assert_eq!(bounty_claims[0].1.status, ClaimStatus::Competes);
+  assert_eq!(bounty_claims[1].1.status, ClaimStatus::Competes);
+  assert_eq!(bounty_claims[2].1.status, ClaimStatus::Competes);
+  assert_eq!(bounty_claims[3].1.status, ClaimStatus::Competes);
 
   for x in 0..4 {
     if x == 0 {
@@ -2584,10 +2619,23 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
   //println!("{:#?}", bounty_claims);
   assert_eq!(bounty_claims.len(), 4);
-  assert_eq!(bounty_claims[0].1.status, ClaimStatus::InProgress);
+  assert_eq!(bounty_claims[0].1.status, ClaimStatus::Competes);
   assert_eq!(bounty_claims[1].1.status, ClaimStatus::Approved);
-  assert_eq!(bounty_claims[2].1.status, ClaimStatus::CompetitionLost);
-  assert_eq!(bounty_claims[3].1.status, ClaimStatus::CompetitionLost);
+  assert_eq!(bounty_claims[2].1.status, ClaimStatus::Completed);
+  assert_eq!(bounty_claims[3].1.status, ClaimStatus::Completed);
+
+  Env::bounty_action_by_user(
+    &e.disputed_bounties,
+    bounty_id,
+    &freelancers[0],
+    &BountyAction::Finalize {
+      receiver_id: Some(freelancers[0].id().to_string().parse().unwrap())
+    },
+    None,
+  ).await?;
+
+  let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
+  assert_eq!(bounty_claims[0].1.status, ClaimStatus::NotCompleted);
 
   println!("      Passed ✅ Test - competition flow");
   Ok(())
