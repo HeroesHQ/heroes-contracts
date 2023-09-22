@@ -408,7 +408,7 @@ impl BountiesContract {
     if bounty.is_contest_or_hackathon() {
       self.internal_participants_decrement(bounty);
       if bounty.status == BountyStatus::ManyClaimed &&
-        bounty.multitasking.clone().unwrap().get_participants() == 1
+        bounty.multitasking.clone().unwrap().get_participants() == 0
       {
         self.internal_finish_competition(bounty, None);
         bounty.status = BountyStatus::New;

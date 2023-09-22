@@ -445,7 +445,7 @@ impl Multitasking {
           match allowed_create_claim_to.clone().unwrap() {
             DateOrPeriod::Date { date } => date.0 > env::block_timestamp(),
             DateOrPeriod::Period { period } => {
-              if runtime_env.is_some() && runtime_env.clone().unwrap().started_at.is_some() {
+              if self.has_competition_started() {
                 let started_at = runtime_env.clone().unwrap().started_at.unwrap();
                 period.0 > env::block_timestamp() - started_at.0
               } else {
