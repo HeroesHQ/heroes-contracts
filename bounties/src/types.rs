@@ -33,6 +33,7 @@ pub const DEFAULT_PLATFORM_FEE_PERCENTAGE: u32 = 10_000;
 pub const DEFAULT_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 10_000;
 pub const DEFAULT_PENALTY_PLATFORM_FEE_PERCENTAGE: u32 = 0;
 pub const DEFAULT_PENALTY_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 0;
+pub const MAX_SLOTS_TO_START: u16 = 300;
 
 pub const NO_DEPOSIT: Balance = 0;
 pub const INITIAL_CATEGORIES: [&str; 4] = ["Marketing", "Development", "Design", "Other"];
@@ -343,6 +344,7 @@ pub struct ContestOrHackathonEnv {
   pub started_at: Option<U64>,
   pub finished_at: Option<U64>,
   pub participants: u32,
+  pub competition_winner: Option<AccountId>,
 }
 
 impl Default for ContestOrHackathonEnv {
@@ -351,6 +353,7 @@ impl Default for ContestOrHackathonEnv {
       started_at: None,
       finished_at: None,
       participants: 0,
+      competition_winner: None,
     }
   }
 }
@@ -445,7 +448,7 @@ impl Multitasking {
           match allowed_create_claim_to.clone().unwrap() {
             DateOrPeriod::Date { date } => date.0 > env::block_timestamp(),
             DateOrPeriod::Period { period } => {
-              if runtime_env.is_some() && runtime_env.clone().unwrap().started_at.is_some() {
+              if self.has_competition_started() {
                 let started_at = runtime_env.clone().unwrap().started_at.unwrap();
                 period.0 > env::block_timestamp() - started_at.0
               } else {
@@ -455,35 +458,42 @@ impl Multitasking {
           }
         }
       },
+      Multitasking::OneForAll {
+        number_of_slots,
+        runtime_env,
+        ..
+      } => {
+        let env = runtime_env.clone().unwrap_or_default();
+        env.occupied_slots + env.paid_slots < number_of_slots.clone()
+      },
       // TODO
       _ => env::panic_str("This is temporarily not supported")
     }
   }
 
-  pub fn is_competition(&self) -> bool {
+  pub fn is_competition_mode(&self) -> bool {
     match self {
       Multitasking::ContestOrHackathon { .. } => true,
       _ => false
     }
   }
 
-  pub fn has_competition_started(&self) -> bool {
+  pub fn is_one_for_all_mode(&self) -> bool {
     match self {
-      Multitasking::ContestOrHackathon { runtime_env, .. } =>
-        runtime_env.is_some() &&
-          runtime_env.clone().unwrap().started_at.is_some() &&
-          runtime_env.clone().unwrap().finished_at.is_none(),
-      _ => unreachable!(),
+      Multitasking::OneForAll { .. } => true,
+      _ => false
     }
   }
 
-  /*pub fn has_competition_finished(&self) -> bool {
+  pub fn has_competition_started(&self) -> bool {
     match self {
-      Multitasking::ContestOrHackathon { runtime_env, .. } =>
-        runtime_env.clone().is_some() && runtime_env.clone().unwrap().finished_at.is_some(),
+      Multitasking::ContestOrHackathon { runtime_env, .. } => {
+        let env = runtime_env.clone().unwrap_or_default();
+        env.started_at.is_some() && env.finished_at.is_none()
+      },
       _ => unreachable!(),
     }
-  }*/
+  }
 
   pub fn get_competition_timestamps(&self) -> (Option<U64>, Option<U64>) {
     match self {
@@ -498,7 +508,25 @@ impl Multitasking {
   pub fn get_participants(&self) -> u32 {
     match self {
       Multitasking::ContestOrHackathon { runtime_env, .. } =>
-        if runtime_env.is_some() { runtime_env.clone().unwrap().participants } else { 0 },
+        runtime_env.clone().unwrap_or_default().participants,
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn get_competition_winner(&self) -> Option<AccountId> {
+    match self {
+      Multitasking::ContestOrHackathon { runtime_env, .. } =>
+        runtime_env.clone().unwrap_or_default().competition_winner,
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn get_one_for_all_env(&self) -> (u16, u16) {
+    match self {
+      Multitasking::OneForAll { runtime_env, .. } => {
+        let env = runtime_env.clone().unwrap_or_default();
+        (env.occupied_slots, env.paid_slots)
+      },
       _ => unreachable!(),
     }
   }
@@ -511,22 +539,22 @@ impl Multitasking {
         start_conditions,
         runtime_env,
       } => {
-        let finished_at = if started_at.is_none() {
+        let mut new_runtime_env = runtime_env.clone().unwrap_or_default();
+        new_runtime_env.finished_at = if started_at.is_none() {
           Some(U64::from(env::block_timestamp()))
         } else {
           None
         };
-        let started_at = if started_at.is_some() {
+        new_runtime_env.started_at = if started_at.is_some() {
           started_at
         } else {
           runtime_env.clone().unwrap_or_default().started_at
         };
-        let participants = runtime_env.clone().unwrap_or_default().participants;
         Multitasking::ContestOrHackathon {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
-          runtime_env: Some(ContestOrHackathonEnv { started_at, finished_at, participants }),
+          runtime_env: Some(new_runtime_env),
         }
       },
       _ => unreachable!(),
@@ -548,6 +576,46 @@ impl Multitasking {
           successful_claims_for_result,
           start_conditions,
           runtime_env: Some(new_runtime_env),
+        }
+      },
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn set_competition_winner(self, competition_winner: Option<AccountId>) -> Self {
+    match self {
+      Multitasking::ContestOrHackathon {
+        allowed_create_claim_to,
+        successful_claims_for_result,
+        start_conditions,
+        runtime_env,
+      } => {
+        let mut new_runtime_env = runtime_env.unwrap_or_default();
+        new_runtime_env.competition_winner = competition_winner;
+        Multitasking::ContestOrHackathon {
+          allowed_create_claim_to,
+          successful_claims_for_result,
+          start_conditions,
+          runtime_env: Some(new_runtime_env),
+        }
+      },
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn set_one_for_all_env(self, occupied_slots: u16, paid_slots: u16) -> Self {
+    match self {
+      Multitasking::OneForAll {
+        number_of_slots,
+        amount_per_slot,
+        min_slots_to_start,
+        ..
+      } => {
+        Multitasking::OneForAll {
+          number_of_slots,
+          amount_per_slot,
+          min_slots_to_start,
+          runtime_env: Some(OneForAllEnv { occupied_slots, paid_slots }),
         }
       },
       _ => unreachable!(),
@@ -632,7 +700,6 @@ impl BountyCreate {
       } else {
         None
       },
-      competition_winner: None,
     }
   }
 }
@@ -734,7 +801,6 @@ pub struct Bounty {
   pub payment_at: Option<U64>,
   pub payment_confirmed_at: Option<U64>,
   pub multitasking: Option<Multitasking>,
-  pub competition_winner: Option<AccountId>,
 }
 
 impl Bounty {
@@ -848,7 +914,7 @@ impl Bounty {
           );
           if min_slots_to_start.is_some() {
             assert!(
-              min_slots_to_start.unwrap() > 1,
+              min_slots_to_start.unwrap() > 1 && min_slots_to_start.unwrap() <= MAX_SLOTS_TO_START,
               "The minimum number of claims to start is incorrect"
             );
           }
@@ -995,7 +1061,11 @@ impl Bounty {
   }
 
   pub fn is_contest_or_hackathon(&self) -> bool {
-    self.multitasking.is_some() && self.multitasking.clone().unwrap().is_competition()
+    self.multitasking.is_some() && self.multitasking.clone().unwrap().is_competition_mode()
+  }
+
+  pub fn is_one_bounty_for_many_claimants(&self) -> bool {
+    self.multitasking.is_some() && self.multitasking.clone().unwrap().is_one_for_all_mode()
   }
 
   pub fn is_payment_outside_contract(&self) -> bool {
@@ -1065,11 +1135,10 @@ impl VersionedBounty {
       status: bounty.status,
       created_at: bounty.created_at,
       kyc_config: bounty.kyc_config,
-      postpaid: None,
-      payment_at: None,
-      payment_confirmed_at: None,
+      postpaid: bounty.postpaid,
+      payment_at: bounty.payment_at,
+      payment_confirmed_at: bounty.payment_confirmed_at,
       multitasking: None,
-      competition_winner: None,
     }
   }
 
@@ -1138,9 +1207,8 @@ pub enum ClaimStatus {
   Disputed,
   NotCompleted,
   NotHired,
-  //ReadyToStart,
-  //CompetitionLost,
   Competes,
+  ReadyToStart,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
