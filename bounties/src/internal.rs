@@ -640,11 +640,15 @@ impl BountiesContract {
     } else {
       BountyStatus::Canceled
     };
-    self.internal_change_status_and_save_bounty(&id, &mut bounty, new_status);
+    self.internal_change_status_and_save_bounty(&id, &mut bounty, new_status.clone());
     self.internal_update_statistic(
       None,
       Some(bounty.owner),
-      ReputationActionKind::BountyCancelled
+      if new_status == BountyStatus::Canceled {
+        ReputationActionKind::BountyCancelled
+      } else {
+        ReputationActionKind::SuccessfulBounty
+      },
     );
   }
 
@@ -1621,6 +1625,7 @@ impl BountiesContract {
 
     let claim_idx = index.unwrap();
     let with_dispute = claims[claim_idx].status == ClaimStatus::Disputed;
+    let mut action_kind = ReputationActionKind::SuccessfulBountyAndClaim { with_dispute };
     claims[claim_idx].status = ClaimStatus::Approved;
     self.internal_total_fees_unlocking_funds(&bounty);
     self.internal_save_claims(&claimer, &claims);
@@ -1645,7 +1650,10 @@ impl BountiesContract {
               bounty.status = BountyStatus::Completed;
             } else {
               bounty.status = BountyStatus::AwaitingClaims;
+              action_kind = ReputationActionKind::SuccessfulClaim { with_dispute };
             }
+          } else {
+            action_kind = ReputationActionKind::SuccessfulClaim { with_dispute };
           }
         },
         // TODO
@@ -1654,11 +1662,10 @@ impl BountiesContract {
     }
 
     self.internal_update_bounty(&id, bounty.clone());
-    // TODO new ReputationActionKind::SuccessfulClaim
     self.internal_update_statistic(
       Some(claimer.clone()),
       Some(bounty.owner.clone()),
-      ReputationActionKind::SuccessfulClaim {with_dispute},
+      action_kind,
     );
     self.internal_return_bonds(&claimer);
   }

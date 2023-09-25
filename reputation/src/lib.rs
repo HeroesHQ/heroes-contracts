@@ -96,9 +96,13 @@ pub enum ActionKind {
   /// The claim has expired
   ClaimExpired,
   /// Successful bounty and claim
-  SuccessfulClaim {with_dispute: bool},
+  SuccessfulBountyAndClaim { with_dispute: bool },
   /// Unsuccessful claim
-  UnsuccessfulClaim {with_dispute: bool},
+  UnsuccessfulClaim { with_dispute: bool },
+  /// Successful claim
+  SuccessfulClaim { with_dispute: bool },
+  /// Successful bounty
+  SuccessfulBounty,
 }
 
 #[near_bindgen]
@@ -210,6 +214,10 @@ impl ReputationContract {
     self.admin_whitelist.to_vec()
   }
 
+  pub fn get_version() -> String {
+    "1.0.1".to_string()
+  }
+
   /**
     Internal
   **/
@@ -241,7 +249,8 @@ impl ReputationContract {
   ) {
     self.assert_called_by_bounties_contract();
     let without_claimer = matches!(action_kind, ActionKind::BountyCreated) ||
-      matches!(action_kind, ActionKind::BountyCancelled);
+      matches!(action_kind, ActionKind::BountyCancelled) ||
+      matches!(action_kind, ActionKind::SuccessfulBounty);
     let without_bounty_owner = matches!(action_kind, ActionKind::ClaimCancelled) ||
       matches!(action_kind, ActionKind::ClaimExpired);
 
@@ -296,7 +305,7 @@ impl ReputationContract {
       ActionKind::ClaimExpired => {
         claimer_metrics.number_of_overdue_claims += 1;
       }
-      ActionKind::SuccessfulClaim {with_dispute} => {
+      ActionKind::SuccessfulBountyAndClaim {with_dispute} => {
         bounty_owner_metrics.number_of_successful_bounties += 1;
         claimer_metrics.number_of_successful_claims += 1;
         if with_dispute {
@@ -307,6 +316,20 @@ impl ReputationContract {
         } else {
           bounty_owner_metrics.number_of_approved_claims += 1;
         }
+      }
+      ActionKind::SuccessfulClaim {with_dispute} => {
+        claimer_metrics.number_of_successful_claims += 1;
+        if with_dispute {
+          bounty_owner_metrics.number_of_rejected_claims += 1;
+          bounty_owner_metrics.number_of_open_disputes += 1;
+          claimer_metrics.number_of_open_disputes += 1;
+          claimer_metrics.number_of_disputes_won += 1;
+        } else {
+          bounty_owner_metrics.number_of_approved_claims += 1;
+        }
+      }
+      ActionKind::SuccessfulBounty => {
+        bounty_owner_metrics.number_of_successful_bounties += 1;
       }
       ActionKind::UnsuccessfulClaim {with_dispute} => {
         bounty_owner_metrics.number_of_rejected_claims += 1;
@@ -683,7 +706,7 @@ mod tests {
     contract.emit(
       Some(accounts(0)),
       Some(accounts(1)),
-      ActionKind::SuccessfulClaim { with_dispute: false }
+      ActionKind::SuccessfulBountyAndClaim { with_dispute: false }
     );
 
     let claimer_stats = contract.claimers_entries.get(&accounts(0)).unwrap();
@@ -750,7 +773,7 @@ mod tests {
     contract.emit(
       Some(accounts(0)),
       Some(accounts(1)),
-      ActionKind::SuccessfulClaim { with_dispute: true }
+      ActionKind::SuccessfulBountyAndClaim { with_dispute: true }
     );
 
     let claimer_stats = contract.claimers_entries.get(&accounts(0)).unwrap();

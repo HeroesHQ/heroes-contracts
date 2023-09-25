@@ -97,8 +97,10 @@ pub enum ReputationActionKind {
   ClaimCancelled,
   ClaimerApproved,
   ClaimExpired,
-  SuccessfulClaim { with_dispute: bool },
+  SuccessfulBountyAndClaim { with_dispute: bool },
   UnsuccessfulClaim { with_dispute: bool },
+  SuccessfulClaim { with_dispute: bool },
+  SuccessfulBounty,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq)]
