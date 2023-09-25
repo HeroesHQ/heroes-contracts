@@ -42,6 +42,25 @@ impl BountiesContract {
     );
   }
 
+  pub(crate) fn assert_postpaid_is_ready(
+    bounty: &Bounty,
+    claim: &BountyClaim,
+    approve: bool
+  ) {
+    if bounty.is_payment_outside_contract() {
+      let payment_timestamps = Self::internal_get_payment_timestamps(bounty, claim);
+      assert!(
+        payment_timestamps.payment_at.is_none() || approve,
+        "The result cannot be rejected after the payment has been confirmed"
+      );
+      assert!(
+        payment_timestamps.payment_at.is_some() &&
+          payment_timestamps.payment_confirmed_at.is_some(),
+        "No payment confirmation"
+      );
+    }
+  }
+
   pub(crate) fn assert_multitasking_requirements(
     &self,
     id: BountyIndex,
@@ -79,9 +98,7 @@ impl BountiesContract {
             );
           }
         },
-        Multitasking::OneForAll { .. } => {
-          // TODO bounty.is_payment_outside_contract()
-        },
+        Multitasking::OneForAll { .. } => {},
         // TODO
         _ => env::panic_str("This is temporarily not supported")
       }
@@ -363,6 +380,18 @@ impl BountiesContract {
     let claim_idx = Self::internal_find_claim(id, &claims)
       .expect("No bounty claim found");
     (claims, claim_idx)
+  }
+
+  pub(crate) fn internal_get_payment_timestamps(
+    bounty: &Bounty,
+    claim: &BountyClaim,
+  ) -> PaymentTimestamps {
+    // TODO: and other cases
+    if bounty.is_one_bounty_for_many_claimants() {
+      claim.payment_timestamps.clone().unwrap_or_default()
+    } else {
+      bounty.postpaid.clone().unwrap().get_payment_timestamps()
+    }
   }
 
   pub(crate) fn internal_save_claims(
@@ -1298,6 +1327,13 @@ impl BountiesContract {
       rejected_timestamp: None,
       dispute_id: None,
       is_kyc_delayed: None,
+      payment_timestamps: if bounty.is_payment_outside_contract() &&
+        bounty.is_one_bounty_for_many_claimants() // TODO: and other cases
+      {
+        Some(PaymentTimestamps::default())
+      } else {
+        None
+      },
     };
 
     if !self.is_approval_required(&bounty, &claimer) {
@@ -1664,7 +1700,7 @@ impl BountiesContract {
     }
     if bounty.postpaid.is_some() {
       match bounty.postpaid.clone().unwrap() {
-        Postpaid::PaymentOutsideContract { currency } =>
+        Postpaid::PaymentOutsideContract { currency, .. } =>
           self.assert_bounty_currency_is_correct(currency),
       }
     }

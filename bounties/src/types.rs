@@ -301,7 +301,7 @@ pub enum KycConfig {
 
 impl Default for KycConfig {
   fn default() -> Self {
-    KycConfig::KycRequired { kyc_verification_method: KycVerificationMethod::WhenCreatingClaim }
+    Self::KycRequired { kyc_verification_method: KycVerificationMethod::WhenCreatingClaim }
   }
 }
 
@@ -349,7 +349,7 @@ pub struct ContestOrHackathonEnv {
 
 impl Default for ContestOrHackathonEnv {
   fn default() -> Self {
-    ContestOrHackathonEnv {
+    Self {
       started_at: None,
       finished_at: None,
       participants: 0,
@@ -368,7 +368,7 @@ pub struct OneForAllEnv {
 
 impl Default for OneForAllEnv {
   fn default() -> Self {
-    OneForAllEnv {
+    Self {
       occupied_slots: 0,
       paid_slots: 0,
     }
@@ -397,7 +397,7 @@ pub enum Multitasking {
 impl Multitasking {
   pub fn init(self) -> Self {
     match self {
-      Multitasking::ContestOrHackathon {
+      Self::ContestOrHackathon {
         allowed_create_claim_to,
         successful_claims_for_result,
         start_conditions,
@@ -407,14 +407,14 @@ impl Multitasking {
           runtime_env.is_none(),
           "The Multitasking instance is already initialized"
         );
-        Multitasking::ContestOrHackathon {
+        Self::ContestOrHackathon {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
           runtime_env: Some(ContestOrHackathonEnv::default())
         }
       },
-      Multitasking::OneForAll {
+      Self::OneForAll {
         number_of_slots,
         amount_per_slot,
         min_slots_to_start,
@@ -424,7 +424,7 @@ impl Multitasking {
           runtime_env.is_none(),
           "The Multitasking instance is already initialized"
         );
-        Multitasking::OneForAll {
+        Self::OneForAll {
           number_of_slots,
           amount_per_slot,
           min_slots_to_start,
@@ -437,7 +437,7 @@ impl Multitasking {
 
   pub fn is_allowed_to_create_or_approve_claims(&self) -> bool {
     match self {
-      Multitasking::ContestOrHackathon {
+      Self::ContestOrHackathon {
         allowed_create_claim_to,
         runtime_env,
         ..
@@ -458,7 +458,7 @@ impl Multitasking {
           }
         }
       },
-      Multitasking::OneForAll {
+      Self::OneForAll {
         number_of_slots,
         runtime_env,
         ..
@@ -473,21 +473,21 @@ impl Multitasking {
 
   pub fn is_competition_mode(&self) -> bool {
     match self {
-      Multitasking::ContestOrHackathon { .. } => true,
+      Self::ContestOrHackathon { .. } => true,
       _ => false
     }
   }
 
   pub fn is_one_for_all_mode(&self) -> bool {
     match self {
-      Multitasking::OneForAll { .. } => true,
+      Self::OneForAll { .. } => true,
       _ => false
     }
   }
 
   pub fn has_competition_started(&self) -> bool {
     match self {
-      Multitasking::ContestOrHackathon { runtime_env, .. } => {
+      Self::ContestOrHackathon { runtime_env, .. } => {
         let env = runtime_env.clone().unwrap_or_default();
         env.started_at.is_some() && env.finished_at.is_none()
       },
@@ -497,7 +497,7 @@ impl Multitasking {
 
   pub fn get_competition_timestamps(&self) -> (Option<U64>, Option<U64>) {
     match self {
-      Multitasking::ContestOrHackathon { runtime_env, .. } => {
+      Self::ContestOrHackathon { runtime_env, .. } => {
         let env = runtime_env.clone().unwrap_or_default();
         (env.started_at, env.finished_at)
       },
@@ -507,7 +507,7 @@ impl Multitasking {
 
   pub fn get_participants(&self) -> u32 {
     match self {
-      Multitasking::ContestOrHackathon { runtime_env, .. } =>
+      Self::ContestOrHackathon { runtime_env, .. } =>
         runtime_env.clone().unwrap_or_default().participants,
       _ => unreachable!(),
     }
@@ -515,7 +515,7 @@ impl Multitasking {
 
   pub fn get_competition_winner(&self) -> Option<AccountId> {
     match self {
-      Multitasking::ContestOrHackathon { runtime_env, .. } =>
+      Self::ContestOrHackathon { runtime_env, .. } =>
         runtime_env.clone().unwrap_or_default().competition_winner,
       _ => unreachable!(),
     }
@@ -523,7 +523,7 @@ impl Multitasking {
 
   pub fn get_one_for_all_env(&self) -> (u16, u16) {
     match self {
-      Multitasking::OneForAll { runtime_env, .. } => {
+      Self::OneForAll { runtime_env, .. } => {
         let env = runtime_env.clone().unwrap_or_default();
         (env.occupied_slots, env.paid_slots)
       },
@@ -533,7 +533,7 @@ impl Multitasking {
 
   pub fn set_competition_timestamp(self, started_at: Option<U64>) -> Self {
     match self {
-      Multitasking::ContestOrHackathon {
+      Self::ContestOrHackathon {
         allowed_create_claim_to,
         successful_claims_for_result,
         start_conditions,
@@ -550,7 +550,7 @@ impl Multitasking {
         } else {
           runtime_env.clone().unwrap_or_default().started_at
         };
-        Multitasking::ContestOrHackathon {
+        Self::ContestOrHackathon {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
@@ -563,7 +563,7 @@ impl Multitasking {
 
   pub fn set_competition_participants(self, participants: u32) -> Self {
     match self {
-      Multitasking::ContestOrHackathon {
+      Self::ContestOrHackathon {
         allowed_create_claim_to,
         successful_claims_for_result,
         start_conditions,
@@ -571,7 +571,7 @@ impl Multitasking {
       } => {
         let mut new_runtime_env = runtime_env.unwrap_or_default();
         new_runtime_env.participants = participants;
-        Multitasking::ContestOrHackathon {
+        Self::ContestOrHackathon {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
@@ -584,7 +584,7 @@ impl Multitasking {
 
   pub fn set_competition_winner(self, competition_winner: Option<AccountId>) -> Self {
     match self {
-      Multitasking::ContestOrHackathon {
+      Self::ContestOrHackathon {
         allowed_create_claim_to,
         successful_claims_for_result,
         start_conditions,
@@ -592,7 +592,7 @@ impl Multitasking {
       } => {
         let mut new_runtime_env = runtime_env.unwrap_or_default();
         new_runtime_env.competition_winner = competition_winner;
-        Multitasking::ContestOrHackathon {
+        Self::ContestOrHackathon {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
@@ -605,13 +605,13 @@ impl Multitasking {
 
   pub fn set_one_for_all_env(self, occupied_slots: u16, paid_slots: u16) -> Self {
     match self {
-      Multitasking::OneForAll {
+      Self::OneForAll {
         number_of_slots,
         amount_per_slot,
         min_slots_to_start,
         ..
       } => {
-        Multitasking::OneForAll {
+        Self::OneForAll {
           number_of_slots,
           amount_per_slot,
           min_slots_to_start,
@@ -626,8 +626,87 @@ impl Multitasking {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct PaymentTimestamps {
+  pub payment_at: Option<U64>,
+  pub payment_confirmed_at: Option<U64>,
+}
+
+impl Default for PaymentTimestamps {
+  fn default() -> Self {
+    Self {
+      payment_at: None,
+      payment_confirmed_at: None,
+    }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum Postpaid {
-  PaymentOutsideContract { currency: String },
+  PaymentOutsideContract {
+    currency: String,
+    payment_timestamps: Option<PaymentTimestamps>,
+  },
+}
+
+impl Postpaid {
+  pub fn init(self) -> Self {
+    match self {
+      Self::PaymentOutsideContract {
+        currency,
+        payment_timestamps
+      } => {
+        assert!(
+          payment_timestamps.is_none(),
+          "The PaymentTimestamps instance is already initialized"
+        );
+        Self::PaymentOutsideContract {
+          currency,
+          payment_timestamps: Some(PaymentTimestamps::default()),
+        }
+      },
+    }
+  }
+
+  pub fn get_payment_timestamps(&self) -> PaymentTimestamps {
+    match self {
+      Self::PaymentOutsideContract { payment_timestamps, .. } =>
+        payment_timestamps.clone().unwrap_or_default(),
+    }
+  }
+
+  pub fn set_payment_at(self, payment_at: Option<U64>) -> Self {
+    match self {
+      Self::PaymentOutsideContract {
+        currency,
+        payment_timestamps,
+      } => {
+        let mut new_payment_timestamps = payment_timestamps.unwrap_or_default();
+        new_payment_timestamps.payment_at = payment_at;
+        Self::PaymentOutsideContract {
+          currency,
+          payment_timestamps: Some(new_payment_timestamps),
+        }
+      },
+    }
+  }
+
+  pub fn set_payment_confirmed_at(self, payment_confirmed_at: Option<U64>) -> Self {
+    match self {
+      Self::PaymentOutsideContract {
+        currency,
+        payment_timestamps,
+      } => {
+        let mut new_payment_timestamps = payment_timestamps.unwrap_or_default();
+        new_payment_timestamps.payment_confirmed_at = payment_confirmed_at;
+        Self::PaymentOutsideContract {
+          currency,
+          payment_timestamps: Some(new_payment_timestamps),
+        }
+      },
+    }
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -692,9 +771,11 @@ impl BountyCreate {
       status: BountyStatus::New,
       created_at: U64::from(env::block_timestamp()),
       kyc_config,
-      postpaid: self.postpaid.clone(),
-      payment_at: None,
-      payment_confirmed_at: None,
+      postpaid: if self.postpaid.is_some() {
+        Some(self.postpaid.clone().unwrap().init())
+      } else {
+        None
+      },
       multitasking: if self.multitasking.is_some() {
         Some(self.multitasking.clone().unwrap().init())
       } else {
@@ -798,8 +879,6 @@ pub struct Bounty {
   pub created_at: U64,
   pub kyc_config: KycConfig,
   pub postpaid: Option<Postpaid>,
-  pub payment_at: Option<U64>,
-  pub payment_confirmed_at: Option<U64>,
   pub multitasking: Option<Multitasking>,
 }
 
@@ -1047,19 +1126,6 @@ impl Bounty {
     (percentage_platform, percentage_dao)
   }
 
-  pub fn assert_postpaid_is_ready(&self, approve: bool) {
-    if self.is_payment_outside_contract() {
-      assert!(
-        self.payment_at.is_none() || approve,
-        "The result cannot be rejected after the payment has been confirmed"
-      );
-      assert!(
-        self.payment_at.is_some() && self.payment_confirmed_at.is_some(),
-        "No payment confirmation"
-      );
-    }
-  }
-
   pub fn is_contest_or_hackathon(&self) -> bool {
     self.multitasking.is_some() && self.multitasking.clone().unwrap().is_competition_mode()
   }
@@ -1122,6 +1188,20 @@ impl VersionedBounty {
   }
 
   fn upgrade_v3_to_v4(bounty: BountyV3) -> Bounty {
+    let postpaid = if bounty.postpaid.is_some() {
+      match bounty.postpaid.clone().unwrap() {
+        Postpaid::PaymentOutsideContract { currency, .. } =>
+          Some(Postpaid::PaymentOutsideContract {
+            currency,
+            payment_timestamps: Some(PaymentTimestamps {
+              payment_at: bounty.payment_at.clone(),
+              payment_confirmed_at: bounty.payment_confirmed_at.clone(),
+            }),
+          })
+      }
+    } else {
+      None
+    };
     Bounty {
       token: bounty.token,
       amount: bounty.amount,
@@ -1135,9 +1215,7 @@ impl VersionedBounty {
       status: bounty.status,
       created_at: bounty.created_at,
       kyc_config: bounty.kyc_config,
-      postpaid: bounty.postpaid,
-      payment_at: bounty.payment_at,
-      payment_confirmed_at: bounty.payment_confirmed_at,
+      postpaid,
       multitasking: None,
     }
   }
@@ -1248,7 +1326,7 @@ pub struct BountyClaimV1 {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct BountyClaim {
+pub struct BountyClaimV2 {
   /// Bounty id that was claimed.
   pub bounty_id: BountyIndex,
   /// When a claim is created.
@@ -1273,6 +1351,36 @@ pub struct BountyClaim {
   pub is_kyc_delayed: Option<DefermentOfKYC>,
 }
 
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyClaim {
+  /// Bounty id that was claimed.
+  pub bounty_id: BountyIndex,
+  /// When a claim is created.
+  pub created_at: U64,
+  /// Start time of the claim.
+  pub start_time: Option<U64>,
+  /// Deadline specified by claimer.
+  pub deadline: U64,
+  /// Description
+  pub description: String,
+  /// status
+  pub status: ClaimStatus,
+  /// Bounty payout proposal ID
+  pub bounty_payout_proposal_id: Option<U64>,
+  /// Proposal ID for applicant approval
+  pub approve_claimer_proposal_id: Option<U64>,
+  /// Timestamp when the status is set to rejected
+  pub rejected_timestamp: Option<U64>,
+  /// Dispute ID
+  pub dispute_id: Option<U64>,
+  /// Bounty owner deferred KYC verification or verification status will be tracked manually
+  pub is_kyc_delayed: Option<DefermentOfKYC>,
+  /// Payment data for PaymentOutsideContract mode
+  pub payment_timestamps: Option<PaymentTimestamps>,
+}
+
 impl BountyClaim {
   pub fn get_start_time(&self, bounty: &Bounty) -> U64 {
     if bounty.is_contest_or_hackathon() {
@@ -1286,18 +1394,31 @@ impl BountyClaim {
   pub fn is_claim_expired(&self, bounty: &Bounty) -> bool {
     env::block_timestamp() > self.get_start_time(bounty).0 + self.deadline.0
   }
+
+  pub fn set_payment_at(&mut self, payment_at: Option<U64>) {
+    let mut new_payment_timestamps = self.payment_timestamps.clone().unwrap_or_default();
+    new_payment_timestamps.payment_at = payment_at;
+    self.payment_timestamps = Some(new_payment_timestamps);
+  }
+
+  pub fn set_payment_confirmed_at(&mut self, payment_confirmed_at: Option<U64>) {
+    let mut new_payment_timestamps = self.payment_timestamps.clone().unwrap_or_default();
+    new_payment_timestamps.payment_confirmed_at = payment_confirmed_at;
+    self.payment_timestamps = Some(new_payment_timestamps);
+  }
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub enum VersionedBountyClaim {
   V1(BountyClaimV1),
+  V2(BountyClaimV2),
   Current(BountyClaim),
 }
 
 impl VersionedBountyClaim {
-  fn upgrade_v1_to_v2(bounty_claim: BountyClaimV1) -> BountyClaim {
-    BountyClaim {
+  fn upgrade_v1_to_v2(bounty_claim: BountyClaimV1) -> BountyClaimV2 {
+    BountyClaimV2 {
       bounty_id: bounty_claim.bounty_id,
       created_at: bounty_claim.created_at,
       start_time: bounty_claim.start_time,
@@ -1312,11 +1433,32 @@ impl VersionedBountyClaim {
     }
   }
 
+  fn upgrade_v2_to_v3(bounty_claim: BountyClaimV2) -> BountyClaim {
+    BountyClaim {
+      bounty_id: bounty_claim.bounty_id,
+      created_at: bounty_claim.created_at,
+      start_time: bounty_claim.start_time,
+      deadline: bounty_claim.deadline,
+      description: bounty_claim.description,
+      status: bounty_claim.status,
+      bounty_payout_proposal_id: bounty_claim.bounty_payout_proposal_id,
+      approve_claimer_proposal_id: bounty_claim.approve_claimer_proposal_id,
+      rejected_timestamp: bounty_claim.rejected_timestamp,
+      dispute_id: bounty_claim.dispute_id,
+      is_kyc_delayed: bounty_claim.is_kyc_delayed,
+      payment_timestamps: None,
+    }
+  }
+
   pub fn to_bounty_claim(self) -> BountyClaim {
     match self {
       VersionedBountyClaim::Current(bounty_claim) => bounty_claim,
       VersionedBountyClaim::V1(bounty_claim_v1) =>
-        VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1),
+        VersionedBountyClaim::upgrade_v2_to_v3(
+          VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
+        ),
+      VersionedBountyClaim::V2(bounty_claim_v2) =>
+        VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2),
     }
   }
 }
@@ -1326,7 +1468,11 @@ impl From<VersionedBountyClaim> for BountyClaim {
     match value {
       VersionedBountyClaim::Current(claim) => claim,
       VersionedBountyClaim::V1(bounty_claim_v1) =>
-        VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1),
+        VersionedBountyClaim::upgrade_v2_to_v3(
+          VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
+        ),
+      VersionedBountyClaim::V2(bounty_claim_v2) =>
+        VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2),
     }
   }
 }
@@ -1446,7 +1592,7 @@ impl Config {
 
 impl Default for Config {
   fn default() -> Self {
-    Config {
+    Self {
       bounty_claim_bond: DEFAULT_BOUNTY_CLAIM_BOND,
       bounty_forgiveness_period: DEFAULT_BOUNTY_FORGIVENESS_PERIOD,
       period_for_opening_dispute: DEFAULT_PERIOD_FOR_OPENING_DISPUTE,
