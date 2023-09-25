@@ -947,19 +947,6 @@ impl BountiesContract {
       .into()
   }
 
-  pub(crate) fn internal_find_disputed_claimer(
-    &self,
-    id: BountyIndex,
-  ) -> Option<AccountId> {
-    let claims = self.get_bounty_claims_by_id(id.clone());
-    for claim in claims {
-      if claim.1.status == ClaimStatus::Disputed {
-        return Some(claim.0.clone())
-      }
-    }
-    None
-  }
-
   pub(crate) fn internal_get_dispute(
     &self,
     id: BountyIndex,

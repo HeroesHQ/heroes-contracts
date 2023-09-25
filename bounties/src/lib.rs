@@ -1024,8 +1024,12 @@ impl BountiesContract {
   }
 
   #[payable]
-  // TODO
-  pub fn dispute_result(&mut self, id: BountyIndex, success: bool) -> PromiseOrValue<()> {
+  pub fn dispute_result(
+    &mut self,
+    id: BountyIndex,
+    claimer: AccountId,
+    success: bool
+  ) -> PromiseOrValue<()> {
     assert_one_yocto();
 
     assert!(
@@ -1045,21 +1049,18 @@ impl BountiesContract {
       "Bounty status does not allow sending the result of the dispute"
     );
 
-    // TODO
-    let claimer = self.internal_find_disputed_claimer(id.clone());
+    let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &claimer);
     assert!(
-      claimer.is_some(),
-      "The claim status does not allow sending the result of the dispute",
+      matches!(claims[claim_idx].status, ClaimStatus::Disputed),
+      "The claim status does not allow opening a dispute"
     );
-    let sender_id = claimer.unwrap();
-    let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id);
 
     if success {
-      self.internal_bounty_payout(id, sender_id)
+      self.internal_bounty_payout(id, claimer)
     } else {
       self.internal_reset_bounty_to_initial_state(
         id,
-        &sender_id,
+        &claimer,
         &mut bounty,
         claim_idx,
         &mut claims,

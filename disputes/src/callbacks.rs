@@ -85,7 +85,7 @@ impl DisputesContract {
           env::panic_str("The proposal status is not being processed");
         }
       };
-      self.internal_send_result_of_dispute(id, dispute.bounty_id, success, false)
+      self.internal_send_result_of_dispute(id, dispute.bounty_id, dispute.claimer, success, false)
     }
   }
 }

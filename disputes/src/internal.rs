@@ -38,13 +38,14 @@ impl DisputesContract {
     &self,
     id: DisputeIndex,
     bounty_id: U64,
+    claimer: AccountId,
     success: bool,
     canceled: bool,
   ) -> PromiseOrValue<()> {
     ext_bounty_contract::ext(self.bounties_contract.clone())
       .with_static_gas(GAS_FOR_SEND_RESULT_OF_DISPUTE)
       .with_attached_deposit(1)
-      .dispute_result(bounty_id.0, success)
+      .dispute_result(bounty_id.0, claimer, success)
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CLAIM_APPROVAL)
