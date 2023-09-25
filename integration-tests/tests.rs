@@ -116,10 +116,7 @@ async fn test_create_bounty(e: &Env) -> anyhow::Result<()> {
       created_at: bounty.created_at,
       kyc_config: KycConfig::KycNotRequired,
       postpaid: None,
-      payment_at: None,
-      payment_confirmed_at: None,
       multitasking: None,
-      competition_winner: None,
     }
   );
 
@@ -1564,10 +1561,7 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
       created_at: bounty.created_at,
       kyc_config: KycConfig::KycNotRequired,
       postpaid: None,
-      payment_at: None,
-      payment_confirmed_at: None,
       multitasking: None,
-      competition_winner: None,
     }
   );
 
@@ -2177,7 +2171,9 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     None,
     Some(BOUNTY_AMOUNT),
     None,
-    Some(Postpaid::PaymentOutsideContract { currency: "USD".to_string() }),
+    Some(
+      Postpaid::PaymentOutsideContract { currency: "USD".to_string(), payment_timestamps: None }
+    ),
     None,
     Some("You are not allowed to create postpaid bounties"),
   ).await?;
@@ -2191,7 +2187,9 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     None,
     Some(BOUNTY_AMOUNT),
     None,
-    Some(Postpaid::PaymentOutsideContract { currency: "USD".to_string() }),
+    Some(
+      Postpaid::PaymentOutsideContract { currency: "USD".to_string(), payment_timestamps: None }
+    ),
     None,
     Some("Invalid currency USD"),
   ).await?;
@@ -2205,7 +2203,9 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     None,
     Some(BOUNTY_AMOUNT),
     None,
-    Some(Postpaid::PaymentOutsideContract { currency: "USD".to_string() }),
+    Some(
+      Postpaid::PaymentOutsideContract { currency: "USD".to_string(), payment_timestamps: None }
+    ),
     None,
     None,
   ).await?;
@@ -2647,7 +2647,9 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
     None,
     Some(BOUNTY_AMOUNT),
     None,
-    Some(Postpaid::PaymentOutsideContract { currency: "USD".to_string() }),
+    Some(
+      Postpaid::PaymentOutsideContract { currency: "USD".to_string(), payment_timestamps: None }
+    ),
     Some(Multitasking::ContestOrHackathon {
       allowed_create_claim_to: None,
       successful_claims_for_result: None,
