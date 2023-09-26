@@ -244,44 +244,39 @@ impl BountiesContract {
   pub(crate) fn assert_locked_amount_greater_than_or_equal_transaction_amount(
     &self,
     bounty: &Bounty,
+    platform_fee: Option<U128>,
+    dao_fee: Option<U128>,
   ) {
     if bounty.token.is_some() {
       let token_id = &bounty.token.clone().unwrap();
       let total_fees = self.total_fees.get(token_id).unwrap();
-      total_fees.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty.platform_fee);
+      total_fees.assert_locked_amount_greater_than_or_equal_transaction_amount(
+        &platform_fee.unwrap_or(bounty.platform_fee)
+      );
     }
     let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
     if dao_fee_stats.is_some() {
       let (_, stats, stats_idx) = dao_fee_stats.unwrap();
-      stats[stats_idx].fee_stats
-        .assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty.dao_fee);
+      stats[stats_idx].fee_stats.assert_locked_amount_greater_than_or_equal_transaction_amount(
+          &dao_fee.unwrap_or(bounty.dao_fee)
+      );
     }
   }
 
-  pub(crate) fn internal_total_fees_refunding_funds(
-    &mut self,
-    bounty: &Bounty,
-  ) {
-    let config = self.config.clone().to_config();
+  pub(crate) fn internal_total_fees_refunding_funds(&mut self, bounty: &Bounty) {
+    let amounts = self.internal_get_bounty_amount_to_return(bounty);
+
     if bounty.token.is_some() {
       let token_id = &bounty.token.clone().unwrap();
       let mut total_fees = self.total_fees.get(token_id).unwrap();
-      total_fees.refund_commission(
-        &bounty.platform_fee,
-        config.platform_fee_percentage,
-        config.penalty_platform_fee_percentage
-      );
+      total_fees.refund_commission(&amounts.1, &amounts.2);
       self.total_fees.insert(token_id, &total_fees);
     }
 
     let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
     if dao_fee_stats.is_some() {
       let (dao_account_id, mut stats, stats_idx) = dao_fee_stats.unwrap();
-      stats[stats_idx].fee_stats.refund_commission(
-        &bounty.dao_fee,
-        config.validators_dao_fee_percentage,
-        config.penalty_validators_dao_fee_percentage
-      );
+      stats[stats_idx].fee_stats.refund_commission(&amounts.3, &amounts.4);
       self.total_validators_dao_fees.insert(&dao_account_id, &stats);
     }
   }
@@ -289,43 +284,107 @@ impl BountiesContract {
   pub(crate) fn internal_total_fees_unlocking_funds(
     &mut self,
     bounty: &Bounty,
+    platform_fee: Option<U128>,
+    dao_fee: Option<U128>,
   ) {
     if bounty.token.is_some() {
       let token_id = &bounty.token.clone().unwrap();
       let mut total_fees = self.total_fees.get(token_id).unwrap();
-      total_fees.commission_unlocking(&bounty.platform_fee);
+      total_fees.commission_unlocking(&platform_fee.unwrap_or(bounty.platform_fee));
       self.total_fees.insert(token_id, &total_fees);
     }
 
     let dao_fee_stats = self.internal_get_dao_fee_stats(bounty);
     if dao_fee_stats.is_some() {
       let (dao_account_id, mut stats, stats_idx) = dao_fee_stats.unwrap();
-      stats[stats_idx].fee_stats.commission_unlocking(&bounty.dao_fee);
+      stats[stats_idx].fee_stats.commission_unlocking(&dao_fee.unwrap_or(bounty.dao_fee));
       self.total_validators_dao_fees.insert(&dao_account_id, &stats);
     }
   }
 
-  pub(crate) fn internal_get_full_bounty_amount(
+  pub(crate) fn internal_get_bounty_amount_to_return(
     &self,
-    bounty: &Bounty,
-  ) -> U128 {
+    bounty: &Bounty
+  ) -> (U128, U128, U128, U128, U128) {
     if bounty.is_payment_outside_contract() {
-      return U128(0);
+      return (U128(0), U128(0), U128(0), U128(0), U128(0));
     }
+
+    let (amount, platform_fee, dao_fee) = if bounty.is_one_bounty_for_many_claimants() &&
+      bounty.status == BountyStatus::AwaitingClaims
+    {
+      let multitasking = bounty.multitasking.clone().unwrap();
+      match multitasking {
+        Multitasking::OneForAll { number_of_slots, .. } => {
+          let (_, paid_slots) = multitasking.get_one_for_all_env();
+          let remainder = number_of_slots - paid_slots;
+          (
+            bounty.amount.0 / number_of_slots as u128 * remainder as u128,
+            bounty.platform_fee.0 / number_of_slots as u128 * remainder as u128,
+            bounty.dao_fee.0 / number_of_slots as u128 * remainder as u128
+          )
+        }
+        _ => unreachable!(),
+      }
+    } else {
+      (bounty.amount.0, bounty.platform_fee.0, bounty.dao_fee.0)
+    };
+
     let config = self.config.clone().to_config();
     let penalty_platform_fee: u128 = if config.platform_fee_percentage != 0 {
-      bounty.platform_fee.0 *
+      platform_fee *
         config.penalty_platform_fee_percentage as u128 /
         config.platform_fee_percentage as u128
     } else { 0 };
     let penalty_validators_dao_fee: u128 = if config.validators_dao_fee_percentage != 0 {
-      bounty.dao_fee.0 *
+      dao_fee *
         config.penalty_validators_dao_fee_percentage as u128 /
-        config.platform_fee_percentage as u128
+        config.validators_dao_fee_percentage as u128
     } else { 0 };
-    let amount = bounty.amount.0 + bounty.platform_fee.0 - penalty_platform_fee +
-      bounty.dao_fee.0 - penalty_validators_dao_fee;
-    U128(amount)
+    let amount_to_return = amount + platform_fee - penalty_platform_fee +
+      dao_fee - penalty_validators_dao_fee;
+    (
+      U128(amount_to_return),
+      U128(platform_fee),
+      U128(penalty_platform_fee),
+      U128(dao_fee),
+      U128(penalty_validators_dao_fee)
+    )
+  }
+
+  pub(crate) fn internal_get_bounty_amount_for_payment(
+    bounty: &Bounty
+  ) -> (U128, U128, U128) {
+    if bounty.is_payment_outside_contract() {
+      return (U128(0), U128(0), U128(0));
+    }
+    if bounty.is_one_bounty_for_many_claimants() {
+      let multitasking = bounty.multitasking.clone().unwrap();
+      match multitasking {
+        Multitasking::OneForAll { number_of_slots, .. } => {
+          let (occupied_slots, paid_slots) = multitasking.get_one_for_all_env();
+
+          let one_amount = bounty.amount.0 / number_of_slots as u128;
+          let one_platform_fee = bounty.platform_fee.0 / number_of_slots as u128;
+          let one_dao_fee = bounty.dao_fee.0 / number_of_slots as u128;
+          let second_to_last = number_of_slots - 1;
+
+          // There may be rounding errors for the last slot
+          if occupied_slots == 1 && paid_slots == second_to_last {
+            (
+              U128(bounty.amount.0 - one_amount * second_to_last as u128),
+              U128(bounty.platform_fee.0 - one_platform_fee * second_to_last as u128),
+              U128(bounty.dao_fee.0 - one_dao_fee * second_to_last as u128)
+            )
+          } else {
+            (U128(one_amount), U128(one_platform_fee), U128(one_dao_fee))
+          }
+        },
+        _ => unreachable!(),
+      }
+    } else {
+      (bounty.amount, bounty.platform_fee, bounty.dao_fee)
+    }
   }
 
   pub(crate) fn internal_save_account_bounties(
@@ -604,7 +663,12 @@ impl BountiesContract {
     claimer: AccountId,
   ) -> PromiseOrValue<()> {
     let bounty = self.get_bounty(id);
-    self.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty);
+    let amounts = Self::internal_get_bounty_amount_for_payment(&bounty);
+    self.assert_locked_amount_greater_than_or_equal_transaction_amount(
+      &bounty,
+      Some(amounts.1),
+      Some(amounts.2)
+    );
 
     if bounty.is_payment_outside_contract() {
       self.internal_bounty_completion(id, claimer);
@@ -616,7 +680,7 @@ impl BountiesContract {
       .with_static_gas(GAS_FOR_FT_TRANSFER)
       .ft_transfer(
         claimer.clone(),
-        bounty.amount.clone(),
+        amounts.0,
         Some(format!("Bounty {} payout", id)),
       )
       .then(
@@ -632,9 +696,7 @@ impl BountiesContract {
     id: BountyIndex,
     mut bounty: Bounty,
   ) {
-    if !bounty.is_payment_outside_contract() {
-      self.internal_total_fees_refunding_funds(&bounty);
-    }
+    self.internal_total_fees_refunding_funds(&bounty);
     let new_status = if bounty.status == BountyStatus::AwaitingClaims {
       BountyStatus::PartiallyCompleted
     } else {
@@ -657,10 +719,14 @@ impl BountiesContract {
     id: BountyIndex,
     bounty: Bounty,
   ) -> PromiseOrValue<()> {
-    self.assert_locked_amount_greater_than_or_equal_transaction_amount(&bounty);
-    let full_amount = self.internal_get_full_bounty_amount(&bounty);
+    let amounts = self.internal_get_bounty_amount_to_return(&bounty);
+    self.assert_locked_amount_greater_than_or_equal_transaction_amount(
+      &bounty,
+      Some(amounts.1),
+      Some(amounts.3)
+    );
 
-    if full_amount.0 == 0 {
+    if amounts.0.0 == 0 {
       self.internal_bounty_cancellation(id, bounty);
       return PromiseOrValue::Value(())
     }
@@ -670,7 +736,7 @@ impl BountiesContract {
       .with_static_gas(GAS_FOR_FT_TRANSFER)
       .ft_transfer(
         bounty.owner.clone(),
-        full_amount,
+        amounts.0,
         Some(format!("Returning amount of bounty {} to {}", id, bounty.owner)),
       )
       .then(
@@ -1614,7 +1680,9 @@ impl BountiesContract {
     let with_dispute = claims[claim_idx].status == ClaimStatus::Disputed;
     let mut action_kind = ReputationActionKind::SuccessfulBountyAndClaim { with_dispute };
     claims[claim_idx].status = ClaimStatus::Approved;
-    self.internal_total_fees_unlocking_funds(&bounty);
+
+    let amounts = Self::internal_get_bounty_amount_for_payment(&bounty);
+    self.internal_total_fees_unlocking_funds(&bounty, Some(amounts.1), Some(amounts.2));
     self.internal_save_claims(&claimer, &claims);
 
     if bounty.multitasking.is_none() {

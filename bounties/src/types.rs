@@ -999,6 +999,11 @@ impl Bounty {
               "The minimum number of claims to start is incorrect"
             );
           }
+          assert_eq!(
+            self.amount.0 + self.platform_fee.0,
+            amount_per_slot.0 * number_of_slots as u128,
+            "Total bounty amount is incorrect"
+          );
         },
         Multitasking::DifferentTasks { subtasks } => {
           assert!(
@@ -1714,15 +1719,14 @@ impl FeeStats {
     self.locked_balance = U128(self.locked_balance.0 - amount.0);
   }
 
-  pub fn refund_commission(&mut self, amount: &U128, full_percentage: u32, penalty_percentage: u32) {
-    if full_percentage == 0 {
+  pub fn refund_commission(&mut self, amount: &U128, penalty_amount: &U128) {
+    if amount.0 == 0 {
       return;
     }
     self.balance = U128(self.balance.0 - amount.0);
     self.locked_balance = U128(self.locked_balance.0 - amount.0);
-    let penalty_amount: u128 = amount.0 * penalty_percentage as u128 / full_percentage as u128;
-    self.refunded_amount = U128(self.refunded_amount.0 + amount.0 - penalty_amount);
-    self.penalty_amount = U128(self.penalty_amount.0 + penalty_amount);
+    self.refunded_amount = U128(self.refunded_amount.0 + amount.0 - penalty_amount.0);
+    self.penalty_amount = U128(self.penalty_amount.0 + penalty_amount.0);
   }
 }
 
