@@ -256,6 +256,12 @@ impl Env {
     Self::register_user(&test_token, bounties_contract_admin.id()).await?;
     Self::register_user(&test_token, validators_dao.id()).await?;
     Self::add_token(&test_token, &disputed_bounties, &bounties_contract_admin).await?;
+    Self::update_configuration_dictionary_entries(
+      &disputed_bounties,
+      &bounties_contract_admin,
+      ReferenceType::Currencies,
+      "USD".to_string()
+    ).await?;
 
     Ok(
       Self {
@@ -1094,12 +1100,13 @@ impl Env {
   }
 
   pub async fn update_configuration_dictionary_entries(
-    &self,
+    bounties: &Contract,
+    administrator: &Account,
     dict: ReferenceType,
     currency: String
   ) -> anyhow::Result<()> {
-    let res = self.bounties_contract_admin
-      .call(self.disputed_bounties.id(), "update_configuration_dictionary_entries")
+    let res = administrator
+      .call(bounties.id(), "update_configuration_dictionary_entries")
       .args_json((dict, currency, Option::<bool>::None))
       .max_gas()
       .deposit(ONE_YOCTO)
