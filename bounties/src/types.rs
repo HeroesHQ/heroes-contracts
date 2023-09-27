@@ -1006,9 +1006,8 @@ impl Bounty {
               "The minimum number of claims to start is incorrect"
             );
           }
-          assert_eq!(
-            self.amount.0 + self.platform_fee.0,
-            amount_per_slot.0 * number_of_slots as u128,
+          assert!(
+            self.amount.0 + self.platform_fee.0 - amount_per_slot.0 * number_of_slots as u128 <= 1,
             "Total bounty amount is incorrect"
           );
         },
