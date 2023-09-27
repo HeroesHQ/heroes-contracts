@@ -34,6 +34,7 @@ pub const DEFAULT_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 10_000;
 pub const DEFAULT_PENALTY_PLATFORM_FEE_PERCENTAGE: u32 = 0;
 pub const DEFAULT_PENALTY_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 0;
 pub const MAX_SLOTS_TO_START: u16 = 300;
+pub const MIN_DEVIATION_FOR_TOTAL_BOUNTY_AMOUNT: u128 = 20;
 
 pub const NO_DEPOSIT: Balance = 0;
 pub const INITIAL_CATEGORIES: [&str; 4] = ["Marketing", "Development", "Design", "Other"];
@@ -1007,7 +1008,8 @@ impl Bounty {
             );
           }
           assert!(
-            self.amount.0 + self.platform_fee.0 - amount_per_slot.0 * number_of_slots as u128 <= 1,
+            self.amount.0 + self.platform_fee.0 - amount_per_slot.0 * number_of_slots as u128 <=
+              MIN_DEVIATION_FOR_TOTAL_BOUNTY_AMOUNT,
             "Total bounty amount is incorrect"
           );
         },
