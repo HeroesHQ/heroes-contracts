@@ -646,6 +646,9 @@ impl Default for PaymentTimestamps {
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum Postpaid {
+  PaymentOutsideContractV1 {
+    currency: String,
+  },
   PaymentOutsideContract {
     currency: String,
     payment_timestamps: Option<PaymentTimestamps>,
@@ -668,6 +671,7 @@ impl Postpaid {
           payment_timestamps: Some(PaymentTimestamps::default()),
         }
       },
+      _ => unreachable!()
     }
   }
 
@@ -675,6 +679,7 @@ impl Postpaid {
     match self {
       Self::PaymentOutsideContract { payment_timestamps, .. } =>
         payment_timestamps.clone().unwrap_or_default(),
+      _ => unreachable!()
     }
   }
 
@@ -691,6 +696,7 @@ impl Postpaid {
           payment_timestamps: Some(new_payment_timestamps),
         }
       },
+      _ => unreachable!()
     }
   }
 
@@ -707,6 +713,7 @@ impl Postpaid {
           payment_timestamps: Some(new_payment_timestamps),
         }
       },
+      _ => unreachable!()
     }
   }
 }
@@ -1197,14 +1204,15 @@ impl VersionedBounty {
   fn upgrade_v3_to_v4(bounty: BountyV3) -> Bounty {
     let postpaid = if bounty.postpaid.is_some() {
       match bounty.postpaid.clone().unwrap() {
-        Postpaid::PaymentOutsideContract { currency, .. } =>
+        Postpaid::PaymentOutsideContractV1 { currency } =>
           Some(Postpaid::PaymentOutsideContract {
             currency,
             payment_timestamps: Some(PaymentTimestamps {
               payment_at: bounty.payment_at.clone(),
               payment_confirmed_at: bounty.payment_confirmed_at.clone(),
             }),
-          })
+          }),
+        _ => unreachable!(),
       }
     } else {
       None

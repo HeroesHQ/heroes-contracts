@@ -1764,6 +1764,7 @@ impl BountiesContract {
       match bounty.postpaid.clone().unwrap() {
         Postpaid::PaymentOutsideContract { currency, .. } =>
           self.assert_bounty_currency_is_correct(currency),
+        _ => unreachable!()
       }
     }
     match bounty.kyc_config {
