@@ -1008,6 +1008,7 @@ impl Bounty {
             );
           }
           assert!(
+            self.amount.0 + self.platform_fee.0 >= amount_per_slot.0 * number_of_slots as u128 &&
             self.amount.0 + self.platform_fee.0 - amount_per_slot.0 * number_of_slots as u128 <=
               MIN_DEVIATION_FOR_TOTAL_BOUNTY_AMOUNT,
             "Total bounty amount is incorrect"
