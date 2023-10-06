@@ -381,6 +381,29 @@ impl Default for OneForAllEnv {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct SubtaskEnv {
+  pub participant: AccountId,
+  pub completed: bool,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct DifferentTasksEnv {
+  pub participants: Vec<Option<SubtaskEnv>>,
+}
+
+impl Default for DifferentTasksEnv {
+  fn default() -> Self {
+    Self {
+      participants: vec![],
+    }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum Multitasking {
   ContestOrHackathon {
     allowed_create_claim_to: Option<DateOrPeriod>,
@@ -394,7 +417,10 @@ pub enum Multitasking {
     min_slots_to_start: Option<u16>,
     runtime_env: Option<OneForAllEnv>,
   },
-  DifferentTasks { subtasks: Vec<Subtask> },
+  DifferentTasks {
+    subtasks: Vec<Subtask>,
+    runtime_env: Option<DifferentTasksEnv>,
+  },
 }
 
 impl Multitasking {
@@ -434,7 +460,21 @@ impl Multitasking {
           runtime_env: Some(OneForAllEnv::default())
         }
       },
-      _ => self.clone(),
+      Self::DifferentTasks {
+        subtasks,
+        runtime_env
+      } => {
+        assert!(
+          runtime_env.is_none(),
+          "The Multitasking instance is already initialized"
+        );
+        let mut env = DifferentTasksEnv::default();
+        (0..subtasks.len()).into_iter().for_each(|_| env.participants.push(None));
+        Self::DifferentTasks {
+          subtasks,
+          runtime_env: Some(DifferentTasksEnv::default())
+        }
+      },
     }
   }
 
@@ -1014,7 +1054,7 @@ impl Bounty {
             "Total bounty amount is incorrect"
           );
         },
-        Multitasking::DifferentTasks { subtasks } => {
+        Multitasking::DifferentTasks { subtasks, .. } => {
           assert!(
             subtasks.len() > 1,
             "The number of subtasks must be greater than one"
