@@ -305,7 +305,8 @@ impl BountiesContract {
     &mut self,
     id: BountyIndex,
     deadline: U64,
-    description: String
+    description: String,
+    slot: Option<usize>,
   ) -> PromiseOrValue<()> {
     assert_eq!(
       env::attached_deposit(),
@@ -318,7 +319,11 @@ impl BountiesContract {
     );
 
     let sender_id = env::predecessor_account_id();
-    let (bounty, _, _) = self.check_if_allowed_to_create_claim_by_status(id, sender_id.clone());
+    let (bounty, _, _) = self.check_if_allowed_to_create_claim_by_status(
+      id,
+      sender_id.clone(),
+      slot.clone()
+    );
 
     assert!(
       bounty.is_claim_deadline_correct(deadline),
@@ -333,10 +338,10 @@ impl BountiesContract {
 
     let place_of_check = PlaceOfCheckKYC::CreatingClaim { deadline, description };
     if self.is_kyc_check_required(bounty, None, None, place_of_check.clone()) {
-      self.check_if_claimer_in_kyc_whitelist(id, sender_id, place_of_check)
+      self.check_if_claimer_in_kyc_whitelist(id, sender_id, place_of_check, slot)
 
     } else {
-      self.internal_add_proposal_and_create_claim(id, sender_id, place_of_check)
+      self.internal_add_proposal_and_create_claim(id, sender_id, place_of_check, slot)
     }
   }
 
@@ -368,7 +373,7 @@ impl BountiesContract {
       is_kyc_delayed: kyc_postponed.clone()
     };
     if self.is_kyc_check_required(bounty, None, None, place_of_check.clone()) {
-      self.check_if_claimer_in_kyc_whitelist(id, claimer, place_of_check)
+      self.check_if_claimer_in_kyc_whitelist(id, claimer, place_of_check, None)
 
     } else {
       self.internal_approval_and_save_claim(id, claimer, approve, kyc_postponed)
@@ -425,7 +430,7 @@ impl BountiesContract {
       Some(sender_id.clone()),
       place_of_check.clone()
     ) {
-      self.check_if_claimer_in_kyc_whitelist(id, sender_id, place_of_check)
+      self.check_if_claimer_in_kyc_whitelist(id, sender_id, place_of_check, None)
 
     } else {
       self.internal_add_proposal_and_update_claim(id, sender_id, place_of_check)
@@ -1167,7 +1172,7 @@ mod tests {
     let deadline = U64(1_000_000_000 * 60 * 60 * 24 * 2);
     let description = "Test description".to_string();
 
-    contract.bounty_claim(id, deadline, description.clone());
+    contract.bounty_claim(id, deadline, description.clone(), None);
 
     let bounty = contract.bounties.get(&id).unwrap().to_bounty();
     if bounty.is_validators_dao_used() && contract.is_approval_required(&bounty, &claimer) {
@@ -1176,7 +1181,8 @@ mod tests {
         claimer.clone(),
         deadline,
         description,
-        Some(U64(1))
+        Some(U64(1)),
+        None,
       );
     }
   }
@@ -1503,6 +1509,7 @@ mod tests {
         description: "Test description".to_string(),
         is_kyc_delayed: None,
         payment_timestamps: None,
+        slot: None,
       }
     );
     assert_eq!(contract.bounty_claimer_accounts.get(&id).unwrap()[0], claimer);
@@ -1531,7 +1538,8 @@ mod tests {
     contract.bounty_claim(
       id,
       U64(1_000_000_000 * 60 * 60 * 24 * 2),
-      "Test description".to_string()
+      "Test description".to_string(),
+      None
     );
   }
 
@@ -1558,7 +1566,8 @@ mod tests {
     contract.bounty_claim(
       id,
       U64(1_000_000_000 * 60 * 60 * 24 * 2),
-      "Test description".to_string()
+      "Test description".to_string(),
+      None
     );
   }
 
@@ -1584,7 +1593,8 @@ mod tests {
     contract.bounty_claim(
       id,
       U64(MAX_DEADLINE.0 + 1),
-      "Test description".to_string()
+      "Test description".to_string(),
+      None
     );
   }
 
@@ -1610,7 +1620,8 @@ mod tests {
     contract.bounty_claim(
       id + 1,
       MAX_DEADLINE,
-      "Test description".to_string()
+      "Test description".to_string(),
+      None
     );
   }
 

@@ -863,6 +863,7 @@ impl BountiesContract {
     bounty: Bounty,
     deadline: U64,
     description: String,
+    slot: Option<usize>,
   ) -> PromiseOrValue<()> {
     if let Reviewers::ValidatorsDao { validators_dao } = bounty.reviewers.clone().unwrap() {
       Self::internal_add_proposal(
@@ -896,7 +897,7 @@ impl BountiesContract {
           .into_bytes(),
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_ADD_PROPOSAL)
-          .after_add_proposal(id, claimer, deadline, description),
+          .after_add_proposal(id, claimer, deadline, description, slot),
         validators_dao.add_proposal_bond,
         validators_dao.gas_for_add_proposal,
       )
@@ -1167,6 +1168,25 @@ impl BountiesContract {
     );
   }
 
+  pub(crate) fn internal_set_slot_account(
+    &mut self,
+    bounty: &mut Bounty,
+    slot: usize,
+    account_id: AccountId
+  ) {
+    let mut multitasking = bounty.multitasking.clone().unwrap();
+    multitasking.set_slot_env(slot, SubtaskEnv { participant: account_id, completed: false });
+    bounty.multitasking = Some(multitasking);
+  }
+
+  pub(crate) fn internal_complete_slot(&mut self, bounty: &mut Bounty, slot: usize) {
+    let mut multitasking = bounty.multitasking.clone().unwrap();
+    let mut slot_env = multitasking.clone().get_slot_env(slot).expect("The slot is not occupied");
+    slot_env.completed = true;
+    multitasking.set_slot_env(slot, slot_env);
+    bounty.multitasking = Some(multitasking);
+  }
+
   pub(crate) fn internal_claimer_approval(
     &mut self,
     id: BountyIndex,
@@ -1182,12 +1202,11 @@ impl BountiesContract {
       claim.status = ClaimStatus::InProgress;
 
     } else {
-      assert!(
-        bounty.multitasking.clone().unwrap().is_allowed_to_create_or_approve_claims(),
+      let multitasking = bounty.multitasking.clone().unwrap();
+      assert!(multitasking.is_allowed_to_create_or_approve_claims(claim.slot.clone()),
         "It is no longer possible to approve the claim"
       );
 
-      let multitasking = bounty.multitasking.clone().unwrap();
       match multitasking.clone() {
         Multitasking::ContestOrHackathon { start_conditions, .. } => {
           let started = multitasking.clone().has_competition_started();
@@ -1255,8 +1274,20 @@ impl BountiesContract {
 
           self.internal_occupied_slots_increment(bounty);
         },
-        // TODO
-        _ => env::panic_str("This is temporarily not supported")
+        Multitasking::DifferentTasks { .. } => {
+          self.internal_set_slot_account(bounty, claim.slot.clone().unwrap(), claimer.clone());
+          let started = bounty.status == BountyStatus::ManyClaimed;
+          if started {
+            claim.status = ClaimStatus::InProgress;
+          } else {
+            if bounty.multitasking.clone().unwrap().are_all_slots_taken() {
+              bounty.status = BountyStatus::ManyClaimed;
+              claim.status = ClaimStatus::InProgress;
+            } else {
+              claim.status = ClaimStatus::ReadyToStart;
+            }
+          }
+        },
       }
     }
 
@@ -1365,10 +1396,12 @@ impl BountiesContract {
     deadline: U64,
     description: String,
     proposal_id: Option<U64>,
+    slot: Option<usize>,
   ) {
     let (mut bounty, mut claims, _) = self.check_if_allowed_to_create_claim_by_status(
       id,
-      claimer.clone()
+      claimer.clone(),
+      slot.clone(),
     );
 
     let created_at = U64::from(env::block_timestamp());
@@ -1391,6 +1424,7 @@ impl BountiesContract {
       } else {
         None
       },
+      slot,
     };
 
     if !self.is_approval_required(&bounty, &claimer) {
@@ -1413,68 +1447,89 @@ impl BountiesContract {
     &self,
     id: BountyIndex,
     claimer: AccountId,
+    slot: Option<usize>,
   ) -> (Bounty, Vec<BountyClaim>, Option<usize>) {
     let bounty = self.get_bounty(id.clone());
-    let claims: Vec<BountyClaim>;
-    let index: Option<usize>;
+    let bounty_statuses: Vec<BountyStatus>;
+    let claim_statuses: Vec<ClaimStatus>;
+    let claim_message: &str;
 
     if bounty.multitasking.is_none() {
-      let result = self.internal_get_and_check_bounty_and_claim(
-        id.clone(),
-        claimer.clone(),
-        vec![BountyStatus::New],
-        vec![ClaimStatus::New],
-        true,
-        "Bounty status does not allow to submit a claim",
-        "You already have a claim with the status 'New'"
-      );
-      claims = result.1;
-      index = result.2;
+      assert!(slot.is_none(), "The slot parameter is not used for this mode");
+
+      bounty_statuses = vec![BountyStatus::New];
+      claim_statuses = vec![ClaimStatus::New];
+      claim_message = "You already have a claim with the status 'New'";
+
     } else {
+      if bounty.multitasking.clone().unwrap().is_different_tasks_mode() {
+        assert!(slot.is_some(), "The slot parameter is required for this mode");
+      } else {
+        assert!(slot.is_none(), "The slot parameter is not used for this mode");
+      }
+
       match bounty.multitasking.clone().unwrap() {
         Multitasking::ContestOrHackathon { .. } => {
-          let result = self.internal_get_and_check_bounty_and_claim(
-            id.clone(),
-            claimer.clone(),
-            vec![BountyStatus::New, BountyStatus::ManyClaimed],
-            vec![
-              ClaimStatus::New,
-              ClaimStatus::Competes,
-              ClaimStatus::Completed,
-              ClaimStatus::NotHired,
-            ],
-            true,
-            "Bounty status does not allow to submit a claim",
-            "You already have a claim to participate in the competition"
-          );
-          claims = result.1;
-          index = result.2;
+          bounty_statuses = vec![BountyStatus::New, BountyStatus::ManyClaimed];
+          claim_statuses = vec![
+            ClaimStatus::New,
+            ClaimStatus::Competes,
+            ClaimStatus::Completed,
+            ClaimStatus::NotHired,
+          ];
+          claim_message = "You already have a claim to participate in the competition";
         },
+
         Multitasking::OneForAll { .. } => {
-          let result = self.internal_get_and_check_bounty_and_claim(
-            id.clone(),
-            claimer.clone(),
-            vec![BountyStatus::New, BountyStatus::ManyClaimed, BountyStatus::AwaitingClaims],
-            vec![
-              ClaimStatus::New,
-              ClaimStatus::ReadyToStart,
-              ClaimStatus::InProgress,
-              ClaimStatus::Completed,
-              ClaimStatus::Rejected,
-              ClaimStatus::Disputed,
-            ],
-            true,
-            "Bounty status does not allow to submit a claim",
-            "You already have an active claim"
-          );
-          claims = result.1;
-          index = result.2;
+          bounty_statuses = vec![
+            BountyStatus::New,
+            BountyStatus::ManyClaimed,
+            BountyStatus::AwaitingClaims
+          ];
+          claim_statuses = vec![
+            ClaimStatus::New,
+            ClaimStatus::ReadyToStart,
+            ClaimStatus::InProgress,
+            ClaimStatus::Completed,
+            ClaimStatus::Rejected,
+            ClaimStatus::Disputed,
+          ];
+          claim_message = "You already have an active claim";
         },
-        // TODO
-        _ => env::panic_str("This is temporarily not supported")
+
+        Multitasking::DifferentTasks { subtasks, .. } => {
+          assert!(
+            slot.unwrap() < subtasks.len(),
+            "The slot parameter cannot exceed the number of bounty tasks"
+          );
+
+          bounty_statuses = vec![BountyStatus::New, BountyStatus::ManyClaimed];
+          claim_statuses = vec![
+            ClaimStatus::New,
+            ClaimStatus::ReadyToStart,
+            ClaimStatus::InProgress,
+            ClaimStatus::Completed,
+            ClaimStatus::Rejected,
+            ClaimStatus::Disputed,
+          ];
+          claim_message = "You already have an active claim";
+        }
       }
+    }
+
+    let (_, claims, index) = self.internal_get_and_check_bounty_and_claim(
+      id.clone(),
+      claimer.clone(),
+      bounty_statuses,
+      claim_statuses,
+      true,
+      "Bounty status does not allow to submit a claim",
+      claim_message
+    );
+
+    if bounty.multitasking.is_some() {
       assert!(
-        bounty.multitasking.clone().unwrap().is_allowed_to_create_or_approve_claims(),
+        bounty.multitasking.clone().unwrap().is_allowed_to_create_or_approve_claims(slot),
         "It is no longer possible to create new claims"
       );
     }
@@ -1488,55 +1543,45 @@ impl BountiesContract {
     claimer: AccountId,
   ) -> (Bounty, Vec<BountyClaim>, Option<usize>) {
     let bounty = self.get_bounty(id.clone());
-    let claims: Vec<BountyClaim>;
-    let index: Option<usize>;
+    let bounty_statuses: Vec<BountyStatus>;
 
     if bounty.multitasking.is_none() {
-      let result = self.internal_get_and_check_bounty_and_claim(
-        id.clone(),
-        claimer.clone(),
-        vec![BountyStatus::New],
-        vec![ClaimStatus::New],
-        false,
-        "Bounty status does not allow to make a decision on a claim",
-        "Claim status does not allow a decision to be made"
-      );
-      claims = result.1;
-      index = result.2;
+      bounty_statuses = vec![BountyStatus::New];
     } else {
       match bounty.multitasking.clone().unwrap() {
         Multitasking::ContestOrHackathon { .. } => {
-          let result = self.internal_get_and_check_bounty_and_claim(
-            id.clone(),
-            claimer.clone(),
-            vec![BountyStatus::New, BountyStatus::ManyClaimed],
-            vec![ClaimStatus::New],
-            false,
-            "Bounty status does not allow to make a decision on a claim",
-            "Claim status does not allow a decision to be made"
-          );
-          claims = result.1;
-          index = result.2;
+          bounty_statuses = vec![BountyStatus::New, BountyStatus::ManyClaimed];
         },
         Multitasking::OneForAll { .. } => {
-          let result = self.internal_get_and_check_bounty_and_claim(
-            id.clone(),
-            claimer.clone(),
-            vec![BountyStatus::New, BountyStatus::ManyClaimed, BountyStatus::AwaitingClaims],
-            vec![ClaimStatus::New],
-            false,
-            "Bounty status does not allow to make a decision on a claim",
-            "Claim status does not allow a decision to be made"
-          );
-          claims = result.1;
-          index = result.2;
+          bounty_statuses = vec![
+            BountyStatus::New,
+            BountyStatus::ManyClaimed,
+            BountyStatus::AwaitingClaims
+          ];
         },
-        // TODO
-        _ => env::panic_str("This is temporarily not supported")
+        Multitasking::DifferentTasks { .. } => {
+          bounty_statuses = vec![BountyStatus::New, BountyStatus::ManyClaimed];
+        }
       }
+    }
+
+    let (_, claims, index) = self.internal_get_and_check_bounty_and_claim(
+      id.clone(),
+      claimer.clone(),
+      bounty_statuses,
+      vec![ClaimStatus::New],
+      false,
+      "Bounty status does not allow to make a decision on a claim",
+      "Claim status does not allow a decision to be made"
+    );
+
+    if bounty.multitasking.is_some() {
       assert!(
-        bounty.multitasking.clone().unwrap().is_allowed_to_create_or_approve_claims(),
-        "It is no longer possible to approve the claim"
+        bounty.multitasking
+          .clone()
+          .unwrap()
+          .is_allowed_to_create_or_approve_claims(claims[index.unwrap()].slot.clone()),
+        "It is no longer possible to create new claims"
       );
     }
 
@@ -1548,6 +1593,7 @@ impl BountiesContract {
     id: BountyIndex,
     claimer: AccountId,
     place_of_check: PlaceOfCheckKYC,
+    slot: Option<usize>,
   ) -> PromiseOrValue<()> {
     Promise::new(self.kyc_whitelist_contract.clone().unwrap())
       .function_call(
@@ -1563,7 +1609,7 @@ impl BountiesContract {
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CHECK_IF_WHITELISTED)
-          .after_check_if_whitelisted(id, claimer, place_of_check)
+          .after_check_if_whitelisted(id, claimer, place_of_check, slot)
       )
       .into()
   }
@@ -1573,6 +1619,7 @@ impl BountiesContract {
     id: BountyIndex,
     claimer: AccountId,
     place_of_check: PlaceOfCheckKYC,
+    slot: Option<usize>,
   ) -> PromiseOrValue<()> {
     let ( deadline, description ) = match place_of_check {
       PlaceOfCheckKYC::CreatingClaim { deadline, description } => (deadline, description),
@@ -1587,10 +1634,11 @@ impl BountiesContract {
         claimer,
         bounty,
         deadline,
-        description
+        description,
+        slot,
       )
     } else {
-      self.internal_create_claim(id, claimer, deadline, description, None);
+      self.internal_create_claim(id, claimer, deadline, description, None, slot);
       PromiseOrValue::Value(())
     }
   }

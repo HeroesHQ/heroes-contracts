@@ -401,6 +401,14 @@ impl Default for DifferentTasksEnv {
   }
 }
 
+impl DifferentTasksEnv {
+  pub fn init(size: usize) -> Self {
+    let mut env = DifferentTasksEnv::default();
+    (0..size).into_iter().for_each(|_| env.participants.push(None));
+    env
+  }
+}
+
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
@@ -468,23 +476,17 @@ impl Multitasking {
           runtime_env.is_none(),
           "The Multitasking instance is already initialized"
         );
-        let mut env = DifferentTasksEnv::default();
-        (0..subtasks.len()).into_iter().for_each(|_| env.participants.push(None));
         Self::DifferentTasks {
-          subtasks,
-          runtime_env: Some(DifferentTasksEnv::default())
+          subtasks: subtasks.clone(),
+          runtime_env: Some(DifferentTasksEnv::init(subtasks.len()))
         }
       },
     }
   }
 
-  pub fn is_allowed_to_create_or_approve_claims(&self) -> bool {
+  pub fn is_allowed_to_create_or_approve_claims(&self, slot: Option<usize>) -> bool {
     match self {
-      Self::ContestOrHackathon {
-        allowed_create_claim_to,
-        runtime_env,
-        ..
-      } => {
+      Self::ContestOrHackathon { allowed_create_claim_to, runtime_env, .. } => {
         if allowed_create_claim_to.is_none() {
           true
         } else {
@@ -501,16 +503,13 @@ impl Multitasking {
           }
         }
       },
-      Self::OneForAll {
-        number_of_slots,
-        runtime_env,
-        ..
-      } => {
-        let env = runtime_env.clone().unwrap_or_default();
+      Self::OneForAll { number_of_slots, runtime_env, .. } => {
+        let env = runtime_env.clone().unwrap();
         env.occupied_slots + env.paid_slots < number_of_slots.clone()
       },
-      // TODO
-      _ => env::panic_str("This is temporarily not supported")
+      Self::DifferentTasks { runtime_env, .. } => {
+        runtime_env.clone().unwrap().participants[slot.unwrap()].is_none()
+      }
     }
   }
 
@@ -528,10 +527,17 @@ impl Multitasking {
     }
   }
 
+  pub fn is_different_tasks_mode(&self) -> bool {
+    match self {
+      Self::DifferentTasks { .. } => true,
+      _ => false
+    }
+  }
+
   pub fn has_competition_started(&self) -> bool {
     match self {
       Self::ContestOrHackathon { runtime_env, .. } => {
-        let env = runtime_env.clone().unwrap_or_default();
+        let env = runtime_env.clone().unwrap();
         env.started_at.is_some() && env.finished_at.is_none()
       },
       _ => unreachable!(),
@@ -541,7 +547,7 @@ impl Multitasking {
   pub fn get_competition_timestamps(&self) -> (Option<U64>, Option<U64>) {
     match self {
       Self::ContestOrHackathon { runtime_env, .. } => {
-        let env = runtime_env.clone().unwrap_or_default();
+        let env = runtime_env.clone().unwrap();
         (env.started_at, env.finished_at)
       },
       _ => unreachable!(),
@@ -551,7 +557,7 @@ impl Multitasking {
   pub fn get_participants(&self) -> u32 {
     match self {
       Self::ContestOrHackathon { runtime_env, .. } =>
-        runtime_env.clone().unwrap_or_default().participants,
+        runtime_env.clone().unwrap().participants,
       _ => unreachable!(),
     }
   }
@@ -559,7 +565,7 @@ impl Multitasking {
   pub fn get_competition_winner(&self) -> Option<AccountId> {
     match self {
       Self::ContestOrHackathon { runtime_env, .. } =>
-        runtime_env.clone().unwrap_or_default().competition_winner,
+        runtime_env.clone().unwrap().competition_winner,
       _ => unreachable!(),
     }
   }
@@ -567,11 +573,45 @@ impl Multitasking {
   pub fn get_one_for_all_env(&self) -> (u16, u16) {
     match self {
       Self::OneForAll { runtime_env, .. } => {
-        let env = runtime_env.clone().unwrap_or_default();
+        let env = runtime_env.clone().unwrap();
         (env.occupied_slots, env.paid_slots)
       },
       _ => unreachable!(),
     }
+  }
+
+  // TODO
+  /*pub fn get_slot_number(self, claimer: AccountId) -> Option<usize> {
+    match self {
+      Self::DifferentTasks { runtime_env, .. } => {
+        let env = runtime_env.clone().unwrap();
+        env.participants
+          .iter()
+          .position(|p| p.is_some() && p.clone().unwrap().participant == claimer)
+      }
+      _ => unreachable!(),
+    }
+  }*/
+
+  pub fn get_slots(self) -> Vec<Option<SubtaskEnv>> {
+    match self {
+      Self::DifferentTasks { runtime_env, .. } => {
+        runtime_env.clone().unwrap().participants
+      }
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn get_slot_env(self, slot: usize) -> Option<SubtaskEnv> {
+    self.get_slots()[slot].clone()
+  }
+
+  pub fn are_all_slots_taken(self) -> bool {
+    self.get_slots().into_iter().find(|s| s.is_none()).is_none()
+  }
+
+  pub fn are_all_slots_available(self) -> bool {
+    self.get_slots().into_iter().find(|s| s.is_some()).is_none()
   }
 
   pub fn set_competition_timestamp(self, started_at: Option<U64>) -> Self {
@@ -582,7 +622,7 @@ impl Multitasking {
         start_conditions,
         runtime_env,
       } => {
-        let mut new_runtime_env = runtime_env.clone().unwrap_or_default();
+        let mut new_runtime_env = runtime_env.clone().unwrap();
         new_runtime_env.finished_at = if started_at.is_none() {
           Some(U64::from(env::block_timestamp()))
         } else {
@@ -591,7 +631,7 @@ impl Multitasking {
         new_runtime_env.started_at = if started_at.is_some() {
           started_at
         } else {
-          runtime_env.clone().unwrap_or_default().started_at
+          runtime_env.clone().unwrap().started_at
         };
         Self::ContestOrHackathon {
           allowed_create_claim_to,
@@ -612,7 +652,7 @@ impl Multitasking {
         start_conditions,
         runtime_env,
       } => {
-        let mut new_runtime_env = runtime_env.unwrap_or_default();
+        let mut new_runtime_env = runtime_env.unwrap();
         new_runtime_env.participants = participants;
         Self::ContestOrHackathon {
           allowed_create_claim_to,
@@ -633,7 +673,7 @@ impl Multitasking {
         start_conditions,
         runtime_env,
       } => {
-        let mut new_runtime_env = runtime_env.unwrap_or_default();
+        let mut new_runtime_env = runtime_env.unwrap();
         new_runtime_env.competition_winner = competition_winner;
         Self::ContestOrHackathon {
           allowed_create_claim_to,
@@ -661,6 +701,22 @@ impl Multitasking {
           runtime_env: Some(OneForAllEnv { occupied_slots, paid_slots }),
         }
       },
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn set_slot_env(&mut self, slot: usize, slot_env: SubtaskEnv) {
+    match self.clone() {
+      Self::DifferentTasks { subtasks, mut runtime_env } => {
+        let mut participants = runtime_env.unwrap().participants;
+        assert!(participants[slot].is_none(), "The slot is already occupied");
+        participants[slot] = Some(slot_env);
+        runtime_env = Some(DifferentTasksEnv { participants });
+        *self = Self::DifferentTasks {
+          subtasks: subtasks.clone(),
+          runtime_env
+        };
+      }
       _ => unreachable!(),
     }
   }
@@ -1190,6 +1246,10 @@ impl Bounty {
     self.multitasking.is_some() && self.multitasking.clone().unwrap().is_one_for_all_mode()
   }
 
+  pub fn is_different_tasks(&self) -> bool {
+    self.multitasking.is_some() && self.multitasking.clone().unwrap().is_different_tasks_mode()
+  }
+
   pub fn is_payment_outside_contract(&self) -> bool {
     self.postpaid.is_some() &&
       matches!(self.postpaid.clone().unwrap(), Postpaid::PaymentOutsideContract { .. })
@@ -1436,6 +1496,8 @@ pub struct BountyClaim {
   pub is_kyc_delayed: Option<DefermentOfKYC>,
   /// Payment data for PaymentOutsideContract mode
   pub payment_timestamps: Option<PaymentTimestamps>,
+  /// Bounty slot number for different tasks
+  pub slot: Option<usize>,
 }
 
 impl BountyClaim {
@@ -1504,6 +1566,7 @@ impl VersionedBountyClaim {
       dispute_id: bounty_claim.dispute_id,
       is_kyc_delayed: bounty_claim.is_kyc_delayed,
       payment_timestamps: None,
+      slot: None,
     }
   }
 

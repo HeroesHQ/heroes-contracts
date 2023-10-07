@@ -27,6 +27,7 @@ impl BountiesContract {
     claimer: AccountId,
     deadline: U64,
     description: String,
+    slot: Option<usize>,
   ) -> bool {
     if !is_promise_success() || result.is_err() {
       env::log_str("Could not create claimer proposal");
@@ -37,7 +38,8 @@ impl BountiesContract {
         claimer,
         deadline,
         description,
-        Some(U64(result.unwrap()))
+        Some(U64(result.unwrap())),
+        slot,
       );
       true
     }
@@ -249,6 +251,7 @@ impl BountiesContract {
     id: BountyIndex,
     claimer: AccountId,
     place_of_check: PlaceOfCheckKYC,
+    slot: Option<usize>,
   ) -> PromiseOrValue<()> {
     if !is_promise_success() || result.is_err() {
       env::panic_str("Error determining the claimer's KYC status");
@@ -257,7 +260,7 @@ impl BountiesContract {
       if is_whitelisted {
         match place_of_check {
           PlaceOfCheckKYC::CreatingClaim { .. } => {
-            self.internal_add_proposal_and_create_claim(id, claimer, place_of_check)
+            self.internal_add_proposal_and_create_claim(id, claimer, place_of_check, slot)
           },
           PlaceOfCheckKYC::DecisionOnClaim { approve, is_kyc_delayed } => {
             self.internal_approval_and_save_claim(id, claimer, approve, is_kyc_delayed)
