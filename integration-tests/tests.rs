@@ -133,6 +133,7 @@ async fn test_bounty_claim(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     deadline,
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -226,6 +227,7 @@ async fn test_claimer_give_up(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -249,6 +251,7 @@ async fn test_claim_result_reject_by_project_owner(e: &Env) -> anyhow::Result<()
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -285,6 +288,7 @@ async fn test_claim_result_approve_by_project_owner(e: &Env) -> anyhow::Result<(
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -348,6 +352,7 @@ async fn test_claim_result_reject_by_validators_dao(e: &Env) -> anyhow::Result<(
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -428,6 +433,7 @@ async fn test_bounty_claim_deadline_has_expired(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -456,6 +462,7 @@ async fn test_bounty_claim_deadline_has_expired(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -505,6 +512,7 @@ async fn test_open_dispute_and_reject_by_dispute_dao(e: &Env) -> anyhow::Result<
     bounty_id,
     U64(1_000_000_000 * 60 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -619,6 +627,7 @@ async fn test_cancel_dispute_by_claimer(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -692,6 +701,7 @@ async fn test_cancel_dispute_by_project_owner(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -797,6 +807,7 @@ async fn test_open_dispute_and_approve_by_dispute_dao(e: &Env) -> anyhow::Result
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -908,6 +919,7 @@ async fn test_statistics_for_bounty_claim_approval(e: &Env) -> anyhow::Result<()
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -988,6 +1000,7 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     bounty_id,
     deadline,
     "Test claim 1".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -1003,6 +1016,7 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     bounty_id,
     deadline,
     "Test claim 2".to_string(),
+    None,
     Some(&freelancer2),
     None
   ).await?;
@@ -1018,6 +1032,7 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     bounty_id,
     deadline,
     "Test claim 3".to_string(),
+    None,
     Some(&freelancer3),
     None,
   ).await?;
@@ -1033,6 +1048,7 @@ async fn test_rejection_and_approval_of_claimers_by_project_owner(e: &Env) -> an
     bounty_id,
     deadline,
     "Test claim 4".to_string(),
+    None,
     Some(&freelancer4),
     None,
   ).await?;
@@ -1167,6 +1183,7 @@ async fn test_rejection_and_approval_of_claimers_by_validators_dao(e: &Env) -> a
     bounty_id,
     deadline,
     "Test claim 1".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -1182,6 +1199,7 @@ async fn test_rejection_and_approval_of_claimers_by_validators_dao(e: &Env) -> a
     bounty_id,
     deadline,
     "Test claim 2".to_string(),
+    None,
     Some(&freelancer2),
     None,
   ).await?;
@@ -1289,6 +1307,7 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -1399,6 +1418,7 @@ async fn test_bounty_cancel(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -1510,6 +1530,7 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -1602,6 +1623,7 @@ async fn test_kyc_whitelist_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     Some(&freelancer),
     Some("The claimer is not whitelisted")
   ).await?;
@@ -1621,6 +1643,7 @@ async fn test_kyc_whitelist_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     Some(&freelancer),
     None,
   ).await?;
@@ -1668,6 +1691,7 @@ async fn test_kyc_whitelist_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     Some(&freelancer),
     None,
   ).await?;
@@ -1810,6 +1834,7 @@ async fn test_use_commissions(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 2),
     "Test claim".to_string(),
+    None,
     None, // by default freelancer
     None
   ).await?;
@@ -2018,6 +2043,7 @@ async fn test_approval_by_whitelist_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     deadline,
     "Test claim".to_string(),
+    None,
     Some(&freelancer),
     Some("freelancer10.test.near is not whitelisted"),
   ).await?;
@@ -2032,6 +2058,7 @@ async fn test_approval_by_whitelist_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     deadline,
     "Test claim 2".to_string(),
+    None,
     Some(&freelancer2),
     None,
   ).await?;
@@ -2088,6 +2115,7 @@ async fn test_approval_by_whitelist_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     deadline,
     "Test claim".to_string(),
+    None,
     Some(&freelancer3),
     Some("freelancer12.test.near is not whitelisted"),
   ).await?;
@@ -2102,6 +2130,7 @@ async fn test_approval_by_whitelist_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     deadline,
     "Test claim 2".to_string(),
+    None,
     Some(&freelancer4),
     None,
   ).await?;
@@ -2116,6 +2145,7 @@ async fn test_approval_by_whitelist_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     deadline,
     "Test claim 3".to_string(),
+    None,
     Some(&freelancer5),
     None,
   ).await?;
@@ -2227,6 +2257,7 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     Some(&freelancer),
     None
   ).await?;
@@ -2326,6 +2357,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     Some(&freelancer),
     None
   ).await?;
@@ -2351,6 +2383,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     Some(&freelancer),
     None
   ).await?;
@@ -2396,6 +2429,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
       bounty_id,
       U64(1_000_000_000 * 60 * 60 * 24 * 2),
       "Test claim".to_string(),
+      None,
       Some(&freelancer),
       None
     ).await?;
@@ -2482,6 +2516,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
       bounty_id,
       U64(1_000_000_000 * 60 * 60 * 24 * 2),
       "Test claim".to_string(),
+      None,
       Some(&freelancer),
       None
     ).await?;
@@ -2606,6 +2641,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
       bounty_id,
       U64(1_000_000_000 * 60 * 60 * 24 * 2),
       "Test claim".to_string(),
+      None,
       Some(&freelancer),
       None
     ).await?;
@@ -2634,6 +2670,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
       bounty_id,
       U64(1_000_000_000 * 60 * 60 * 24 * 2),
       "Test claim".to_string(),
+      None,
       Some(&freelancer),
       None
     ).await?;
@@ -2743,6 +2780,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
       bounty_id,
       U64(1_000_000_000 * 60 * 60 * 24 * 2),
       "Test claim".to_string(),
+      None,
       Some(&freelancer),
       None
     ).await?;
@@ -2842,6 +2880,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
       bounty_id,
       U64(1_000_000_000 * 60 * 60 * 24 * 2),
       "Test claim".to_string(),
+      None,
       Some(&freelancer),
       None
     ).await?;
@@ -2917,6 +2956,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
       bounty_id,
       U64(1_000_000_000 * 60 * 60 * 24 * 2),
       "Test claim".to_string(),
+      None,
       Some(&freelancer),
       None
     ).await?;
@@ -3040,6 +3080,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
       bounty_id,
       U64(1_000_000_000 * 60 * 60 * 24 * 2),
       "Test claim".to_string(),
+      None,
       Some(&freelancer),
       None
     ).await?;
@@ -3068,6 +3109,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     Some(&freelancer),
     None
   ).await?;
@@ -3122,6 +3164,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     U64(1_000_000_000 * 60 * 60 * 24 * 2),
     "Test claim".to_string(),
+    None,
     Some(&freelancer),
     None
   ).await?;
@@ -3218,6 +3261,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
       bounty_id,
       U64(1_000_000_000 * 60 * 60 * 24 * 2),
       "Test claim".to_string(),
+      None,
       Some(&freelancers[x]),
       None
     ).await?;

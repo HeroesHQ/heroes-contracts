@@ -640,13 +640,14 @@ impl Env {
     bounty_id: u64,
     deadline: U64,
     description: String,
+    slot: Option<usize>,
     user: Option<&Account>,
     expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let config: bounties::Config = bounties.call("get_config").view().await?.json()?;
     let res = if user.is_some() { user.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "bounty_claim")
-      .args_json((bounty_id, deadline, description))
+      .args_json((bounty_id, deadline, description, slot))
       .max_gas()
       .deposit(config.bounty_claim_bond.0)
       .transact()

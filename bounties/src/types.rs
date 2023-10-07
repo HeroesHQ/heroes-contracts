@@ -33,7 +33,7 @@ pub const DEFAULT_PLATFORM_FEE_PERCENTAGE: u32 = 10_000;
 pub const DEFAULT_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 10_000;
 pub const DEFAULT_PENALTY_PLATFORM_FEE_PERCENTAGE: u32 = 0;
 pub const DEFAULT_PENALTY_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 0;
-pub const MAX_SLOTS_TO_START: u16 = 300;
+pub const MAX_SLOTS: u16 = 300;
 pub const MIN_DEVIATION_FOR_TOTAL_BOUNTY_AMOUNT: u128 = 20;
 
 pub const NO_DEPOSIT: Balance = 0;
@@ -1099,7 +1099,7 @@ impl Bounty {
           );
           if min_slots_to_start.is_some() {
             assert!(
-              min_slots_to_start.unwrap() > 1 && min_slots_to_start.unwrap() <= MAX_SLOTS_TO_START,
+              min_slots_to_start.unwrap() > 1 && min_slots_to_start.unwrap() <= MAX_SLOTS,
               "The minimum number of claims to start is incorrect"
             );
           }
@@ -1112,7 +1112,7 @@ impl Bounty {
         },
         Multitasking::DifferentTasks { subtasks, .. } => {
           assert!(
-            subtasks.len() > 1,
+            subtasks.len() > 1 && subtasks.len() <= MAX_SLOTS as usize,
             "The number of subtasks must be greater than one"
           );
           assert!(
