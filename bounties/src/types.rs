@@ -391,12 +391,14 @@ pub struct SubtaskEnv {
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct DifferentTasksEnv {
   pub participants: Vec<Option<SubtaskEnv>>,
+  pub bounty_payout_proposal_id: Option<U64>,
 }
 
 impl Default for DifferentTasksEnv {
   fn default() -> Self {
     Self {
       participants: vec![],
+      bounty_payout_proposal_id: None,
     }
   }
 }
@@ -534,40 +536,31 @@ impl Multitasking {
     }
   }
 
-  pub fn has_competition_started(&self) -> bool {
+  fn get_contest_or_hackathon_env(&self) -> ContestOrHackathonEnv {
     match self {
       Self::ContestOrHackathon { runtime_env, .. } => {
-        let env = runtime_env.clone().unwrap();
-        env.started_at.is_some() && env.finished_at.is_none()
+        runtime_env.clone().unwrap()
       },
       _ => unreachable!(),
     }
+  }
+
+  pub fn has_competition_started(&self) -> bool {
+    let env = self.get_contest_or_hackathon_env();
+    env.started_at.is_some() && env.finished_at.is_none()
   }
 
   pub fn get_competition_timestamps(&self) -> (Option<U64>, Option<U64>) {
-    match self {
-      Self::ContestOrHackathon { runtime_env, .. } => {
-        let env = runtime_env.clone().unwrap();
-        (env.started_at, env.finished_at)
-      },
-      _ => unreachable!(),
-    }
+    let env = self.get_contest_or_hackathon_env();
+    (env.started_at, env.finished_at)
   }
 
   pub fn get_participants(&self) -> u32 {
-    match self {
-      Self::ContestOrHackathon { runtime_env, .. } =>
-        runtime_env.clone().unwrap().participants,
-      _ => unreachable!(),
-    }
+    self.get_contest_or_hackathon_env().participants
   }
 
   pub fn get_competition_winner(&self) -> Option<AccountId> {
-    match self {
-      Self::ContestOrHackathon { runtime_env, .. } =>
-        runtime_env.clone().unwrap().competition_winner,
-      _ => unreachable!(),
-    }
+    self.get_contest_or_hackathon_env().competition_winner
   }
 
   pub fn get_one_for_all_env(&self) -> (u16, u16) {
@@ -580,26 +573,17 @@ impl Multitasking {
     }
   }
 
-  // TODO
-  /*pub fn get_slot_number(self, claimer: AccountId) -> Option<usize> {
+  pub fn get_different_tasks_env(&self) -> DifferentTasksEnv {
     match self {
       Self::DifferentTasks { runtime_env, .. } => {
-        let env = runtime_env.clone().unwrap();
-        env.participants
-          .iter()
-          .position(|p| p.is_some() && p.clone().unwrap().participant == claimer)
-      }
+        runtime_env.clone().unwrap()
+      },
       _ => unreachable!(),
     }
-  }*/
+  }
 
-  pub fn get_slots(self) -> Vec<Option<SubtaskEnv>> {
-    match self {
-      Self::DifferentTasks { runtime_env, .. } => {
-        runtime_env.clone().unwrap().participants
-      }
-      _ => unreachable!(),
-    }
+  fn get_slots(self) -> Vec<Option<SubtaskEnv>> {
+    self.get_different_tasks_env().participants
   }
 
   pub fn get_slot_env(self, slot: usize) -> Option<SubtaskEnv> {
@@ -612,6 +596,10 @@ impl Multitasking {
 
   pub fn are_all_slots_available(self) -> bool {
     self.get_slots().into_iter().find(|s| s.is_some()).is_none()
+  }
+
+  pub fn are_all_slots_complete(self) -> bool {
+    self.get_slots().into_iter().find(|s| s.is_none() || !s.clone().unwrap().completed).is_none()
   }
 
   pub fn set_competition_timestamp(self, started_at: Option<U64>) -> Self {
@@ -707,16 +695,29 @@ impl Multitasking {
 
   pub fn set_slot_env(&mut self, slot: usize, slot_env: SubtaskEnv) {
     match self.clone() {
-      Self::DifferentTasks { subtasks, mut runtime_env } => {
-        let mut participants = runtime_env.unwrap().participants;
-        assert!(participants[slot].is_none(), "The slot is already occupied");
-        participants[slot] = Some(slot_env);
-        runtime_env = Some(DifferentTasksEnv { participants });
+      Self::DifferentTasks { subtasks, runtime_env } => {
+        let mut env = runtime_env.unwrap();
+        assert!(env.participants[slot].is_none(), "The slot is already occupied");
+        env.participants[slot] = Some(slot_env);
         *self = Self::DifferentTasks {
-          subtasks: subtasks.clone(),
-          runtime_env
+          subtasks,
+          runtime_env: Some(env)
         };
       }
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn set_bounty_payout_proposal_id(self, proposal_id: Option<U64>) -> Self {
+    match self {
+      Self::DifferentTasks { subtasks, runtime_env } => {
+        let mut env = runtime_env.unwrap();
+        env.bounty_payout_proposal_id = proposal_id;
+        Self::DifferentTasks {
+          subtasks,
+          runtime_env: Some(env)
+        }
+      },
       _ => unreachable!(),
     }
   }
@@ -1608,6 +1609,7 @@ impl From<BountyClaim> for VersionedBountyClaim {
 pub enum BountyAction {
   ClaimApproved { receiver_id: AccountId },
   ClaimRejected { receiver_id: AccountId },
+  SeveralClaimsApproved,
   Finalize { receiver_id: Option<AccountId> },
 }
 

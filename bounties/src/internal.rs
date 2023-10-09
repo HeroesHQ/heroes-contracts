@@ -856,6 +856,57 @@ impl BountiesContract {
     }
   }
 
+  pub(crate) fn internal_add_proposal_to_finish_several_claims(
+    &self,
+    id: BountyIndex,
+    claimer: AccountId,
+    bounty: Bounty,
+    place_of_check: PlaceOfCheckKYC,
+  ) -> PromiseOrValue<()> {
+    if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
+      let description = match place_of_check {
+        PlaceOfCheckKYC::ClaimDone { description } => description,
+        _ => unreachable!(),
+      };
+      Self::internal_add_proposal(
+        validators_dao.account_id,
+        json!({
+          "proposal": {
+            "description": description,
+            "kind": {
+              "FunctionCall" : {
+                "receiver_id": env::current_account_id(),
+                "actions": [
+                  {
+                    "method_name": "bounty_action",
+                    "args": Base64VecU8::from(json!({
+                      "id": id.clone(),
+                      "action": "SeveralClaimsApproved"
+                    })
+                      .to_string()
+                      .into_bytes()
+                      .to_vec()),
+                    "deposit": "1",
+                    "gas": validators_dao.gas_for_claim_approval,
+                  }
+                ],
+              }
+            }
+          }
+        })
+          .to_string()
+          .into_bytes(),
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK)
+          .on_added_proposal_callback(id, claimer),
+        validators_dao.add_proposal_bond,
+        validators_dao.gas_for_add_proposal,
+      )
+    } else {
+      unreachable!();
+    }
+  }
+
   pub(crate) fn internal_add_proposal_to_approve_claimer(
     &self,
     id: BountyIndex,
@@ -1185,6 +1236,17 @@ impl BountiesContract {
     slot_env.completed = true;
     multitasking.set_slot_env(slot, slot_env);
     bounty.multitasking = Some(multitasking);
+  }
+
+  pub(crate) fn internal_set_bounty_payout_proposal_id(
+    &mut self,
+    bounty: &mut Bounty,
+    proposal_id: Option<U64>
+  ) {
+    let multitasking = bounty.multitasking.clone().unwrap();
+    if multitasking.get_different_tasks_env().bounty_payout_proposal_id.is_none() {
+      bounty.multitasking = Some(multitasking.clone().set_bounty_payout_proposal_id(proposal_id));
+    }
   }
 
   pub(crate) fn internal_claimer_approval(
@@ -1679,12 +1741,29 @@ impl BountiesContract {
   ) -> PromiseOrValue<()> {
     let bounty = self.get_bounty(id.clone());
     if bounty.is_validators_dao_used() {
-      self.internal_add_proposal_to_finish_claim(
-        id,
-        claimer,
-        bounty,
-        place_of_check
-      )
+      if !bounty.is_different_tasks() {
+        self.internal_add_proposal_to_finish_claim(
+          id,
+          claimer,
+          bounty,
+          place_of_check
+        )
+      } else if bounty.multitasking
+        .clone()
+        .unwrap()
+        .get_different_tasks_env().bounty_payout_proposal_id
+        .is_none()
+      {
+        self.internal_add_proposal_to_finish_several_claims(
+          id,
+          claimer,
+          bounty,
+          place_of_check
+        )
+      } else {
+        self.internal_claim_done(id, claimer, None);
+        PromiseOrValue::Value(())
+      }
     } else {
       self.internal_claim_done(id, claimer, None);
       PromiseOrValue::Value(())
@@ -1697,7 +1776,7 @@ impl BountiesContract {
     claimer: AccountId,
     proposal_id: Option<U64>
   ) {
-    let (_, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
+    let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
       id.clone(),
       claimer.clone(),
       vec![BountyStatus::Claimed, BountyStatus::ManyClaimed],
@@ -1709,7 +1788,15 @@ impl BountiesContract {
 
     let claim_idx = index.unwrap();
     claims[claim_idx].status = ClaimStatus::Completed;
-    claims[claim_idx].bounty_payout_proposal_id = proposal_id;
+    if bounty.is_different_tasks() {
+      self.internal_complete_slot(&mut bounty, claims[index.unwrap()].slot.clone().unwrap());
+      if proposal_id.is_some() {
+        self.internal_set_bounty_payout_proposal_id(&mut bounty, proposal_id);
+      }
+      self.internal_update_bounty(&id, bounty);
+    } else {
+      claims[claim_idx].bounty_payout_proposal_id = proposal_id;
+    }
     self.internal_save_claims(&claimer, &claims);
   }
 

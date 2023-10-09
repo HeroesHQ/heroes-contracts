@@ -543,6 +543,10 @@ impl BountiesContract {
 
           result
         }
+        BountyAction::SeveralClaimsApproved => {
+          // TODO
+          PromiseOrValue::Value(())
+        }
         BountyAction::Finalize { .. } => {
           if bounty.multitasking.is_none() {
             let (receiver_id, claims, claim_idx) = self.internal_find_active_claim(id.clone());
