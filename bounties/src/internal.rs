@@ -523,10 +523,8 @@ impl BountiesContract {
           }
         },
         Multitasking::DifferentTasks { .. } => {
-          let mut multitasking = bounty.multitasking.clone().unwrap();
           let slot = claims[claim_idx].slot.clone().unwrap();
-          multitasking.set_slot_env(slot, None);
-          bounty.multitasking = Some(multitasking);
+          self.internal_reset_slot(bounty, slot);
           if bounty.multitasking.clone().unwrap().are_all_slots_available() {
             bounty.status = BountyStatus::New;
           }
@@ -986,16 +984,16 @@ impl BountiesContract {
     &self,
     id: BountyIndex,
     bounty: Bounty,
-    receiver_id: AccountId,
-    proposal_id: Option<U64>,
+    receiver_id: Option<AccountId>,
+    proposal_id: U64,
   ) -> PromiseOrValue<()> {
     if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
       Self::internal_check_proposal(
         validators_dao.account_id,
-        proposal_id.unwrap(),
+        proposal_id,
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CHECK_BOUNTY_PAYOUT_PROPOSAL)
-          .after_check_bounty_payout_proposal(id, receiver_id, proposal_id.unwrap())
+          .after_check_bounty_payout_proposal(id, receiver_id, proposal_id)
       )
     } else {
       unreachable!();
@@ -1007,15 +1005,15 @@ impl BountiesContract {
     id: BountyIndex,
     bounty: &Bounty,
     claimer: AccountId,
-    proposal_id: Option<U64>,
+    proposal_id: U64,
   ) -> PromiseOrValue<()> {
     if let Reviewers::ValidatorsDao {validators_dao} = bounty.reviewers.clone().unwrap() {
       Self::internal_check_proposal(
         validators_dao.account_id,
-        proposal_id.unwrap(),
+        proposal_id,
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CHECK_APPROVE_CLAIMER_PROPOSAL)
-          .after_check_approve_claimer_proposal(id, claimer, proposal_id.unwrap())
+          .after_check_approve_claimer_proposal(id, claimer, proposal_id)
       )
     } else {
       unreachable!();
@@ -1248,15 +1246,26 @@ impl BountiesContract {
     bounty.multitasking = Some(multitasking);
   }
 
+  pub(crate) fn internal_reset_slot(&mut self, bounty: &mut Bounty, slot: usize) {
+    let mut multitasking = bounty.multitasking.clone().unwrap();
+    multitasking.set_slot_env(slot, None);
+    bounty.multitasking = Some(multitasking);
+  }
+
   pub(crate) fn internal_set_bounty_payout_proposal_id(
     &mut self,
     bounty: &mut Bounty,
     proposal_id: Option<U64>
   ) {
-    let multitasking = bounty.multitasking.clone().unwrap();
-    if multitasking.get_different_tasks_env().bounty_payout_proposal_id.is_none() {
-      bounty.multitasking = Some(multitasking.clone().set_bounty_payout_proposal_id(proposal_id));
+    if Self::internal_get_bounty_payout_proposal_id(bounty).is_none() {
+      bounty.multitasking = Some(
+        bounty.multitasking.clone().unwrap().set_bounty_payout_proposal_id(proposal_id)
+      );
     }
+  }
+
+  pub(crate) fn internal_get_bounty_payout_proposal_id(bounty: &Bounty) -> Option<U64> {
+    bounty.multitasking.clone().unwrap().get_different_tasks_env().bounty_payout_proposal_id
   }
 
   pub(crate) fn internal_claimer_approval(
@@ -1758,12 +1767,7 @@ impl BountiesContract {
           bounty,
           place_of_check
         )
-      } else if bounty.multitasking
-        .clone()
-        .unwrap()
-        .get_different_tasks_env().bounty_payout_proposal_id
-        .is_none()
-      {
+      } else if Self::internal_get_bounty_payout_proposal_id(&bounty).is_none() {
         self.internal_add_proposal_to_finish_several_claims(
           id,
           claimer,
@@ -1818,6 +1822,7 @@ impl BountiesContract {
   ) {
     let action_kind;
     if bounty.is_different_tasks() {
+      assert!(claimer.is_none(), "The claimant must not be established");
       assert!(
         matches!(bounty.status, BountyStatus::ManyClaimed),
         "Bounty status does not allow to payout"
@@ -1830,6 +1835,7 @@ impl BountiesContract {
       action_kind = ReputationActionKind::SuccessfulBounty;
 
     } else {
+      assert!(claimer.is_some(), "The claimant must be established");
       let (_, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         claimer.clone().unwrap(),
@@ -1943,59 +1949,91 @@ impl BountiesContract {
   pub(crate) fn internal_finalize_active_claim(
     &mut self,
     id: BountyIndex,
-    receiver_id: AccountId,
     mut bounty: Bounty,
-    mut claims: Vec<BountyClaim>,
-    claim_idx: usize,
+    active_claim: Option<(AccountId, Vec<BountyClaim>, usize)>,
   ) -> Option<PromiseOrValue<()>> {
-    if (claims[claim_idx].status == ClaimStatus::InProgress ||
-      claims[claim_idx].status == ClaimStatus::Competes) &&
-      (bounty.status == BountyStatus::Claimed ||
-        bounty.status == BountyStatus::ManyClaimed ||
-        bounty.status == BountyStatus::Completed && bounty.is_contest_or_hackathon()) &&
-      claims[claim_idx].is_claim_expired(&bounty)
-    {
-      Some(self.internal_set_claim_expiry_status(id, &receiver_id, &mut bounty, claim_idx, &mut claims))
-    }
+    if active_claim.is_none() {
+      if bounty.status == BountyStatus::ManyClaimed && bounty.is_different_tasks() &&
+        bounty.is_validators_dao_used()
+      {
+        let proposal_id = Self::internal_get_bounty_payout_proposal_id(&bounty)
+          .expect("There is no proposal for voting in DAO");
 
-    else if claims[claim_idx].status == ClaimStatus::Completed &&
-      (bounty.status == BountyStatus::Claimed ||
-        bounty.status == BountyStatus::ManyClaimed) &&
-      bounty.is_validators_dao_used()
-    {
-      Some(self.internal_check_bounty_payout_proposal(
-        id,
-        bounty,
-        receiver_id,
-        claims[claim_idx].bounty_payout_proposal_id
-      ))
-    }
+        Some(self.internal_check_bounty_payout_proposal(
+          id,
+          bounty,
+          None,
+          proposal_id
+        ))
+      } else {
+        None
+      }
 
-    else if claims[claim_idx].status == ClaimStatus::Rejected &&
-      (bounty.status == BountyStatus::Claimed ||
-        bounty.status == BountyStatus::ManyClaimed && bounty.is_one_bounty_for_many_claimants()) &&
-      self.is_deadline_for_opening_dispute_expired(&claims[claim_idx])
-    {
-      Some(self.internal_reset_bounty_to_initial_state(
-        id,
-        &receiver_id,
-        &mut bounty,
-        claim_idx,
-        &mut claims,
-        None,
-        true
-      ))
-    }
+    } else {
+      let (receiver_id, mut claims, claim_idx) = active_claim.unwrap();
 
-    else if claims[claim_idx].status == ClaimStatus::Disputed &&
-      (bounty.status == BountyStatus::Claimed ||
-        bounty.status == BountyStatus::ManyClaimed && bounty.is_one_bounty_for_many_claimants())
-    {
-      Some(self.internal_get_dispute(id, receiver_id, claims[claim_idx].dispute_id.unwrap()))
-    }
+      if (claims[claim_idx].status == ClaimStatus::InProgress ||
+        claims[claim_idx].status == ClaimStatus::Competes) &&
+        (bounty.status == BountyStatus::Claimed ||
+          bounty.status == BountyStatus::ManyClaimed ||
+          bounty.status == BountyStatus::Completed && bounty.is_contest_or_hackathon()) &&
+        claims[claim_idx].is_claim_expired(&bounty)
+      {
+        Some(self.internal_set_claim_expiry_status(
+          id,
+          &receiver_id,
+          &mut bounty,
+          claim_idx,
+          &mut claims
+        ))
+      }
 
-    else {
-      None
+      else if claims[claim_idx].status == ClaimStatus::Completed &&
+        (bounty.status == BountyStatus::Claimed ||
+          bounty.status == BountyStatus::ManyClaimed) &&
+        bounty.is_validators_dao_used()
+      {
+        let proposal_id = if bounty.is_different_tasks() {
+          Self::internal_get_bounty_payout_proposal_id(&bounty).unwrap()
+        } else {
+          claims[claim_idx].bounty_payout_proposal_id.unwrap()
+        };
+
+        Some(self.internal_check_bounty_payout_proposal(
+          id,
+          bounty,
+          Some(receiver_id),
+          proposal_id
+        ))
+      }
+
+      else if claims[claim_idx].status == ClaimStatus::Rejected &&
+        (bounty.status == BountyStatus::Claimed ||
+          bounty.status == BountyStatus::ManyClaimed) &&
+        self.is_deadline_for_opening_dispute_expired(&claims[claim_idx])
+      {
+        Some(self.internal_reset_bounty_to_initial_state(
+          id,
+          &receiver_id,
+          &mut bounty,
+          claim_idx,
+          &mut claims,
+          None,
+          true
+        ))
+      }
+
+      else if claims[claim_idx].status == ClaimStatus::Disputed &&
+        (bounty.status == BountyStatus::Claimed ||
+          bounty.status == BountyStatus::ManyClaimed)
+      {
+        // TODO
+        Some(self.internal_get_dispute(id, receiver_id, claims[claim_idx].dispute_id.unwrap()))
+      }
+
+      else {
+        None
+      }
     }
   }
 
@@ -2010,10 +2048,8 @@ impl BountiesContract {
     if bounty.multitasking.is_some() {
       let result = self.internal_finalize_active_claim(
         id,
-        receiver_id.clone(),
         bounty.clone(),
-        claims.clone(),
-        claim_idx
+        Some((receiver_id.clone(), claims.clone(), claim_idx)),
       );
       if result.is_some() {
         return result.unwrap();
@@ -2028,7 +2064,7 @@ impl BountiesContract {
         id,
         &bounty,
         receiver_id,
-        claims[claim_idx].approve_claimer_proposal_id,
+        claims[claim_idx].approve_claimer_proposal_id.unwrap(),
       )
     }
 
@@ -2055,12 +2091,15 @@ impl BountiesContract {
       bounty.is_contest_or_hackathon() ||
       bounty.status == BountyStatus::Canceled &&
         claims[claim_idx].status == ClaimStatus::ReadyToStart &&
-        bounty.is_one_bounty_for_many_claimants()
+        (bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks())
     {
       if bounty.is_contest_or_hackathon() {
         self.internal_participants_decrement(bounty);
-      } else {
+      } else if bounty.is_one_bounty_for_many_claimants() {
         self.internal_occupied_slots_decrement(bounty);
+      } else {
+        let slot = claims[claim_idx].slot.clone().unwrap();
+        self.internal_reset_slot(bounty, slot);
       }
       self.internal_update_bounty(&id, bounty.clone());
       let new_status = if bounty.status == BountyStatus::Canceled {

@@ -556,15 +556,13 @@ impl BountiesContract {
           self.internal_bounty_payout(id, None)
         }
         BountyAction::Finalize { .. } => {
-          if bounty.multitasking.is_none() {
-            let (receiver_id, claims, claim_idx) = self.internal_find_active_claim(id.clone());
-            let result = self.internal_finalize_active_claim(
-              id,
-              receiver_id,
-              bounty,
-              claims,
-              claim_idx
-            );
+          if bounty.multitasking.is_none() || bounty.is_different_tasks() {
+            let active_claim = if bounty.multitasking.is_none() {
+              Some(self.internal_find_active_claim(id.clone()))
+            } else {
+              None
+            };
+            let result = self.internal_finalize_active_claim(id, bounty, active_claim);
             if result.is_some() {
               return result.unwrap();
             }

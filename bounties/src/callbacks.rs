@@ -102,7 +102,7 @@ impl BountiesContract {
     &mut self,
     #[callback_result] result: Result<Proposal, PromiseError>,
     id: BountyIndex,
-    receiver_id: AccountId,
+    receiver_id: Option<AccountId>,
     proposal_id: U64,
   ) -> PromiseOrValue<()> {
     if !is_promise_success() || result.is_err() {
@@ -112,23 +112,41 @@ impl BountiesContract {
       assert_eq!(proposal.id, proposal_id.0);
       assert_eq!(proposal.proposer, env::current_account_id());
 
-      let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
-        id.clone(),
-        receiver_id.clone(),
-        vec![BountyStatus::Claimed, BountyStatus::ManyClaimed],
-        vec![ClaimStatus::Completed],
-        false,
-        "Bounty status does not allow completion",
-        "The claim status does not allow you to complete the bounty"
-      );
+      if receiver_id.is_none() {
+        let bounty = self.get_bounty(id);
+        assert!(
+          matches!(bounty.status, BountyStatus::ManyClaimed),
+          "Bounty status does not allow completion"
+        );
 
-      if proposal.status == "Approved" {
-        // TODO
-        self.internal_bounty_payout(id, Some(receiver_id))
-      } else if proposal.status == "Rejected" {
-        self.internal_reject_claim(id, receiver_id, &mut bounty, index.unwrap(), &mut claims)
+        if proposal.status == "Approved" {
+          self.internal_bounty_payout(id, None)
+        } else {
+          env::panic_str("The proposal status is not being processed");
+        }
       } else {
-        env::panic_str("The proposal status is not being processed");
+        let claimer = receiver_id.unwrap();
+        let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
+          id.clone(),
+          claimer.clone(),
+          vec![BountyStatus::Claimed, BountyStatus::ManyClaimed],
+          vec![ClaimStatus::Completed],
+          false,
+          "Bounty status does not allow completion",
+          "The claim status does not allow you to complete the bounty"
+        );
+
+        if proposal.status == "Approved" {
+          self.internal_bounty_payout(id, if !bounty.is_different_tasks() {
+            Some(claimer)
+          } else {
+            None
+          })
+        } else if proposal.status == "Rejected" {
+          self.internal_reject_claim(id, claimer, &mut bounty, index.unwrap(), &mut claims)
+        } else {
+          env::panic_str("The proposal status is not being processed");
+        }
       }
     }
   }
