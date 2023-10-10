@@ -693,12 +693,12 @@ impl Multitasking {
     }
   }
 
-  pub fn set_slot_env(&mut self, slot: usize, slot_env: SubtaskEnv) {
+  pub fn set_slot_env(&mut self, slot: usize, slot_env: Option<SubtaskEnv>) {
     match self.clone() {
       Self::DifferentTasks { subtasks, runtime_env } => {
         let mut env = runtime_env.unwrap();
         assert!(env.participants[slot].is_none(), "The slot is already occupied");
-        env.participants[slot] = Some(slot_env);
+        env.participants[slot] = slot_env;
         *self = Self::DifferentTasks {
           subtasks,
           runtime_env: Some(env)

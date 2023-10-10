@@ -49,13 +49,14 @@ impl BountiesContract {
   pub fn after_ft_transfer(
     &mut self,
     id: BountyIndex,
-    claimer: AccountId,
+    claimer: Option<AccountId>,
   ) -> bool {
     if !is_promise_success() {
       env::log_str("Bounty payout failed");
       false
     } else {
-      self.internal_bounty_completion(id, claimer);
+      let bounty = self.get_bounty(id);
+      self.internal_bounty_completion(id, bounty, claimer);
       true
     }
   }
@@ -122,7 +123,8 @@ impl BountiesContract {
       );
 
       if proposal.status == "Approved" {
-        self.internal_bounty_payout(id, receiver_id)
+        // TODO
+        self.internal_bounty_payout(id, Some(receiver_id))
       } else if proposal.status == "Rejected" {
         self.internal_reject_claim(id, receiver_id, &mut bounty, index.unwrap(), &mut claims)
       } else {
@@ -206,7 +208,8 @@ impl BountiesContract {
         "Claim status does not allow rejection as a result of a dispute"
       );
       if dispute.status == "InFavorOfClaimer" || dispute.status == "CanceledByProjectOwner" {
-        self.internal_bounty_payout(id, receiver_id)
+        // TODO
+        self.internal_bounty_payout(id, Some(receiver_id))
       } else if dispute.status == "InFavorOfProjectOwner" || dispute.status == "CanceledByClaimer" {
         let claim_idx = index.unwrap();
         self.internal_reset_bounty_to_initial_state(

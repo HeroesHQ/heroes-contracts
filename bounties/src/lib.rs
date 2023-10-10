@@ -536,7 +536,7 @@ impl BountiesContract {
           self.assert_multitasking_requirements(id, &bounty, approve, &receiver_id);
 
           let result = if approve {
-            self.internal_bounty_payout(id, receiver_id)
+            self.internal_bounty_payout(id, Some(receiver_id))
           } else {
             self.internal_reject_claim(id, receiver_id, &mut bounty, claim_idx, &mut claims)
           };
@@ -544,8 +544,16 @@ impl BountiesContract {
           result
         }
         BountyAction::SeveralClaimsApproved => {
-          // TODO
-          PromiseOrValue::Value(())
+          assert!(
+            bounty.is_different_tasks(),
+            "This action is only available for the DifferentTasks mode"
+          );
+          assert!(
+            bounty.multitasking.clone().unwrap().are_all_slots_complete(),
+            "Not all tasks have already been completed"
+          );
+
+          self.internal_bounty_payout(id, None)
         }
         BountyAction::Finalize { .. } => {
           if bounty.multitasking.is_none() {
@@ -1065,7 +1073,8 @@ impl BountiesContract {
     );
 
     if success {
-      self.internal_bounty_payout(id, claimer)
+      // TODO
+      self.internal_bounty_payout(id, Some(claimer))
     } else {
       self.internal_reset_bounty_to_initial_state(
         id,
