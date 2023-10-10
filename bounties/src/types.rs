@@ -697,7 +697,6 @@ impl Multitasking {
     match self.clone() {
       Self::DifferentTasks { subtasks, runtime_env } => {
         let mut env = runtime_env.unwrap();
-        assert!(env.participants[slot].is_none(), "The slot is already occupied");
         env.participants[slot] = slot_env;
         *self = Self::DifferentTasks {
           subtasks,

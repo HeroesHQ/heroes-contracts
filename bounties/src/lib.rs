@@ -552,6 +552,7 @@ impl BountiesContract {
             bounty.multitasking.clone().unwrap().are_all_slots_complete(),
             "Not all tasks have already been completed"
           );
+          // TODO check payment timestamps
 
           self.internal_bounty_payout(id, None)
         }
@@ -802,8 +803,7 @@ impl BountiesContract {
       "This action has already been performed"
     );
 
-    // TODO: and other cases
-    if bounty.is_one_bounty_for_many_claimants() {
+    if bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks() {
       bounty_claim.set_payment_at(Some(U64::from(env::block_timestamp())));
       claims.insert(claim_idx, bounty_claim);
       self.internal_save_claims(&claimer.clone().unwrap(), &claims);
@@ -872,8 +872,7 @@ impl BountiesContract {
       "This action has already been performed"
     );
 
-    // TODO: and other cases
-    if bounty.is_one_bounty_for_many_claimants() {
+    if bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks() {
       bounty_claim.set_payment_confirmed_at(Some(U64::from(env::block_timestamp())));
       claims.insert(claim_idx, bounty_claim);
       self.internal_save_claims(&sender_id, &claims);
@@ -986,6 +985,51 @@ impl BountiesContract {
       "Bounties validators DAO fee transfer",
       false,
     )
+  }
+
+  #[payable]
+  pub fn withdraw(&mut self, id: BountyIndex) -> PromiseOrValue<()> {
+    assert_one_yocto();
+
+    let receiver_id = env::predecessor_account_id();
+    let mut bounty = self.get_bounty(id);
+
+    assert!(
+      bounty.is_different_tasks(),
+      "This action is only available for the DifferentTasks mode"
+    );
+    assert!(
+      matches!(bounty.status, BountyStatus::Completed),
+      "Bounty status does not allow this action"
+    );
+
+    let (claims, claim_idx) = self.internal_get_claims(id.clone(), &receiver_id);
+    assert!(
+      matches!(claims[claim_idx].status, ClaimStatus::Completed),
+      "The claim status does not allow this action"
+    );
+
+    let slot = claims[claim_idx].slot.clone().unwrap();
+    let slot_env = bounty.multitasking.clone().unwrap().get_slot_env(slot);
+    assert_eq!(
+      slot_env.expect("The slot is not occupied").participant,
+      receiver_id,
+      "This slot belongs to another account"
+    );
+
+    // TODO move to handle BountyAction::SeveralClaimsApproved
+    if bounty.is_payment_outside_contract() {
+      let payment_timestamps = Self::internal_get_payment_timestamps(&bounty, &claims[claim_idx]);
+      assert!(
+        payment_timestamps.payment_at.is_some() &&
+          payment_timestamps.payment_confirmed_at.is_some(),
+        "No payment confirmation"
+      );
+    }
+
+    self.internal_reset_slot(&mut bounty, slot);
+    self.internal_update_bounty(&id, bounty);
+    self.internal_bounty_withdraw(id, receiver_id)
   }
 
   #[payable]

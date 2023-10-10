@@ -387,6 +387,23 @@ impl BountiesContract {
     }
   }
 
+  pub(crate) fn internal_get_partial_amount(
+    &self,
+    id: BountyIndex,
+    bounty: &Bounty
+  ) -> U128 {
+    let env = bounty.multitasking.clone().unwrap().get_different_tasks_env();
+    let incomplete_slots = self.get_claims_with_statuses(id, vec![ClaimStatus::Completed], None);
+    let number_slots = env.participants.len() as u128;
+    let one_slot_amount = bounty.amount.0 / number_slots;
+    let amount = if incomplete_slots.len() == 1 {
+      bounty.amount.0 - one_slot_amount * (number_slots - 1)
+    } else {
+      one_slot_amount
+    };
+    U128(amount)
+  }
+
   pub(crate) fn internal_save_account_bounties(
     &mut self,
     account_id: &AccountId,
@@ -445,8 +462,7 @@ impl BountiesContract {
     bounty: &Bounty,
     claim: &BountyClaim,
   ) -> PaymentTimestamps {
-    // TODO: and other cases
-    if bounty.is_one_bounty_for_many_claimants() {
+    if bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks() {
       claim.payment_timestamps.clone().unwrap_or_default()
     } else {
       bounty.postpaid.clone().unwrap().get_payment_timestamps()
@@ -694,6 +710,58 @@ impl BountiesContract {
           .after_ft_transfer(id, claimer)
       )
       .into()
+  }
+
+  pub(crate) fn internal_bounty_withdraw(
+    &mut self,
+    id: BountyIndex,
+    claimer: AccountId
+  ) -> PromiseOrValue<()> {
+    let bounty = self.get_bounty(id);
+    let amount = self.internal_get_partial_amount(id, &bounty);
+
+    if bounty.is_payment_outside_contract() {
+      self.internal_slot_finalize(id, bounty, claimer);
+      return PromiseOrValue::Value(())
+    }
+
+    ext_ft_contract::ext(bounty.token.clone().unwrap())
+      .with_attached_deposit(ONE_YOCTO)
+      .with_static_gas(GAS_FOR_FT_TRANSFER)
+      .ft_transfer(
+        claimer.clone(),
+        amount,
+        Some(format!("Bounty {} payment for {}", id, claimer)),
+      )
+      .then(
+        Self::ext(env::current_account_id())
+          .with_static_gas(GAS_FOR_AFTER_FT_TRANSFER)
+          .after_bounty_withdraw(id, claimer)
+      )
+      .into()
+  }
+
+  pub(crate) fn internal_slot_finalize(
+    &mut self,
+    id: BountyIndex,
+    bounty: Bounty,
+    claimer: AccountId,
+  ) {
+    let (mut claims, claim_idx) = self.internal_get_claims(id, &claimer);
+    assert!(
+      matches!(claims[claim_idx].status, ClaimStatus::Completed),
+      "The claim status does not allow this action"
+    );
+
+    claims[claim_idx].status = ClaimStatus::Approved;
+    self.internal_save_claims(&claimer.clone(), &claims);
+
+    self.internal_update_statistic(
+      Some(claimer.clone()),
+      Some(bounty.owner.clone()),
+      ReputationActionKind::SuccessfulClaim { with_dispute: false }, // TODO
+    );
+    self.internal_return_bonds(&claimer);
   }
 
   pub(crate) fn internal_bounty_cancellation(
@@ -2093,13 +2161,17 @@ impl BountiesContract {
         claims[claim_idx].status == ClaimStatus::ReadyToStart &&
         (bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks())
     {
-      if bounty.is_contest_or_hackathon() {
-        self.internal_participants_decrement(bounty);
-      } else if bounty.is_one_bounty_for_many_claimants() {
-        self.internal_occupied_slots_decrement(bounty);
-      } else {
-        let slot = claims[claim_idx].slot.clone().unwrap();
-        self.internal_reset_slot(bounty, slot);
+      match bounty.multitasking.clone().unwrap() {
+        Multitasking::ContestOrHackathon { .. } => {
+          self.internal_participants_decrement(bounty);
+        },
+        Multitasking::OneForAll { .. } => {
+          self.internal_occupied_slots_decrement(bounty);
+        },
+        Multitasking::DifferentTasks { .. } => {
+          let slot = claims[claim_idx].slot.clone().unwrap();
+          self.internal_reset_slot(bounty, slot);
+        }
       }
       self.internal_update_bounty(&id, bounty.clone());
       let new_status = if bounty.status == BountyStatus::Canceled {
