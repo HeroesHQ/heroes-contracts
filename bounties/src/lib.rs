@@ -783,20 +783,14 @@ impl BountiesContract {
     );
     assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
 
-    let mut claims: Vec<BountyClaim>;
-    let claim_idx: usize;
-
-    if bounty.multitasking.is_some() {
+    let (mut claims, claim_idx) = if bounty.multitasking.is_some() {
       assert!(claimer.is_some(), "The claimer parameter is mandatory for multitasking bounties");
-      let result = self.internal_get_claims(id.clone(), &claimer.clone().unwrap());
-      claims = result.0;
-      claim_idx = result.1;
+      self.internal_get_claims(id.clone(), &claimer.clone().unwrap())
     } else {
       assert!(claimer.is_none(), "The claimer parameter is required only for multitasking bounties");
       let result = self.internal_find_active_claim(id.clone());
-      claims = result.1;
-      claim_idx = result.2;
-    }
+      (result.1, result.2)
+    };
 
     let mut bounty_claim = claims[claim_idx].clone();
     assert!(
@@ -850,19 +844,13 @@ impl BountiesContract {
       "Bounty status does not allow this action"
     );
 
-    let mut claims: Vec<BountyClaim>;
-    let claim_idx: usize;
-
-    if bounty.multitasking.is_some() {
-      let result = self.internal_get_claims(id.clone(), &sender_id);
-      claims = result.0;
-      claim_idx = result.1;
+    let (mut claims, claim_idx) = if bounty.multitasking.is_some() {
+      self.internal_get_claims(id.clone(), &sender_id)
     } else {
       let result = self.internal_find_active_claim(id);
       assert_eq!(result.0, sender_id, "Only the owner of the claim is allowed this action");
-      claims = result.1;
-      claim_idx = result.2;
-    }
+      (result.1, result.2)
+    };
 
     let mut bounty_claim = claims[claim_idx].clone();
     assert!(
@@ -883,8 +871,13 @@ impl BountiesContract {
 
     if bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks() {
       bounty_claim.set_payment_confirmed_at(Some(U64::from(env::block_timestamp())));
-      claims.insert(claim_idx, bounty_claim);
+      claims.insert(claim_idx, bounty_claim.clone());
       self.internal_save_claims(&sender_id, &claims);
+
+      if bounty.is_different_tasks() {
+        self.internal_confirm_slot(&mut bounty, bounty_claim.slot.clone().unwrap());
+        self.internal_update_bounty(&id, bounty);
+      }
 
     } else {
       if bounty.is_contest_or_hackathon() {

@@ -1959,13 +1959,15 @@ impl BountiesContract {
 
     let amounts = Self::internal_get_bounty_amount_for_payment(&bounty);
     self.internal_total_fees_unlocking_funds(&bounty, Some(amounts.1), Some(amounts.2));
-    bounty.status = BountyStatus::Completed;
 
-    if bounty.multitasking.is_some() {
+    if bounty.multitasking.is_none() {
+      bounty.status = BountyStatus::Completed;
+    } else {
       match bounty.multitasking.clone().unwrap() {
         Multitasking::ContestOrHackathon { .. } => {
           self.internal_participants_decrement(&mut bounty);
           self.internal_finish_competition(&mut bounty, Some(claimer.clone().unwrap()));
+          bounty.status = BountyStatus::Completed;
         },
         Multitasking::OneForAll { number_of_slots, .. } => {
           self.internal_paid_slots_increment(&mut bounty);
@@ -1973,11 +1975,17 @@ impl BountiesContract {
             occupied_slots,
             paid_slots
           ) = bounty.multitasking.clone().unwrap().get_one_for_all_env();
-          if occupied_slots == 0 && paid_slots != number_of_slots {
-            bounty.status = BountyStatus::AwaitingClaims;
+          if occupied_slots == 0 {
+            if paid_slots == number_of_slots {
+              bounty.status = BountyStatus::Completed;
+            } else {
+              bounty.status = BountyStatus::AwaitingClaims;
+            }
           }
         },
-        _ => {}
+        Multitasking::DifferentTasks { .. } => {
+          bounty.status = BountyStatus::Completed;
+        }
       }
     }
 
