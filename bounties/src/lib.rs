@@ -475,7 +475,12 @@ impl BountiesContract {
       if claims[claim_idx].status == ClaimStatus::Competes {
         self.internal_participants_decrement(&mut bounty);
       } else if claims[claim_idx].status == ClaimStatus::ReadyToStart {
-        self.internal_occupied_slots_decrement(&mut bounty);
+        if bounty.is_one_bounty_for_many_claimants() {
+          self.internal_occupied_slots_decrement(&mut bounty);
+        } else {
+          let slot = claims[claim_idx].slot.clone().unwrap();
+          self.internal_reset_slot(&mut bounty, slot);
+        }
       }
       self.internal_update_bounty(&id, bounty.clone());
       self.internal_claim_closure(
