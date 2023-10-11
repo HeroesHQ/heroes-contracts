@@ -237,11 +237,15 @@ impl BountiesContract {
         "Bounty status does not allow to reject a claim as a result of a dispute",
         "Claim status does not allow rejection as a result of a dispute"
       );
+      let claim_idx = index.unwrap();
+
       if dispute.status == "InFavorOfClaimer" || dispute.status == "CanceledByProjectOwner" {
-        // TODO
-        self.internal_bounty_payout(id, Some(receiver_id))
+        if bounty.is_different_tasks() {
+          self.internal_claim_return_after_dispute(receiver_id, &mut claims, claim_idx)
+        } else {
+          self.internal_bounty_payout(id, Some(receiver_id))
+        }
       } else if dispute.status == "InFavorOfProjectOwner" || dispute.status == "CanceledByClaimer" {
-        let claim_idx = index.unwrap();
         self.internal_reset_bounty_to_initial_state(
           id,
           &receiver_id,

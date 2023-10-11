@@ -1115,8 +1115,11 @@ impl BountiesContract {
     );
 
     if success {
-      // TODO
-      self.internal_bounty_payout(id, Some(claimer))
+      if bounty.is_different_tasks() {
+        self.internal_claim_return_after_dispute(claimer, &mut claims, claim_idx)
+      } else {
+        self.internal_bounty_payout(id, Some(claimer))
+      }
     } else {
       self.internal_reset_bounty_to_initial_state(
         id,

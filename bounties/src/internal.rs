@@ -746,6 +746,17 @@ impl BountiesContract {
       .into()
   }
 
+  pub(crate) fn internal_claim_return_after_dispute(
+    &mut self,
+    claimer: AccountId,
+    claims: &mut Vec<BountyClaim>,
+    claim_idx: usize
+  ) -> PromiseOrValue<()> {
+    claims[claim_idx].status = ClaimStatus::CompletedWithDispute;
+    self.internal_save_claims(&claimer, &claims);
+    PromiseOrValue::Value(())
+  }
+
   pub(crate) fn internal_slot_finalize(
     &mut self,
     id: BountyIndex,
@@ -2123,7 +2134,6 @@ impl BountiesContract {
         (bounty.status == BountyStatus::Claimed ||
           bounty.status == BountyStatus::ManyClaimed)
       {
-        // TODO
         Some(self.internal_get_dispute(id, receiver_id, claims[claim_idx].dispute_id.unwrap()))
       }
 
