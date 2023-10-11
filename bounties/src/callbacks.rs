@@ -65,14 +65,14 @@ impl BountiesContract {
   pub fn after_bounty_withdraw(
     &mut self,
     id: BountyIndex,
+    owner: AccountId,
     claimer: AccountId,
   ) -> bool {
     if !is_promise_success() {
       env::log_str("Bounty payout failed");
       false
     } else {
-      let bounty = self.get_bounty(id);
-      self.internal_slot_finalize(id, bounty, claimer);
+      self.internal_slot_finalize(id, owner, claimer);
       true
     }
   }
@@ -153,11 +153,7 @@ impl BountiesContract {
         );
 
         if proposal.status == "Approved" {
-          self.internal_bounty_payout(id, if !bounty.is_different_tasks() {
-            Some(claimer)
-          } else {
-            None
-          })
+          self.internal_bounty_payout(id, Some(claimer))
         } else if proposal.status == "Rejected" {
           self.internal_reject_claim(id, claimer, &mut bounty, index.unwrap(), &mut claims)
         } else {

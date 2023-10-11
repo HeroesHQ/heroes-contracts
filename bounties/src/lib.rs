@@ -549,10 +549,13 @@ impl BountiesContract {
             "This action is only available for the DifferentTasks mode"
           );
           assert!(
-            bounty.multitasking.clone().unwrap().are_all_slots_complete(),
+            Self::internal_are_all_slots_complete(&bounty, None),
             "Not all tasks have already been completed"
           );
-          // TODO check payment timestamps
+          assert!(
+            bounty.multitasking.clone().unwrap().are_all_slots_confirmed(),
+            "Not all tasks are confirmed to be paid"
+          );
 
           self.internal_bounty_payout(id, None)
         }
@@ -689,8 +692,7 @@ impl BountiesContract {
       );
       assert!(
         bounty.is_payment_outside_contract() &&
-          // TODO: and other cases
-          !bounty.is_one_bounty_for_many_claimants(),
+          !bounty.is_one_bounty_for_many_claimants() && !bounty.is_different_tasks(),
         "The amount of the bounty cannot be changed"
       );
       assert!(
@@ -793,7 +795,8 @@ impl BountiesContract {
 
     let mut bounty_claim = claims[claim_idx].clone();
     assert!(
-      matches!(bounty_claim.status, ClaimStatus::Completed),
+      bounty_claim.status == ClaimStatus::Completed ||
+        bounty_claim.status == ClaimStatus::CompletedWithDispute,
       "The status of the claim does not allow this action"
     );
 
@@ -858,7 +861,8 @@ impl BountiesContract {
 
     let mut bounty_claim = claims[claim_idx].clone();
     assert!(
-      matches!(bounty_claim.status, ClaimStatus::Completed),
+      bounty_claim.status == ClaimStatus::Completed ||
+        bounty_claim.status == ClaimStatus::CompletedWithDispute,
       "The status of the claim does not allow this action"
     );
 
@@ -1005,7 +1009,8 @@ impl BountiesContract {
 
     let (claims, claim_idx) = self.internal_get_claims(id.clone(), &receiver_id);
     assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::Completed),
+      claims[claim_idx].status == ClaimStatus::Completed ||
+        claims[claim_idx].status == ClaimStatus::CompletedWithDispute,
       "The claim status does not allow this action"
     );
 
@@ -1017,19 +1022,9 @@ impl BountiesContract {
       "This slot belongs to another account"
     );
 
-    // TODO move to handle BountyAction::SeveralClaimsApproved
-    if bounty.is_payment_outside_contract() {
-      let payment_timestamps = Self::internal_get_payment_timestamps(&bounty, &claims[claim_idx]);
-      assert!(
-        payment_timestamps.payment_at.is_some() &&
-          payment_timestamps.payment_confirmed_at.is_some(),
-        "No payment confirmation"
-      );
-    }
-
     self.internal_reset_slot(&mut bounty, slot);
-    self.internal_update_bounty(&id, bounty);
-    self.internal_bounty_withdraw(id, receiver_id)
+    self.internal_update_bounty(&id, bounty.clone());
+    self.internal_bounty_withdraw(id, bounty, receiver_id)
   }
 
   #[payable]

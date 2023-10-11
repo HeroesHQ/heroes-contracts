@@ -390,13 +390,18 @@ impl BountiesContract {
   pub(crate) fn internal_get_partial_amount(
     &self,
     id: BountyIndex,
-    bounty: &Bounty
+    bounty: &Bounty,
+    claimer: AccountId,
   ) -> U128 {
     let env = bounty.multitasking.clone().unwrap().get_different_tasks_env();
-    let incomplete_slots = self.get_claims_with_statuses(id, vec![ClaimStatus::Completed], None);
+    let incomplete_slots = self.get_claims_with_statuses(
+      id,
+      vec![ClaimStatus::Completed, ClaimStatus::CompletedWithDispute],
+      Some(claimer)
+    );
     let number_slots = env.participants.len() as u128;
     let one_slot_amount = bounty.amount.0 / number_slots;
-    let amount = if incomplete_slots.len() == 1 {
+    let amount = if incomplete_slots.len() == 0 {
       bounty.amount.0 - one_slot_amount * (number_slots - 1)
     } else {
       one_slot_amount
@@ -715,13 +720,13 @@ impl BountiesContract {
   pub(crate) fn internal_bounty_withdraw(
     &mut self,
     id: BountyIndex,
+    bounty: Bounty,
     claimer: AccountId
   ) -> PromiseOrValue<()> {
-    let bounty = self.get_bounty(id);
-    let amount = self.internal_get_partial_amount(id, &bounty);
+    let amount = self.internal_get_partial_amount(id, &bounty, claimer.clone());
 
     if bounty.is_payment_outside_contract() {
-      self.internal_slot_finalize(id, bounty, claimer);
+      self.internal_slot_finalize(id, bounty.owner, claimer);
       return PromiseOrValue::Value(())
     }
 
@@ -736,7 +741,7 @@ impl BountiesContract {
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_FT_TRANSFER)
-          .after_bounty_withdraw(id, claimer)
+          .after_bounty_withdraw(id, bounty.owner, claimer)
       )
       .into()
   }
@@ -744,12 +749,13 @@ impl BountiesContract {
   pub(crate) fn internal_slot_finalize(
     &mut self,
     id: BountyIndex,
-    bounty: Bounty,
+    owner: AccountId,
     claimer: AccountId,
   ) {
     let (mut claims, claim_idx) = self.internal_get_claims(id, &claimer);
+    let with_dispute = claims[claim_idx].status == ClaimStatus::CompletedWithDispute;
     assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::Completed),
+      claims[claim_idx].status == ClaimStatus::Completed || with_dispute,
       "The claim status does not allow this action"
     );
 
@@ -758,8 +764,8 @@ impl BountiesContract {
 
     self.internal_update_statistic(
       Some(claimer.clone()),
-      Some(bounty.owner.clone()),
-      ReputationActionKind::SuccessfulClaim { with_dispute: false }, // TODO
+      Some(owner),
+      ReputationActionKind::SuccessfulClaim { with_dispute },
     );
     self.internal_return_bonds(&claimer);
   }
@@ -1301,7 +1307,7 @@ impl BountiesContract {
     let mut multitasking = bounty.multitasking.clone().unwrap();
     multitasking.set_slot_env(
       slot,
-      Some(SubtaskEnv { participant: account_id, completed: false })
+      Some(SubtaskEnv { participant: account_id, completed: false, confirmed: false })
     );
     bounty.multitasking = Some(multitasking);
   }
@@ -1310,6 +1316,14 @@ impl BountiesContract {
     let mut multitasking = bounty.multitasking.clone().unwrap();
     let mut slot_env = multitasking.clone().get_slot_env(slot).expect("The slot is not occupied");
     slot_env.completed = true;
+    multitasking.set_slot_env(slot, Some(slot_env));
+    bounty.multitasking = Some(multitasking);
+  }
+
+  pub(crate) fn internal_confirm_slot(&mut self, bounty: &mut Bounty, slot: usize) {
+    let mut multitasking = bounty.multitasking.clone().unwrap();
+    let mut slot_env = multitasking.clone().get_slot_env(slot).expect("The slot is not occupied");
+    slot_env.confirmed = true;
     multitasking.set_slot_env(slot, Some(slot_env));
     bounty.multitasking = Some(multitasking);
   }
@@ -1330,6 +1344,13 @@ impl BountiesContract {
         bounty.multitasking.clone().unwrap().set_bounty_payout_proposal_id(proposal_id)
       );
     }
+  }
+
+  pub(crate) fn internal_are_all_slots_complete(
+    bounty: &Bounty,
+    except: Option<AccountId>
+  ) -> bool {
+    bounty.multitasking.clone().unwrap().are_all_slots_complete(except)
   }
 
   pub(crate) fn internal_get_bounty_payout_proposal_id(bounty: &Bounty) -> Option<U64> {
@@ -1567,7 +1588,7 @@ impl BountiesContract {
       dispute_id: None,
       is_kyc_delayed: None,
       payment_timestamps: if bounty.is_payment_outside_contract() &&
-        bounty.is_one_bounty_for_many_claimants() // TODO: and other cases
+        bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks()
       {
         Some(PaymentTimestamps::default())
       } else {
@@ -1660,6 +1681,7 @@ impl BountiesContract {
             ClaimStatus::Completed,
             ClaimStatus::Rejected,
             ClaimStatus::Disputed,
+            ClaimStatus::CompletedWithDispute,
           ];
           claim_message = "You already have an active claim";
         }
@@ -1827,25 +1849,23 @@ impl BountiesContract {
     place_of_check: PlaceOfCheckKYC,
   ) -> PromiseOrValue<()> {
     let bounty = self.get_bounty(id.clone());
-    if bounty.is_validators_dao_used() {
-      if !bounty.is_different_tasks() {
-        self.internal_add_proposal_to_finish_claim(
-          id,
-          claimer,
-          bounty,
-          place_of_check
-        )
-      } else if Self::internal_get_bounty_payout_proposal_id(&bounty).is_none() {
-        self.internal_add_proposal_to_finish_several_claims(
-          id,
-          claimer,
-          bounty,
-          place_of_check
-        )
-      } else {
-        self.internal_claim_done(id, claimer, None);
-        PromiseOrValue::Value(())
-      }
+    if bounty.is_validators_dao_used() && !bounty.is_different_tasks() {
+      self.internal_add_proposal_to_finish_claim(
+        id,
+        claimer,
+        bounty,
+        place_of_check
+      )
+    } else if bounty.is_validators_dao_used() && bounty.is_different_tasks() &&
+      Self::internal_are_all_slots_complete(&bounty, Some(claimer.clone())) &&
+      Self::internal_get_bounty_payout_proposal_id(&bounty).is_none()
+    {
+      self.internal_add_proposal_to_finish_several_claims(
+        id,
+        claimer,
+        bounty,
+        place_of_check
+      )
     } else {
       self.internal_claim_done(id, claimer, None);
       PromiseOrValue::Value(())
@@ -1896,7 +1916,7 @@ impl BountiesContract {
         "Bounty status does not allow to payout"
       );
       assert!(
-        bounty.multitasking.clone().unwrap().are_all_slots_complete(),
+        Self::internal_are_all_slots_complete(&bounty, None),
         "Not all tasks have already been completed"
       );
 
@@ -2020,12 +2040,16 @@ impl BountiesContract {
     mut bounty: Bounty,
     active_claim: Option<(AccountId, Vec<BountyClaim>, usize)>,
   ) -> Option<PromiseOrValue<()>> {
+    let different_task = bounty.is_different_tasks();
+
     if active_claim.is_none() {
-      if bounty.status == BountyStatus::ManyClaimed && bounty.is_different_tasks() &&
+      if bounty.status == BountyStatus::ManyClaimed &&
+        different_task &&
+        Self::internal_are_all_slots_complete(&bounty, None) &&
+        Self::internal_get_bounty_payout_proposal_id(&bounty).is_some() &&
         bounty.is_validators_dao_used()
       {
-        let proposal_id = Self::internal_get_bounty_payout_proposal_id(&bounty)
-          .expect("There is no proposal for voting in DAO");
+        let proposal_id = Self::internal_get_bounty_payout_proposal_id(&bounty).unwrap();
 
         Some(self.internal_check_bounty_payout_proposal(
           id,
@@ -2056,12 +2080,16 @@ impl BountiesContract {
         ))
       }
 
-      else if claims[claim_idx].status == ClaimStatus::Completed &&
+      else if
+        (claims[claim_idx].status == ClaimStatus::Completed && !different_task ||
+          different_task &&
+          Self::internal_are_all_slots_complete(&bounty, None) &&
+          Self::internal_get_bounty_payout_proposal_id(&bounty).is_some()) &&
         (bounty.status == BountyStatus::Claimed ||
           bounty.status == BountyStatus::ManyClaimed) &&
         bounty.is_validators_dao_used()
       {
-        let proposal_id = if bounty.is_different_tasks() {
+        let proposal_id = if different_task {
           Self::internal_get_bounty_payout_proposal_id(&bounty).unwrap()
         } else {
           claims[claim_idx].bounty_payout_proposal_id.unwrap()
@@ -2070,7 +2098,7 @@ impl BountiesContract {
         Some(self.internal_check_bounty_payout_proposal(
           id,
           bounty,
-          Some(receiver_id),
+          if different_task { None } else { Some(receiver_id) },
           proposal_id
         ))
       }

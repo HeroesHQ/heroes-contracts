@@ -384,6 +384,7 @@ impl Default for OneForAllEnv {
 pub struct SubtaskEnv {
   pub participant: AccountId,
   pub completed: bool,
+  pub confirmed: bool,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -598,8 +599,22 @@ impl Multitasking {
     self.get_slots().into_iter().find(|s| s.is_some()).is_none()
   }
 
-  pub fn are_all_slots_complete(self) -> bool {
-    self.get_slots().into_iter().find(|s| s.is_none() || !s.clone().unwrap().completed).is_none()
+  pub fn are_all_slots_complete(self, except: Option<AccountId>) -> bool {
+    self
+      .get_slots()
+      .into_iter()
+      .find(|s| {
+        if s.is_none() {
+          return true;
+        }
+        let env = s.clone().unwrap();
+        !env.completed && (except.is_none() || env.participant != except.clone().unwrap())
+      })
+      .is_none()
+  }
+
+  pub fn are_all_slots_confirmed(self) -> bool {
+    self.get_slots().into_iter().find(|s| s.is_some() || !s.clone().unwrap().confirmed).is_none()
   }
 
   pub fn set_competition_timestamp(self, started_at: Option<U64>) -> Self {
@@ -1404,6 +1419,7 @@ pub enum ClaimStatus {
   NotHired,
   Competes,
   ReadyToStart,
+  CompletedWithDispute
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
