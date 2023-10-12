@@ -798,8 +798,9 @@ impl Env {
     &self,
     bounties: &Contract,
     bounty_id: u64,
+    freelancer: Option<&Account>,
   ) -> anyhow::Result<()> {
-    let res = self.freelancer
+    let res = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "open_dispute")
       .args_json((bounty_id, "Dispute description"))
       .max_gas()
@@ -998,6 +999,16 @@ impl Env {
     Ok(dispute)
   }
 
+  pub async fn get_last_dispute_id(
+    &self,
+  ) -> anyhow::Result<u64> {
+    let last_dispute_id = self.dispute_contract
+      .call("get_last_dispute_id")
+      .view().await?
+      .json::<u64>()?;
+    Ok(last_dispute_id)
+  }
+
   pub async fn get_proposal(dao: &Contract, proposal_id: u64) -> anyhow::Result<Proposal> {
     let proposal = dao
       .call("get_proposal")
@@ -1129,6 +1140,23 @@ impl Env {
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn withdraw(
+    &self,
+    bounty_id: u64,
+    freelancer: Option<&Account>,
+    expected_msg: Option<&str>,
+  ) -> anyhow::Result<()> {
+    let res = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer }
+      .call(self.disputed_bounties.id(), "withdraw")
+      .args_json((bounty_id,))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, expected_msg).await?;
     Ok(())
   }
 }
