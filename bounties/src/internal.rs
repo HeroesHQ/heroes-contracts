@@ -1482,6 +1482,18 @@ impl BountiesContract {
             if bounty.multitasking.clone().unwrap().are_all_slots_taken() {
               bounty.status = BountyStatus::ManyClaimed;
               claim.status = ClaimStatus::InProgress;
+
+              let claims = self.get_claims_with_statuses(
+                id,
+                vec![ClaimStatus::ReadyToStart],
+                Some(claimer.clone())
+              );
+              self.internal_update_status_of_many_claims(
+                claims,
+                vec![ClaimStatus::ReadyToStart],
+                ClaimStatus::InProgress,
+                start_time,
+              );
             } else {
               claim.status = ClaimStatus::ReadyToStart;
             }
@@ -1491,7 +1503,11 @@ impl BountiesContract {
     }
 
     self.internal_update_bounty(&id, bounty.clone());
-    claim.start_time = start_time;
+    if claim.status == ClaimStatus::InProgress ||
+      claim.status == ClaimStatus::Competes && bounty.status == BountyStatus::ManyClaimed
+    {
+      claim.start_time = start_time;
+    }
     claim.is_kyc_delayed = is_kyc_delayed;
 
     self.internal_update_statistic(

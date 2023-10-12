@@ -557,10 +557,12 @@ impl BountiesContract {
             Self::internal_are_all_slots_complete(&bounty, None),
             "Not all tasks have already been completed"
           );
-          assert!(
-            bounty.multitasking.clone().unwrap().are_all_slots_confirmed(),
-            "Not all tasks are confirmed to be paid"
-          );
+          if bounty.is_payment_outside_contract() {
+            assert!(
+              bounty.multitasking.clone().unwrap().are_all_slots_confirmed(),
+              "Not all tasks are confirmed to be paid"
+            );
+          }
 
           self.internal_bounty_payout(id, None)
         }
