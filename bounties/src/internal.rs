@@ -364,20 +364,20 @@ impl BountiesContract {
         Multitasking::OneForAll { number_of_slots, .. } => {
           let (occupied_slots, paid_slots) = multitasking.get_one_for_all_env();
 
-          let one_amount = bounty.amount.0 / number_of_slots as u128;
-          let one_platform_fee = bounty.platform_fee.0 / number_of_slots as u128;
-          let one_dao_fee = bounty.dao_fee.0 / number_of_slots as u128;
+          let one_slot_amount = bounty.amount.0 / number_of_slots as u128;
+          let one_slot_platform_fee = bounty.platform_fee.0 / number_of_slots as u128;
+          let one_slot_dao_fee = bounty.dao_fee.0 / number_of_slots as u128;
           let second_to_last = number_of_slots - 1;
 
           // There may be rounding errors for the last slot
           if occupied_slots == 1 && paid_slots == second_to_last {
             (
-              U128(bounty.amount.0 - one_amount * second_to_last as u128),
-              U128(bounty.platform_fee.0 - one_platform_fee * second_to_last as u128),
-              U128(bounty.dao_fee.0 - one_dao_fee * second_to_last as u128)
+              U128(bounty.amount.0 - one_slot_amount * second_to_last as u128),
+              U128(bounty.platform_fee.0 - one_slot_platform_fee * second_to_last as u128),
+              U128(bounty.dao_fee.0 - one_slot_dao_fee * second_to_last as u128)
             )
           } else {
-            (U128(one_amount), U128(one_platform_fee), U128(one_dao_fee))
+            (U128(one_slot_amount), U128(one_slot_platform_fee), U128(one_slot_dao_fee))
           }
         },
         _ => unreachable!(),
@@ -392,21 +392,34 @@ impl BountiesContract {
     id: BountyIndex,
     bounty: &Bounty,
     claimer: AccountId,
+    slot: usize,
   ) -> U128 {
-    let env = bounty.multitasking.clone().unwrap().get_different_tasks_env();
-    let incomplete_slots = self.get_claims_with_statuses(
-      id,
-      vec![ClaimStatus::Completed, ClaimStatus::CompletedWithDispute],
-      Some(claimer)
-    );
-    let number_slots = env.participants.len() as u128;
-    let one_slot_amount = bounty.amount.0 / number_slots;
-    let amount = if incomplete_slots.len() == 0 {
-      bounty.amount.0 - one_slot_amount * (number_slots - 1)
-    } else {
-      one_slot_amount
-    };
-    U128(amount)
+    let multitasking = bounty.multitasking.clone().unwrap();
+    match multitasking.clone() {
+      Multitasking::DifferentTasks { subtasks, .. } => {
+        let incomplete_slots = self.get_claims_with_statuses(
+          id,
+          vec![ClaimStatus::Completed, ClaimStatus::CompletedWithDispute],
+          Some(claimer)
+        );
+        let participants = multitasking.get_different_tasks_env().participants;
+        let one_slot_amount = bounty.amount.0 * subtasks[slot].subtask_percent as u128 / 100_000;
+
+        let amount = if incomplete_slots.len() == 0 {
+          let mut other_slots: u128 = 0;
+          (0..subtasks.len()).into_iter().for_each(|s| {
+            if participants[s].is_none() {
+              other_slots += bounty.amount.0 * subtasks[s].subtask_percent as u128 / 100_000;
+            }
+          });
+          bounty.amount.0 - other_slots
+        } else {
+          one_slot_amount
+        };
+        U128(amount)
+      },
+      _ => unreachable!()
+    }
   }
 
   pub(crate) fn internal_save_account_bounties(
@@ -721,12 +734,13 @@ impl BountiesContract {
     &mut self,
     id: BountyIndex,
     bounty: Bounty,
-    claimer: AccountId
+    claimer: AccountId,
+    slot: usize,
   ) -> PromiseOrValue<()> {
-    let amount = self.internal_get_partial_amount(id, &bounty, claimer.clone());
+    let amount = self.internal_get_partial_amount(id, &bounty, claimer.clone(), slot);
 
     if bounty.is_payment_outside_contract() {
-      self.internal_slot_finalize(id, bounty.owner, claimer);
+      self.internal_slot_finalize(id, bounty, claimer, slot);
       return PromiseOrValue::Value(())
     }
 
@@ -741,7 +755,7 @@ impl BountiesContract {
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_FT_TRANSFER)
-          .after_bounty_withdraw(id, bounty.owner, claimer)
+          .after_bounty_withdraw(id, claimer, slot)
       )
       .into()
   }
@@ -760,8 +774,9 @@ impl BountiesContract {
   pub(crate) fn internal_slot_finalize(
     &mut self,
     id: BountyIndex,
-    owner: AccountId,
+    mut bounty: Bounty,
     claimer: AccountId,
+    slot: usize,
   ) {
     let (mut claims, claim_idx) = self.internal_get_claims(id, &claimer);
     let with_dispute = claims[claim_idx].status == ClaimStatus::CompletedWithDispute;
@@ -773,9 +788,12 @@ impl BountiesContract {
     claims[claim_idx].status = ClaimStatus::Approved;
     self.internal_save_claims(&claimer.clone(), &claims);
 
+    self.internal_reset_slot(&mut bounty, slot);
+    self.internal_update_bounty(&id, bounty.clone());
+
     self.internal_update_statistic(
       Some(claimer.clone()),
-      Some(owner),
+      Some(bounty.owner),
       ReputationActionKind::SuccessfulClaim { with_dispute },
     );
     self.internal_return_bonds(&claimer);

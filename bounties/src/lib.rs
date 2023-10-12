@@ -994,7 +994,7 @@ impl BountiesContract {
     assert_one_yocto();
 
     let receiver_id = env::predecessor_account_id();
-    let mut bounty = self.get_bounty(id);
+    let bounty = self.get_bounty(id);
 
     assert!(
       bounty.is_different_tasks(),
@@ -1020,9 +1020,7 @@ impl BountiesContract {
       "This slot belongs to another account"
     );
 
-    self.internal_reset_slot(&mut bounty, slot);
-    self.internal_update_bounty(&id, bounty.clone());
-    self.internal_bounty_withdraw(id, bounty, receiver_id)
+    self.internal_bounty_withdraw(id, bounty, receiver_id, slot)
   }
 
   #[payable]

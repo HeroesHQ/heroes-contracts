@@ -65,14 +65,15 @@ impl BountiesContract {
   pub fn after_bounty_withdraw(
     &mut self,
     id: BountyIndex,
-    owner: AccountId,
     claimer: AccountId,
+    slot: usize,
   ) -> bool {
     if !is_promise_success() {
       env::log_str("Bounty payout failed");
       false
     } else {
-      self.internal_slot_finalize(id, owner, claimer);
+      let bounty = self.get_bounty(id);
+      self.internal_slot_finalize(id, bounty, claimer, slot);
       true
     }
   }
