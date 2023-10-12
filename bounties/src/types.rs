@@ -614,7 +614,7 @@ impl Multitasking {
   }
 
   pub fn are_all_slots_confirmed(self) -> bool {
-    self.get_slots().into_iter().find(|s| s.is_some() || !s.clone().unwrap().confirmed).is_none()
+    self.get_slots().into_iter().find(|s| s.is_none() || !s.clone().unwrap().confirmed).is_none()
   }
 
   pub fn set_competition_timestamp(self, started_at: Option<U64>) -> Self {
