@@ -549,6 +549,8 @@ impl BountiesContract {
           result
         }
         BountyAction::SeveralClaimsApproved => {
+          bounty.check_access_rights();
+
           assert!(
             bounty.is_different_tasks(),
             "This action is only available for the DifferentTasks mode"
