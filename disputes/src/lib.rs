@@ -162,7 +162,7 @@ impl DisputesContract {
     }
 
     let success = matches!(dispute.get_side_of_dispute(), Side::ProjectOwner);
-    self.internal_send_result_of_dispute(id, dispute.bounty_id, success, true)
+    self.internal_send_result_of_dispute(id, dispute.bounty_id, dispute.claimer, success, true)
   }
 
   #[payable]
@@ -201,7 +201,7 @@ impl DisputesContract {
       "The decision period is over, now you need to perform the 'finalize' action",
     );
 
-    self.internal_send_result_of_dispute(id, dispute.bounty_id, success, false)
+    self.internal_send_result_of_dispute(id, dispute.bounty_id, dispute.claimer, success, false)
   }
 
   #[payable]

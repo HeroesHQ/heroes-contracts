@@ -27,6 +27,7 @@ impl BountiesContract {
     claimer: AccountId,
     deadline: U64,
     description: String,
+    slot: Option<usize>,
   ) -> bool {
     if !is_promise_success() || result.is_err() {
       env::log_str("Could not create claimer proposal");
@@ -37,7 +38,8 @@ impl BountiesContract {
         claimer,
         deadline,
         description,
-        Some(U64(result.unwrap()))
+        Some(U64(result.unwrap())),
+        slot,
       );
       true
     }
@@ -47,13 +49,31 @@ impl BountiesContract {
   pub fn after_ft_transfer(
     &mut self,
     id: BountyIndex,
-    claimer: AccountId,
+    claimer: Option<AccountId>,
   ) -> bool {
     if !is_promise_success() {
       env::log_str("Bounty payout failed");
       false
     } else {
-      self.internal_bounty_completion(id, claimer);
+      let bounty = self.get_bounty(id);
+      self.internal_bounty_completion(id, bounty, claimer);
+      true
+    }
+  }
+
+  #[private]
+  pub fn after_bounty_withdraw(
+    &mut self,
+    id: BountyIndex,
+    claimer: AccountId,
+    slot: usize,
+  ) -> bool {
+    if !is_promise_success() {
+      env::log_str("Bounty payout failed");
+      false
+    } else {
+      let bounty = self.get_bounty(id);
+      self.internal_slot_finalize(id, bounty, claimer, slot);
       true
     }
   }
@@ -67,9 +87,8 @@ impl BountiesContract {
       env::log_str("Bounty refund failed");
       false
     } else {
-      let mut bounty = self.get_bounty(id);
-      self.internal_total_fees_refunding_funds(&bounty);
-      self.internal_change_status_and_save_bounty(&id, &mut bounty, BountyStatus::Canceled);
+      let bounty = self.get_bounty(id);
+      self.internal_bounty_cancellation(id, bounty);
       true
     }
   }
@@ -100,7 +119,7 @@ impl BountiesContract {
     &mut self,
     #[callback_result] result: Result<Proposal, PromiseError>,
     id: BountyIndex,
-    receiver_id: AccountId,
+    receiver_id: Option<AccountId>,
     proposal_id: U64,
   ) -> PromiseOrValue<()> {
     if !is_promise_success() || result.is_err() {
@@ -110,23 +129,37 @@ impl BountiesContract {
       assert_eq!(proposal.id, proposal_id.0);
       assert_eq!(proposal.proposer, env::current_account_id());
 
-      let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
-        id.clone(),
-        receiver_id.clone(),
-        BountyStatus::Claimed,
-        vec![ClaimStatus::Completed],
-        false,
-        "Bounty status does not allow completion",
-        "The claim status does not allow you to complete the bounty"
-      );
+      if receiver_id.is_none() {
+        let bounty = self.get_bounty(id);
+        assert!(
+          matches!(bounty.status, BountyStatus::ManyClaimed),
+          "Bounty status does not allow completion"
+        );
 
-      if proposal.status == "Approved" {
-        self.internal_bounty_payout(id, receiver_id)
-      } else if proposal.status == "Rejected" {
-        self.internal_reject_claim(id, receiver_id, &mut bounty, index.unwrap(), &mut claims);
-        PromiseOrValue::Value(())
+        if proposal.status == "Approved" {
+          self.internal_bounty_payout(id, None)
+        } else {
+          env::panic_str("The proposal status is not being processed");
+        }
       } else {
-        env::panic_str("The proposal status is not being processed");
+        let claimer = receiver_id.unwrap();
+        let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
+          id.clone(),
+          claimer.clone(),
+          vec![BountyStatus::Claimed, BountyStatus::ManyClaimed],
+          vec![ClaimStatus::Completed],
+          false,
+          "Bounty status does not allow completion",
+          "The claim status does not allow you to complete the bounty"
+        );
+
+        if proposal.status == "Approved" {
+          self.internal_bounty_payout(id, Some(claimer))
+        } else if proposal.status == "Rejected" {
+          self.internal_reject_claim(id, claimer, &mut bounty, index.unwrap(), &mut claims)
+        } else {
+          env::panic_str("The proposal status is not being processed");
+        }
       }
     }
   }
@@ -171,7 +204,7 @@ impl BountiesContract {
       let (_, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         claimer.clone(),
-        BountyStatus::Claimed,
+        vec![BountyStatus::Claimed, BountyStatus::ManyClaimed],
         vec![ClaimStatus::Rejected],
         false,
         "Bounty status does not allow opening a dispute",
@@ -199,18 +232,30 @@ impl BountiesContract {
       let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         receiver_id.clone(),
-        BountyStatus::Claimed,
+        vec![BountyStatus::Claimed, BountyStatus::ManyClaimed],
         vec![ClaimStatus::Disputed],
         false,
         "Bounty status does not allow to reject a claim as a result of a dispute",
         "Claim status does not allow rejection as a result of a dispute"
       );
+      let claim_idx = index.unwrap();
+
       if dispute.status == "InFavorOfClaimer" || dispute.status == "CanceledByProjectOwner" {
-        self.internal_bounty_payout(id, receiver_id)
+        if bounty.is_different_tasks() {
+          self.internal_claim_return_after_dispute(receiver_id, &mut claims, claim_idx)
+        } else {
+          self.internal_bounty_payout(id, Some(receiver_id))
+        }
       } else if dispute.status == "InFavorOfProjectOwner" || dispute.status == "CanceledByClaimer" {
-        let claim_idx = index.unwrap();
-        self.internal_reset_bounty_to_initial_state(id, &receiver_id, &mut bounty, claim_idx, &mut claims);
-        PromiseOrValue::Value(())
+        self.internal_reset_bounty_to_initial_state(
+          id,
+          &receiver_id,
+          &mut bounty,
+          claim_idx,
+          &mut claims,
+          None,
+          true
+        )
       } else {
         env::panic_str("The dispute status is not being processed");
       }
@@ -244,6 +289,7 @@ impl BountiesContract {
     id: BountyIndex,
     claimer: AccountId,
     place_of_check: PlaceOfCheckKYC,
+    slot: Option<usize>,
   ) -> PromiseOrValue<()> {
     if !is_promise_success() || result.is_err() {
       env::panic_str("Error determining the claimer's KYC status");
@@ -252,7 +298,7 @@ impl BountiesContract {
       if is_whitelisted {
         match place_of_check {
           PlaceOfCheckKYC::CreatingClaim { .. } => {
-            self.internal_add_proposal_and_create_claim(id, claimer, place_of_check)
+            self.internal_add_proposal_and_create_claim(id, claimer, place_of_check, slot)
           },
           PlaceOfCheckKYC::DecisionOnClaim { approve, is_kyc_delayed } => {
             self.internal_approval_and_save_claim(id, claimer, approve, is_kyc_delayed)

@@ -25,7 +25,7 @@ pub const MESSAGE_DISPUTE_IS_NOT_PENDING: &str = "This action can be performed o
 
 #[ext_contract(ext_bounty_contract)]
 trait ExtBountyContract {
-  fn dispute_result(&self, id: u64, success: bool) -> PromiseOrValue<()>;
+  fn dispute_result(&self, id: u64, claimer: AccountId, success: bool) -> PromiseOrValue<()>;
 }
 
 #[derive(Deserialize, Serialize)]
