@@ -168,6 +168,7 @@ pub enum Experience {
   Beginner,
   Intermediate,
   Advanced,
+  AnyExperience,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
