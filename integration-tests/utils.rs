@@ -7,8 +7,9 @@ use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Postpaid, ReferenceType, Reviewers,
-               ReviewersParams, TokenDetails, ValidatorsDaoParams, VersionedConfig};
+               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Multitasking, Postpaid,
+               ReferenceType, Reviewers, ReviewersParams, TokenDetails, ValidatorsDaoParams,
+               VersionedConfig};
 use disputes::{Dispute, Proposal};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
@@ -255,6 +256,12 @@ impl Env {
     Self::register_user(&test_token, bounties_contract_admin.id()).await?;
     Self::register_user(&test_token, validators_dao.id()).await?;
     Self::add_token(&test_token, &disputed_bounties, &bounties_contract_admin).await?;
+    Self::update_configuration_dictionary_entries(
+      &disputed_bounties,
+      &bounties_contract_admin,
+      ReferenceType::Currencies,
+      "USD".to_string()
+    ).await?;
 
     Ok(
       Self {
@@ -490,6 +497,7 @@ impl Env {
     total_amount: Option<U128>,
     kyc_required: Option<KycConfig>,
     postpaid: Option<Postpaid>,
+    multitasking: Option<Multitasking>,
     expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let metadata = json!({
@@ -520,6 +528,10 @@ impl Env {
         Some(KycConfig::KycNotRequired)
       },
       "postpaid": match postpaid.clone() {
+        Some(r) => json!(r),
+        _ => json!(null),
+      },
+      "multitasking": match multitasking.clone() {
         Some(r) => json!(r),
         _ => json!(null),
       },
@@ -592,10 +604,11 @@ impl Env {
     &self,
     bounties: &Contract,
     bounty_id: u64,
+    claimer: Option<&AccountId>,
   ) -> anyhow::Result<()> {
     let res = self.project_owner
       .call(bounties.id(), "mark_as_paid")
-      .args_json((bounty_id,))
+      .args_json((bounty_id, claimer))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -627,13 +640,14 @@ impl Env {
     bounty_id: u64,
     deadline: U64,
     description: String,
+    slot: Option<usize>,
     user: Option<&Account>,
     expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let config: bounties::Config = bounties.call("get_config").view().await?.json()?;
     let res = if user.is_some() { user.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "bounty_claim")
-      .args_json((bounty_id, deadline, description))
+      .args_json((bounty_id, deadline, description, slot))
       .max_gas()
       .deposit(config.bounty_claim_bond.0)
       .transact()
@@ -784,8 +798,9 @@ impl Env {
     &self,
     bounties: &Contract,
     bounty_id: u64,
+    freelancer: Option<&Account>,
   ) -> anyhow::Result<()> {
-    let res = self.freelancer
+    let res = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "open_dispute")
       .args_json((bounty_id, "Dispute description"))
       .max_gas()
@@ -984,6 +999,16 @@ impl Env {
     Ok(dispute)
   }
 
+  pub async fn get_last_dispute_id(
+    &self,
+  ) -> anyhow::Result<u64> {
+    let last_dispute_id = self.dispute_contract
+      .call("get_last_dispute_id")
+      .view().await?
+      .json::<u64>()?;
+    Ok(last_dispute_id)
+  }
+
   pub async fn get_proposal(dao: &Contract, proposal_id: u64) -> anyhow::Result<Proposal> {
     let proposal = dao
       .call("get_proposal")
@@ -1087,18 +1112,51 @@ impl Env {
   }
 
   pub async fn update_configuration_dictionary_entries(
-    &self,
+    bounties: &Contract,
+    administrator: &Account,
     dict: ReferenceType,
     currency: String
   ) -> anyhow::Result<()> {
-    let res = self.bounties_contract_admin
-      .call(self.disputed_bounties.id(), "update_configuration_dictionary_entries")
+    let res = administrator
+      .call(bounties.id(), "update_configuration_dictionary_entries")
       .args_json((dict, currency, Option::<bool>::None))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn start_competition(
+    &self,
+    bounty_id: u64,
+  ) -> anyhow::Result<()> {
+    let res = self.project_owner
+      .call(self.disputed_bounties.id(), "start_competition")
+      .args_json((bounty_id,))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn withdraw(
+    &self,
+    bounty_id: u64,
+    freelancer: Option<&Account>,
+    expected_msg: Option<&str>,
+  ) -> anyhow::Result<()> {
+    let res = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer }
+      .call(self.disputed_bounties.id(), "withdraw")
+      .args_json((bounty_id,))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, expected_msg).await?;
     Ok(())
   }
 }

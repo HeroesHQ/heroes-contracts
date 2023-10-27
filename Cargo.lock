@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "bounties"
-version = "2.0.4"
+version = "2.0.5"
 dependencies = [
  "near-contract-standards",
  "near-sdk",
@@ -695,7 +695,7 @@ dependencies = [
 
 [[package]]
 name = "disputes"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "near-sdk",
 ]
@@ -2283,7 +2283,7 @@ dependencies = [
 
 [[package]]
 name = "reputation"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "near-sdk",
 ]
