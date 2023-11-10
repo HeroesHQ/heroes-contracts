@@ -1488,6 +1488,38 @@ pub struct BountyClaimV2 {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyClaimV3 {
+  /// Bounty id that was claimed.
+  pub bounty_id: BountyIndex,
+  /// When a claim is created.
+  pub created_at: U64,
+  /// Start time of the claim.
+  pub start_time: Option<U64>,
+  /// Deadline specified by claimer.
+  pub deadline: U64,
+  /// Description
+  pub description: String,
+  /// status
+  pub status: ClaimStatus,
+  /// Bounty payout proposal ID
+  pub bounty_payout_proposal_id: Option<U64>,
+  /// Proposal ID for applicant approval
+  pub approve_claimer_proposal_id: Option<U64>,
+  /// Timestamp when the status is set to rejected
+  pub rejected_timestamp: Option<U64>,
+  /// Dispute ID
+  pub dispute_id: Option<U64>,
+  /// Bounty owner deferred KYC verification or verification status will be tracked manually
+  pub is_kyc_delayed: Option<DefermentOfKYC>,
+  /// Payment data for PaymentOutsideContract mode
+  pub payment_timestamps: Option<PaymentTimestamps>,
+  /// Bounty slot number for different tasks
+  pub slot: Option<usize>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct BountyClaim {
   /// Bounty id that was claimed.
   pub bounty_id: BountyIndex,
@@ -1515,6 +1547,8 @@ pub struct BountyClaim {
   pub payment_timestamps: Option<PaymentTimestamps>,
   /// Bounty slot number for different tasks
   pub slot: Option<usize>,
+  /// Bond that was at the time of making the claim
+  pub bond: Option<U128>,
 }
 
 impl BountyClaim {
@@ -1549,6 +1583,7 @@ impl BountyClaim {
 pub enum VersionedBountyClaim {
   V1(BountyClaimV1),
   V2(BountyClaimV2),
+  V3(BountyClaimV3),
   Current(BountyClaim),
 }
 
@@ -1569,8 +1604,8 @@ impl VersionedBountyClaim {
     }
   }
 
-  fn upgrade_v2_to_v3(bounty_claim: BountyClaimV2) -> BountyClaim {
-    BountyClaim {
+  fn upgrade_v2_to_v3(bounty_claim: BountyClaimV2) -> BountyClaimV3 {
+    BountyClaimV3 {
       bounty_id: bounty_claim.bounty_id,
       created_at: bounty_claim.created_at,
       start_time: bounty_claim.start_time,
@@ -1587,15 +1622,40 @@ impl VersionedBountyClaim {
     }
   }
 
+  fn upgrade_v3_to_v4(bounty_claim: BountyClaimV3) -> BountyClaim {
+    BountyClaim {
+      bounty_id: bounty_claim.bounty_id,
+      created_at: bounty_claim.created_at,
+      start_time: bounty_claim.start_time,
+      deadline: bounty_claim.deadline,
+      description: bounty_claim.description,
+      status: bounty_claim.status,
+      bounty_payout_proposal_id: bounty_claim.bounty_payout_proposal_id,
+      approve_claimer_proposal_id: bounty_claim.approve_claimer_proposal_id,
+      rejected_timestamp: bounty_claim.rejected_timestamp,
+      dispute_id: bounty_claim.dispute_id,
+      is_kyc_delayed: bounty_claim.is_kyc_delayed,
+      payment_timestamps: bounty_claim.payment_timestamps,
+      slot: bounty_claim.slot,
+      bond: None,
+    }
+  }
+
   pub fn to_bounty_claim(self) -> BountyClaim {
     match self {
       VersionedBountyClaim::Current(bounty_claim) => bounty_claim,
       VersionedBountyClaim::V1(bounty_claim_v1) =>
-        VersionedBountyClaim::upgrade_v2_to_v3(
-          VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
+        VersionedBountyClaim::upgrade_v3_to_v4(
+          VersionedBountyClaim::upgrade_v2_to_v3(
+            VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
+          )
         ),
       VersionedBountyClaim::V2(bounty_claim_v2) =>
-        VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2),
+        VersionedBountyClaim::upgrade_v3_to_v4(
+          VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2)
+        ),
+      VersionedBountyClaim::V3(bounty_claim_v3) =>
+        VersionedBountyClaim::upgrade_v3_to_v4(bounty_claim_v3)
     }
   }
 }
@@ -1603,13 +1663,19 @@ impl VersionedBountyClaim {
 impl From<VersionedBountyClaim> for BountyClaim {
   fn from(value: VersionedBountyClaim) -> Self {
     match value {
-      VersionedBountyClaim::Current(claim) => claim,
+      VersionedBountyClaim::Current(bounty_claim) => bounty_claim,
       VersionedBountyClaim::V1(bounty_claim_v1) =>
-        VersionedBountyClaim::upgrade_v2_to_v3(
-          VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
+        VersionedBountyClaim::upgrade_v3_to_v4(
+          VersionedBountyClaim::upgrade_v2_to_v3(
+            VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
+          )
         ),
       VersionedBountyClaim::V2(bounty_claim_v2) =>
-        VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2),
+        VersionedBountyClaim::upgrade_v3_to_v4(
+          VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2)
+        ),
+      VersionedBountyClaim::V3(bounty_claim_v3) =>
+        VersionedBountyClaim::upgrade_v3_to_v4(bounty_claim_v3)
     }
   }
 }

@@ -515,10 +515,18 @@ impl BountiesContract {
     }
   }
 
-  pub(crate) fn internal_return_bonds(&mut self, receiver_id: &AccountId) -> PromiseOrValue<()> {
-    let config = self.config.clone().to_config();
-    self.locked_amount -= config.bounty_claim_bond.0;
-    Promise::new(receiver_id.clone()).transfer(config.bounty_claim_bond.0).into()
+  pub(crate) fn internal_return_bonds(
+    &mut self,
+    receiver_id: &AccountId,
+    bond: Option<U128>
+  ) -> PromiseOrValue<()> {
+    let bond = bond.unwrap_or(DEFAULT_BOUNTY_CLAIM_BOND);
+    if bond.0 == 0 {
+      PromiseOrValue::Value(())
+    } else {
+      self.locked_amount -= bond.0;
+      Promise::new(receiver_id.clone()).transfer(bond.0).into()
+    }
   }
 
   pub(crate) fn internal_reset_bounty_to_initial_state(
@@ -620,7 +628,7 @@ impl BountiesContract {
     }
 
     if return_bond {
-      self.internal_return_bonds(receiver_id)
+      self.internal_return_bonds(receiver_id, claims[claim_idx].bond)
     } else {
       PromiseOrValue::Value(())
     }
@@ -796,7 +804,7 @@ impl BountiesContract {
       Some(bounty.owner),
       ReputationActionKind::SuccessfulClaim { with_dispute },
     );
-    self.internal_return_bonds(&claimer);
+    self.internal_return_bonds(&claimer, claims[claim_idx].bond);
   }
 
   pub(crate) fn internal_bounty_cancellation(
@@ -1620,6 +1628,7 @@ impl BountiesContract {
     );
 
     let created_at = U64::from(env::block_timestamp());
+    let bond = self.config.clone().to_config().bounty_claim_bond;
     let mut bounty_claim = BountyClaim {
       bounty_id: id,
       created_at: created_at.clone(),
@@ -1640,6 +1649,7 @@ impl BountiesContract {
         None
       },
       slot,
+      bond: Some(bond),
     };
 
     if !self.is_approval_required(&bounty, &claimer) {
@@ -1648,7 +1658,7 @@ impl BountiesContract {
     Self::internal_add_claim(id, &mut claims, bounty_claim);
     self.internal_save_claims(&claimer, &claims);
     self.internal_add_bounty_claimer_account(id, claimer.clone());
-    self.locked_amount += self.config.clone().to_config().bounty_claim_bond.0;
+    self.locked_amount += bond.0;
     self.internal_update_statistic(
       Some(claimer.clone()),
       Some(bounty.owner.clone()),
@@ -1879,7 +1889,7 @@ impl BountiesContract {
       PromiseOrValue::Value(())
     } else {
       bounty_claim.status = ClaimStatus::NotHired;
-      self.internal_return_bonds(&claimer)
+      self.internal_return_bonds(&claimer, bounty_claim.bond)
     };
 
     claims.insert(claim_idx, bounty_claim);
@@ -2030,7 +2040,9 @@ impl BountiesContract {
       action_kind,
     );
     if claimer.is_some() {
-      self.internal_return_bonds(&claimer.unwrap());
+      let claimer = claimer.unwrap();
+      let (claims, claim_idx) = self.internal_get_claims(id, &claimer.clone());
+      self.internal_return_bonds(&claimer, claims[claim_idx].bond);
     }
   }
 
