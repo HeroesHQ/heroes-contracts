@@ -1964,6 +1964,8 @@ impl BountiesContract {
     claimer: Option<AccountId>
   ) {
     let action_kind;
+    let bounty_claim: Option<BountyClaim>;
+
     if bounty.is_different_tasks() {
       assert!(claimer.is_none(), "The claimant must not be established");
       assert!(
@@ -1976,6 +1978,7 @@ impl BountiesContract {
       );
 
       action_kind = ReputationActionKind::SuccessfulBounty;
+      bounty_claim = None;
 
     } else {
       assert!(claimer.is_some(), "The claimant must be established");
@@ -1990,6 +1993,7 @@ impl BountiesContract {
       );
 
       let claim_idx = index.unwrap();
+      bounty_claim = Some(claims[claim_idx].clone());
       let with_dispute = claims[claim_idx].status == ClaimStatus::Disputed;
       claims[claim_idx].status = ClaimStatus::Approved;
       self.internal_save_claims(&claimer.clone().unwrap(), &claims);
@@ -2040,9 +2044,7 @@ impl BountiesContract {
       action_kind,
     );
     if claimer.is_some() {
-      let claimer = claimer.unwrap();
-      let (claims, claim_idx) = self.internal_get_claims(id, &claimer.clone());
-      self.internal_return_bonds(&claimer, claims[claim_idx].bond);
+      self.internal_return_bonds(&claimer.unwrap(), bounty_claim.unwrap().bond);
     }
   }
 
