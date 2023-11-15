@@ -234,7 +234,10 @@ impl KycWhitelist {
   /// Returns a whitelist items
   pub fn get_whitelist_entry(&self, account_id: AccountId) -> Vec<WhitelistEntry> {
     let whitelist_entries = self.whitelist.get(&account_id).expect("No whitelist entries found");
-    whitelist_entries.into_iter().map(|e| e.into()).collect()
+    whitelist_entries
+      .into_iter()
+      .filter(|e| self.provider_found(e.clone().to_whitelist_entry().provider))
+      .map(|e| e.into()).collect()
   }
 
   pub fn get_config(&self) -> Config {
@@ -327,7 +330,7 @@ impl KycWhitelist {
   /// Set or unset default profile
   pub fn set_default_profile(&mut self, service_name: Option<String>) {
     self.assert_is_whitelist_admin();
-    let mut config = self.config.to_config_mut();
+    let config = self.config.to_config_mut();
     config.default_profile = service_name;
   }
 
