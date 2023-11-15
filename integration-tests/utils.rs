@@ -11,6 +11,7 @@ use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, Cl
                ReferenceType, Reviewers, ReviewersParams, TokenDetails, ValidatorsDaoParams,
                VersionedConfig};
 use disputes::{Dispute, Proposal};
+use kyc_whitelist::VerificationType;
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
 #[derive(Deserialize)]
@@ -24,7 +25,7 @@ pub const BOUNTIES_WASM: &str = "./bounties/res/bounties.wasm";
 pub const SPUTNIK_DAO2_WASM: &str = "./integration-tests/res/sputnikdao2.wasm";
 pub const DISPUTES_WASM: &str = "./disputes/res/disputes.wasm";
 pub const REPUTATION_WASM: &str = "./reputation/res/reputation.wasm";
-pub const KYC_WHITELIST_WASM: &str = "./kyc-whitelist/res/kyc_whitelist.wasm";
+pub const KYC_WHITELIST_WASM: &str = "./kyc-whitelist/res/kyc-whitelist.wasm";
 
 pub const BOUNTY_AMOUNT: U128 = U128(99 * 10u128.pow(16)); // 0.99 TFT (Test fungible token)
 pub const PLATFORM_FEE: U128 = U128(11 * 10u128.pow(16)); // 0.11 TFT
@@ -1053,7 +1054,7 @@ impl Env {
   ) -> anyhow::Result<()> {
     let res = self.kyc_service_account
       .call(self.kyc_whitelist_contract.id(), "add_account")
-      .args_json((freelancer.id(),))
+      .args_json((freelancer.id(), VerificationType::KYC, "fractal", Option::<bool>::None))
       .max_gas()
       .transact()
       .await?;
