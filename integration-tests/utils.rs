@@ -137,8 +137,8 @@ impl Env {
     res = bounties
       .call("new")
       .args_json(json!({
-      "admins_whitelist": vec![bounties_contract_admin.id()],
-    }))
+        "admins_whitelist": vec![bounties_contract_admin.id()],
+      }))
       .max_gas()
       .transact()
       .await?;
@@ -150,13 +150,13 @@ impl Env {
     res = validators_dao
       .call("new")
       .args_json(json!({
-      "config": {
-        "name": "genesis2",
-        "purpose": "test",
-        "metadata": "",
-      },
-      "policy": vec![dao_council_member.id()],
-    }))
+        "config": {
+          "name": "genesis2",
+          "purpose": "test",
+          "metadata": "",
+        },
+        "policy": vec![dao_council_member.id()],
+      }))
       .max_gas()
       .transact()
       .await?;
@@ -173,13 +173,13 @@ impl Env {
     let mut res = dispute_dao
       .call("new")
       .args_json(json!({
-      "config": {
-        "name": "genesis2",
-        "purpose": "test",
-        "metadata": "",
-      },
-      "policy": vec![arbitrator.id()],
-    }))
+        "config": {
+          "name": "genesis2",
+          "purpose": "test",
+          "metadata": "",
+        },
+        "policy": vec![arbitrator.id()],
+      }))
       .max_gas()
       .transact()
       .await?;
@@ -195,11 +195,11 @@ impl Env {
     res = dispute_contract
       .call("new")
       .args_json(json!({
-      "bounties_contract": disputed_bounties.id(),
-      "dispute_dao": dispute_dao.id(),
-      "admin_whitelist": vec![bounties_contract_admin.id()],
-      "config": disputes_config,
-    }))
+        "bounties_contract": disputed_bounties.id(),
+        "dispute_dao": dispute_dao.id(),
+        "admin_whitelist": vec![bounties_contract_admin.id()],
+        "config": disputes_config,
+      }))
       .max_gas()
       .transact()
       .await?;
@@ -209,9 +209,9 @@ impl Env {
     res = reputation_contract
       .call("new")
       .args_json(json!({
-      "bounties_contract": disputed_bounties.id(),
-      "admin_whitelist": vec![bounties_contract_admin.id()],
-    }))
+        "bounties_contract": disputed_bounties.id(),
+        "admin_whitelist": vec![bounties_contract_admin.id()],
+      }))
       .max_gas()
       .transact()
       .await?;
@@ -227,10 +227,35 @@ impl Env {
     let kyc_whitelist_contract = worker.dev_deploy(&std::fs::read(KYC_WHITELIST_WASM)?).await?;
     res = kyc_whitelist_contract
       .call("new")
+      .args_json(json!({ "admin_account": bounties_contract_admin.id() }))
+      .max_gas()
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+
+    res = kyc_whitelist_contract
+      .call("create_provider")
+      .args_json(json!({ "name": "fractal", "enabled": true }))
+      .max_gas()
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+
+    res = kyc_whitelist_contract
+      .call("create_service_profile")
       .args_json(json!({
-      "admin_account": bounties_contract_admin.id(),
-      "service_account": kyc_service_account.id(),
-    }))
+        "service_name": "heroes",
+        "service_account": kyc_service_account.id(),
+        "providers": vec!["fractal"]
+      }))
+      .max_gas()
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+
+    res = kyc_whitelist_contract
+      .call("set_default_profile")
+      .args_json(("heroes",))
       .max_gas()
       .transact()
       .await?;
@@ -242,13 +267,13 @@ impl Env {
     res = disputed_bounties
       .call("new")
       .args_json(json!({
-      "admins_whitelist": vec![bounties_contract_admin.id()],
-      "config": VersionedConfig::from(bounties_config),
-      "reputation_contract": reputation_contract.id(),
-      "dispute_contract": dispute_contract.id(),
-      "kyc_whitelist_contract": kyc_whitelist_contract.id(),
-      "recipient_of_platform_fee": bounties_contract_admin.id(),
-    }))
+        "admins_whitelist": vec![bounties_contract_admin.id()],
+        "config": VersionedConfig::from(bounties_config),
+        "reputation_contract": reputation_contract.id(),
+        "dispute_contract": dispute_contract.id(),
+        "kyc_whitelist_contract": kyc_whitelist_contract.id(),
+        "recipient_of_platform_fee": bounties_contract_admin.id(),
+      }))
       .max_gas()
       .transact()
       .await?;
@@ -306,9 +331,9 @@ impl Env {
     let res = administrator
       .call(bounties.id(), "add_token_id")
       .args_json(json!({
-      "token_id": test_token.id(),
-      "min_amount_for_kyc": MIN_AMOUNT_FOR_KYC,
-    }))
+        "token_id": test_token.id(),
+        "min_amount_for_kyc": MIN_AMOUNT_FOR_KYC,
+      }))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -325,9 +350,9 @@ impl Env {
     let res = self.bounties_contract_admin
       .call(bounties.id(), "update_token")
       .args_json(json!({
-      "token_id": self.test_token.id(),
-      "token_details": token_details,
-    }))
+        "token_id": self.test_token.id(),
+        "token_details": token_details,
+      }))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
