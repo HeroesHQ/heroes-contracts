@@ -1135,9 +1135,10 @@ mod tests {
   use near_sdk::test_utils::{accounts, VMContextBuilder};
   use near_sdk::json_types::{U128, U64};
   use near_sdk::{testing_env, AccountId, Balance};
-  use crate::{BountiesContract, Bounty, BountyAction, BountyClaim, BountyIndex, BountyMetadata,
-              BountyStatus, ClaimerApproval, ClaimStatus, Config, ConfigCreate, Deadline, FeeStats,
-              KycConfig, Reviewers, TokenDetails, ValidatorsDao, ValidatorsDaoParams};
+  use crate::{DEFAULT_BOUNTY_CLAIM_BOND, BountiesContract, Bounty, BountyAction, BountyClaim,
+              BountyIndex, BountyMetadata, BountyStatus, ClaimerApproval, ClaimStatus, Config,
+              ConfigCreate, Deadline, FeeStats, KycConfig, Reviewers, TokenDetails, ValidatorsDao,
+              ValidatorsDaoParams};
 
   pub const TOKEN_DECIMALS: u8 = 18;
   pub const MAX_DEADLINE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
@@ -1563,6 +1564,7 @@ mod tests {
         is_kyc_delayed: None,
         payment_timestamps: None,
         slot: None,
+        bond: Some(DEFAULT_BOUNTY_CLAIM_BOND),
       }
     );
     assert_eq!(contract.bounty_claimer_accounts.get(&id).unwrap()[0], claimer);
