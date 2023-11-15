@@ -227,34 +227,36 @@ impl Env {
     let kyc_whitelist_contract = worker.dev_deploy(&std::fs::read(KYC_WHITELIST_WASM)?).await?;
     res = kyc_whitelist_contract
       .call("new")
-      .args_json(json!({ "admin_account": bounties_contract_admin.id() }))
+      .args_json(json!({ "admin_account": bounties_contract_admin.id(), "config": null }))
       .max_gas()
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
 
-    res = kyc_whitelist_contract
-      .call("create_provider")
-      .args_json(json!({ "name": "fractal", "enabled": true }))
+    res = bounties_contract_admin
+      .call(kyc_whitelist_contract.id(), "create_provider")
+      .args_json(json!({ "provider": json!({ "name": "fractal", "enabled": true }) }))
       .max_gas()
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
 
-    res = kyc_whitelist_contract
-      .call("create_service_profile")
+    res = bounties_contract_admin
+      .call(kyc_whitelist_contract.id(), "create_service_profile")
       .args_json(json!({
-        "service_name": "heroes",
-        "service_account": kyc_service_account.id(),
-        "providers": vec!["fractal"]
+        "service_profile": json!({
+          "service_name": "heroes",
+          "service_account": kyc_service_account.id(),
+          "providers": vec!["fractal"]
+        })
       }))
       .max_gas()
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
 
-    res = kyc_whitelist_contract
-      .call("set_default_profile")
+    res = bounties_contract_admin
+      .call(kyc_whitelist_contract.id(), "set_default_profile")
       .args_json(("heroes",))
       .max_gas()
       .transact()
