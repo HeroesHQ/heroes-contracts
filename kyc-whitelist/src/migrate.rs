@@ -82,7 +82,7 @@ impl KycWhitelist {
         &whitelist_entries
           .into_iter()
           .map(|e| e.clone().into())
-          .collect::<Vec<_>>()
+          .collect()
       );
     }
 
