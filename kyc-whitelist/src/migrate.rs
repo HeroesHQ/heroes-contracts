@@ -16,11 +16,11 @@ impl KycWhitelist {
     let mut new_whitelist: LookupMap<AccountId, Vec<VersionedWhitelistEntry>> =
       LookupMap::new(StorageKey::Whitelist);
 
-    assert_eq!(
+    /*assert_eq!(
       env::predecessor_account_id(),
       old_state.admin_account,
       "Only an administrator can perform this action"
-    );
+    );*/
 
     for (_, profile) in config.service_profiles.iter().enumerate() {
       assert!(!profile.service_name.is_empty(), "The name of the service profile cannot be empty");
