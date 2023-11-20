@@ -641,7 +641,8 @@ mod tests {
   use near_sdk::{AccountId, testing_env};
   use near_sdk::json_types::U64;
   use near_sdk::test_utils::{accounts, VMContextBuilder};
-  use crate::{KycWhitelist, ProviderDetails, ServiceProfile, VerificationType, WhitelistEntry};
+  use crate::{ActivationType, KycWhitelist, ProviderDetails, ProviderVerificationType,
+              ServiceProfile, VerificationType, WhitelistEntry};
 
   fn admin_account() -> AccountId {
     accounts(0)
@@ -659,6 +660,62 @@ mod tests {
     accounts(3)
   }
 
+  fn provider() -> ProviderDetails {
+    ProviderDetails {
+      name: "fractal".to_string(),
+      enabled: ActivationType::Enabled,
+    }
+  }
+
+  fn service_profile() -> ServiceProfile {
+    ServiceProfile {
+      service_name: "heroes".to_string(),
+      service_account: service_account(),
+      verification_types: vec![
+        ProviderVerificationType {
+          provider: "fractal".to_string(),
+          verification_type: VerificationType::KYC,
+          verification_level: Some("basic+liveness+uniq".to_string()),
+          enabled: ActivationType::Enabled,
+        }
+      ],
+    }
+  }
+
+  fn modified_service_profile() -> ServiceProfile {
+    ServiceProfile {
+      service_name: "heroes".to_string(),
+      service_account: second_service_account(),
+      verification_types: vec![
+        ProviderVerificationType {
+          provider: "fractal".to_string(),
+          verification_type: VerificationType::KYC,
+          verification_level: Some("basic+liveness+uniq".to_string()),
+          enabled: ActivationType::Enabled,
+        }
+      ],
+    }
+  }
+
+  fn third_service_profile() -> ServiceProfile {
+    ServiceProfile {
+      service_name: "heroes3".to_string(),
+      service_account: service_account(),
+      verification_types: vec![
+        ProviderVerificationType {
+          provider: "fractal".to_string(),
+          verification_type: VerificationType::KYC,
+          verification_level: Some("basic+liveness".to_string()),
+          enabled: ActivationType::Enabled,
+        }
+      ],
+    }
+  }
+
+  fn default_profile() -> Option<String> {
+    Some("heroes".to_string())
+  }
+
   #[test]
   fn test_whitelist_flow() {
     let mut context = VMContextBuilder::new();
@@ -668,136 +725,92 @@ mod tests {
       .predecessor_account_id(admin_account())
       .build());
 
-    contract.create_provider(ProviderDetails {
-      name: "fractal".to_string(),
-      enabled: true,
-    });
-    assert_eq!(
-      contract.config.clone().to_config().providers[0],
-      ProviderDetails {
-        name: "fractal".to_string(),
-        enabled: true,
-      }
-    );
+    contract.create_provider(provider());
+    assert_eq!(contract.config.clone().to_config().providers[0], provider());
 
-    contract.create_service_profile(ServiceProfile {
-      service_name: "heroes".to_string(),
-      service_account: service_account(),
-      providers: vec!["fractal".to_string()],
-    });
-    assert_eq!(
-      contract.config.clone().to_config().service_profiles[0],
-      ServiceProfile {
-        service_name: "heroes".to_string(),
-        service_account: service_account(),
-        providers: vec!["fractal".to_string()],
-      }
-    );
+    contract.create_service_profile(service_profile());
+    assert_eq!(contract.config.clone().to_config().service_profiles[0], service_profile());
 
-    contract.set_default_profile(Some("heroes".to_string()));
-    assert_eq!(
-      contract.config.clone().to_config().default_profile,
-      Some("heroes".to_string())
-    );
+    contract.set_default_profile(default_profile());
+    assert_eq!(contract.config.clone().to_config().default_profile, default_profile());
 
     testing_env!(context
       .predecessor_account_id(service_account())
       .build());
 
-    assert!(!contract.is_whitelisted(user_account(), Some("heroes".to_string())));
-    contract.add_account(user_account(), VerificationType::KYC, "fractal".to_string(), None);
-    assert!(contract.is_whitelisted(user_account(), Some("heroes".to_string())));
+    assert!(!contract.is_whitelisted(user_account(), default_profile()));
+    contract.add_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness+uniq".to_string()),
+      None
+    );
+    assert!(contract.is_whitelisted(user_account(), default_profile()));
     assert!(contract.is_whitelisted(user_account(), None));
     assert_eq!(
-      contract.get_whitelist_entry(user_account(), Some("heroes".to_string())),
+      contract.get_whitelist_entry(user_account(), default_profile()),
       vec![
         WhitelistEntry {
           verification_date: U64(0),
-          verification_type: VerificationType::KYC,
           provider: "fractal".to_string(),
+          verification_type: VerificationType::KYC,
+          verification_level: Some("basic+liveness+uniq".to_string()),
           ident_document_date_of_expiry: None,
         }
       ]
     );
 
-    contract.remove_account(user_account(), VerificationType::KYC, "fractal".to_string());
-    assert!(!contract.is_whitelisted(user_account(), Some("heroes".to_string())));
+    contract.remove_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness+uniq".to_string()),
+    );
+    assert!(!contract.is_whitelisted(user_account(), default_profile()));
     assert!(!contract.is_whitelisted(user_account(), None));
 
     testing_env!(context
       .predecessor_account_id(admin_account())
       .build());
 
-    contract.update_service_profile(Some("heroes".to_string()), None, ServiceProfile {
-      service_name: "heroes".to_string(),
-      service_account: second_service_account(),
-      providers: vec!["fractal".to_string()],
-    });
-    assert_eq!(
-      contract.config.clone().to_config().service_profiles[0],
-      ServiceProfile {
-        service_name: "heroes".to_string(),
-        service_account: second_service_account(),
-        providers: vec!["fractal".to_string()],
-      }
-    );
+    contract.update_service_profile(Some("heroes".to_string()), None, modified_service_profile());
+    assert_eq!(contract.config.clone().to_config().service_profiles[0], modified_service_profile());
 
     contract.remove_service_profile(Some("heroes".to_string()), None);
     assert!(contract.config.clone().to_config().service_profiles.is_empty());
 
-    contract.create_service_profile(ServiceProfile {
-      service_name: "heroes2".to_string(),
-      service_account: second_service_account(),
-      providers: vec!["fractal".to_string()],
-    });
-    assert_eq!(
-      contract.config.clone().to_config().service_profiles[0],
-      ServiceProfile {
-        service_name: "heroes2".to_string(),
-        service_account: second_service_account(),
-        providers: vec!["fractal".to_string()],
-      }
-    );
+    contract.create_service_profile(modified_service_profile());
+    assert_eq!(contract.config.clone().to_config().service_profiles[0], modified_service_profile());
 
-    contract.update_service_profile(None, Some(second_service_account()), ServiceProfile {
-      service_name: "heroes3".to_string(),
-      service_account: service_account(),
-      providers: vec!["fractal".to_string()],
-    });
-    assert_eq!(
-      contract.config.clone().to_config().service_profiles[0],
-      ServiceProfile {
-        service_name: "heroes3".to_string(),
-        service_account: service_account(),
-        providers: vec!["fractal".to_string()],
-      }
-    );
+    contract.update_service_profile(None, Some(second_service_account()), third_service_profile());
+    assert_eq!(contract.config.clone().to_config().service_profiles[0], third_service_profile());
 
     contract.remove_service_profile(None, Some(service_account()));
     assert!(contract.config.clone().to_config().service_profiles.is_empty());
 
     contract.create_provider(ProviderDetails {
       name: "fractal+idOS".to_string(),
-      enabled: true,
+      enabled: ActivationType::NewChecksNotAllowed,
     });
     assert_eq!(contract.config.clone().to_config().providers.len(), 2);
     assert_eq!(
       contract.config.clone().to_config().providers[1],
       ProviderDetails {
         name: "fractal+idOS".to_string(),
-        enabled: true,
+        enabled: ActivationType::NewChecksNotAllowed,
       }
     );
 
     contract.update_provider("fractal+idOS".to_string(), ProviderDetails {
       name: "fractal+idOS".to_string(),
-      enabled: false,
+      enabled: ActivationType::Disabled,
     });
     assert_eq!(
       contract.config.clone().to_config().providers[1],
       ProviderDetails {
         name: "fractal+idOS".to_string(),
-        enabled: false,
+        enabled: ActivationType::Disabled,
       }
     );
 
@@ -818,20 +831,13 @@ mod tests {
       .predecessor_account_id(admin_account())
       .build());
 
-    contract.create_provider(ProviderDetails {
-      name: "fractal".to_string(),
-      enabled: true,
-    });
+    contract.create_provider(provider());
 
     testing_env!(context
       .predecessor_account_id(service_account())
       .build());
 
-    contract.create_service_profile(ServiceProfile {
-      service_name: "heroes".to_string(),
-      service_account: service_account(),
-      providers: vec!["fractal".to_string()],
-    });
+    contract.create_service_profile(service_profile());
   }
 
   #[test]
@@ -844,7 +850,13 @@ mod tests {
       .predecessor_account_id(service_account())
       .build());
 
-    contract.add_account(user_account(), VerificationType::KYC, "fractal".to_string(), None);
+    contract.add_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness+uniq".to_string()),
+      None
+    );
   }
 
   #[test]
@@ -857,22 +869,21 @@ mod tests {
       .predecessor_account_id(admin_account())
       .build());
 
-    contract.create_provider(ProviderDetails {
-      name: "fractal".to_string(),
-      enabled: true,
-    });
+    contract.create_provider(provider());
 
-    contract.create_service_profile(ServiceProfile {
-      service_name: "heroes".to_string(),
-      service_account: service_account(),
-      providers: vec!["fractal".to_string()],
-    });
+    contract.create_service_profile(service_profile());
 
     testing_env!(context
       .predecessor_account_id(user_account())
       .build());
 
-    contract.add_account(user_account(), VerificationType::KYC, "fractal".to_string(), None);
+    contract.add_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness+uniq".to_string()),
+      None
+    );
   }
 
   #[test]
@@ -885,23 +896,106 @@ mod tests {
       .predecessor_account_id(admin_account())
       .build());
 
-    contract.create_provider(ProviderDetails {
-      name: "fractal".to_string(),
-      enabled: true,
-    });
+    contract.create_provider(provider());
 
-    contract.create_service_profile(ServiceProfile {
-      service_name: "heroes".to_string(),
-      service_account: service_account(),
-      providers: vec!["fractal".to_string()],
-    });
+    contract.create_service_profile(service_profile());
 
     testing_env!(context
       .predecessor_account_id(service_account())
       .build());
 
-    contract.add_account(user_account(), VerificationType::KYC, "fractal".to_string(), None);
+    contract.add_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness+uniq".to_string()),
+      None
+    );
 
     let _result = contract.is_whitelisted(user_account(), None);
+  }
+
+  #[test]
+  #[should_panic(expected = "Unknown provider sumsub in profile heroes")]
+  fn test_use_unknown_provider() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = KycWhitelist::new(admin_account(), None);
+
+    testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    // provider: fractal
+    contract.create_provider(provider());
+
+    contract.create_service_profile(ServiceProfile {
+      service_name: "heroes".to_string(),
+      service_account: service_account(),
+      verification_types: vec![
+        ProviderVerificationType {
+          provider: "sumsub".to_string(),
+          verification_type: VerificationType::KYC,
+          verification_level: Some("basic-kyc-level".to_string()),
+          enabled: ActivationType::Enabled,
+        }
+      ],
+    });
+  }
+
+  #[test]
+  #[should_panic(expected = "Provider with this name already exists")]
+  fn test_try_create_an_already_existing_provider() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = KycWhitelist::new(admin_account(), None);
+
+    testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    contract.create_provider(provider());
+
+    contract.create_provider(provider());
+  }
+
+  #[test]
+  #[should_panic(expected = "Profile with this account or name already exists")]
+  fn test_try_create_an_already_existing_profile() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = KycWhitelist::new(admin_account(), None);
+
+    testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    contract.create_provider(provider());
+    contract.create_service_profile(service_profile());
+
+    contract.create_service_profile(service_profile());
+  }
+
+  #[test]
+  #[should_panic(expected = "The fractal provider for verifying with KYC and Some(\"basic+liveness\") is not in use now")]
+  fn test_whitelist_add_wrong_whitelist_entry() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = KycWhitelist::new(admin_account(), None);
+
+    testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    contract.create_provider(provider());
+    contract.create_service_profile(service_profile());
+
+    testing_env!(context
+      .predecessor_account_id(service_account())
+      .build());
+
+    contract.add_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness".to_string()),
+      None
+    );
   }
 }

@@ -11,7 +11,7 @@ use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, Cl
                ReferenceType, Reviewers, ReviewersParams, TokenDetails, ValidatorsDaoParams,
                VersionedConfig};
 use disputes::{Dispute, Proposal};
-use kyc_whitelist::VerificationType;
+use kyc_whitelist::{ActivationType, Config, VerificationType};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
 
 #[derive(Deserialize)]
@@ -227,7 +227,10 @@ impl Env {
     let kyc_whitelist_contract = worker.dev_deploy(&std::fs::read(KYC_WHITELIST_WASM)?).await?;
     res = kyc_whitelist_contract
       .call("new")
-      .args_json(json!({ "admin_account": bounties_contract_admin.id(), "config": null }))
+      .args_json(json!({
+        "admin_account": bounties_contract_admin.id(),
+        "config": Option::<Config>::None
+      }))
       .max_gas()
       .transact()
       .await?;
@@ -235,7 +238,12 @@ impl Env {
 
     res = bounties_contract_admin
       .call(kyc_whitelist_contract.id(), "create_provider")
-      .args_json(json!({ "provider": json!({ "name": "fractal", "enabled": true }) }))
+      .args_json(json!({
+        "provider": json!({
+          "name": "fractal",
+          "enabled": ActivationType::Enabled
+        })
+      }))
       .max_gas()
       .transact()
       .await?;
@@ -247,7 +255,12 @@ impl Env {
         "service_profile": json!({
           "service_name": "heroes",
           "service_account": kyc_service_account.id(),
-          "providers": vec!["fractal"]
+          "verification_types": vec![json!({
+            "provider": "fractal",
+            "verification_type": VerificationType::KYC,
+            "verification_level": "basic+liveness+uniq",
+            "enabled": ActivationType::Enabled
+          })]
         })
       }))
       .max_gas()
@@ -719,7 +732,7 @@ impl Env {
     ).await?;
     let res = self.dao_council_member
       .call(self.validators_dao.id(), "act_proposal")
-      .args_json((proposal_id.0, proposal_action, Option::<bool>::None))
+      .args_json((proposal_id.0, proposal_action, Option::<String>::None))
       .max_gas()
       .transact()
       .await?;
@@ -879,7 +892,7 @@ impl Env {
   ) -> anyhow::Result<()> {
     let res = self.arbitrator
       .call(self.dispute_dao.id(), "act_proposal")
-      .args_json((proposal_id, proposal_action, Option::<bool>::None))
+      .args_json((proposal_id, proposal_action, Option::<String>::None))
       .max_gas()
       .transact()
       .await?;
@@ -1052,7 +1065,7 @@ impl Env {
   ) -> anyhow::Result<()> {
     let res = self.bounties_contract_admin
       .call(self.disputed_bounties.id(), "add_to_owners_whitelist")
-      .args_json((self.project_owner.id(), Option::<bool>::None))
+      .args_json((self.project_owner.id(), Option::<Vec<AccountId>>::None))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -1066,7 +1079,7 @@ impl Env {
   ) -> anyhow::Result<()> {
     let res = self.bounties_contract_admin
       .call(self.disputed_bounties.id(), "remove_from_owners_whitelist")
-      .args_json((self.project_owner.id(), Option::<bool>::None))
+      .args_json((self.project_owner.id(), Option::<Vec<AccountId>>::None))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -1081,7 +1094,13 @@ impl Env {
   ) -> anyhow::Result<()> {
     let res = self.kyc_service_account
       .call(self.kyc_whitelist_contract.id(), "add_account")
-      .args_json((freelancer.id(), VerificationType::KYC, "fractal", Option::<bool>::None))
+      .args_json((
+        freelancer.id(),
+        "fractal",
+        VerificationType::KYC,
+        "basic+liveness+uniq",
+        Option::<U64>::None
+      ))
       .max_gas()
       .transact()
       .await?;
@@ -1147,7 +1166,7 @@ impl Env {
   ) -> anyhow::Result<()> {
     let res = administrator
       .call(bounties.id(), "update_configuration_dictionary_entries")
-      .args_json((dict, currency, Option::<bool>::None))
+      .args_json((dict, currency, Option::<Vec<String>>::None))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
