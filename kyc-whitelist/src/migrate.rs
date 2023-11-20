@@ -22,16 +22,11 @@ impl KycWhitelist {
       "Only an administrator can perform this action"
     );*/
 
+    for (_, provider) in config.providers.iter().enumerate() {
+      Self::validate_provider(provider, true);
+    }
     for (_, profile) in config.service_profiles.iter().enumerate() {
-      assert!(!profile.service_name.is_empty(), "The name of the service profile cannot be empty");
-      for (_, provider) in profile.providers.iter().enumerate() {
-        assert!(
-          config.providers.contains(&ProviderDetails { name: provider.clone(), enabled: true }),
-          "Unknown provider {} in profile {}",
-          provider,
-          profile.service_name
-        );
-      }
+      Self::validate_service_profile(profile, &config, true);
     }
 
     assert!(
@@ -62,11 +57,26 @@ impl KycWhitelist {
         );
 
         assert!(
-          config.providers.contains(
-            &ProviderDetails { name: whitelist_entry.clone().provider, enabled: true }
-          ),
-          "The {} has an unknown provider",
-          account_id
+          config.service_profiles
+            .clone()
+            .into_iter()
+            .find(
+              |p|
+                Self::math_profile_params(
+                  config.clone(),
+                  p.clone(),
+                  whitelist_entry.provider.clone(),
+                  whitelist_entry.verification_type.clone(),
+                  whitelist_entry.verification_level.clone(),
+                  true,
+                )
+            )
+            .is_some(),
+          "For account {}, unknown provider {} to verify with {:?} and {:?}",
+          account_id,
+          whitelist_entry.provider,
+          whitelist_entry.verification_type,
+          whitelist_entry.verification_level,
         );
 
         assert!(

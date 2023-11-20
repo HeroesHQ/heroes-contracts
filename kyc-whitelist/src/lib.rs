@@ -6,9 +6,8 @@ use near_sdk::{env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault};
 
 mod migrate;
 
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub enum VerificationType {
   KYC,
   KYB
@@ -20,10 +19,12 @@ pub enum VerificationType {
 pub struct WhitelistEntry {
   /// KYC/KYB verification date
   pub verification_date: U64,
-  /// Verification type: Know Your Customer or Know Your Business
-  pub verification_type: VerificationType,
   /// Alias of the provider that performed the verification
   pub provider: String,
+  /// Verification type: Know Your Customer or Know Your Business
+  pub verification_type: VerificationType,
+  /// Verification level
+  pub verification_level: Option<String>,
   /// The validity period of the identity document
   pub ident_document_date_of_expiry: Option<U64>,
 }
@@ -59,9 +60,28 @@ impl From<WhitelistEntry> for VersionedWhitelistEntry {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
+pub enum ActivationType {
+  Enabled,
+  NewChecksNotAllowed,
+  Disabled,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
 pub struct ProviderDetails {
   pub name: String,
-  pub enabled: bool,
+  pub enabled: ActivationType,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
+pub struct ProviderVerificationType {
+  pub provider: String,
+  pub verification_type: VerificationType,
+  pub verification_level: Option<String>,
+  pub enabled: ActivationType,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -70,7 +90,7 @@ pub struct ProviderDetails {
 pub struct ServiceProfile {
   pub service_name: String,
   pub service_account: AccountId,
-  pub providers: Vec<String>,
+  pub verification_types: Vec<ProviderVerificationType>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -169,11 +189,11 @@ impl KycWhitelist {
     );
   }
 
-  pub(crate) fn find_profile_by_alias(&self, name: String) -> ServiceProfile {
+  pub(crate) fn find_profile_by_alias(&self, service_name: String) -> ServiceProfile {
     let config = self.config.clone().to_config();
     config.service_profiles
       .into_iter()
-      .find(|p| p.service_name == name)
+      .find(|p| p.service_name == service_name)
       .expect("Service profile not found")
   }
 
@@ -208,13 +228,53 @@ impl KycWhitelist {
       .expect("Service profile not found")
   }
 
-  pub(crate) fn check_service_profile(&self, provider: String) {
+  pub (crate) fn math_profile_params(
+    config: Config,
+    service_profile: ServiceProfile,
+    provider: String,
+    verification_type: VerificationType,
+    verification_level: Option<String>,
+    read_only: bool,
+  ) -> bool {
+    Self::provider_found(config, provider.clone(), read_only) &&
+      service_profile.verification_types
+        .into_iter()
+        .find(
+          |v|
+            *v.provider == provider &&
+              v.verification_type == verification_type &&
+              v.verification_level == verification_level &&
+              if read_only {
+                v.enabled != ActivationType::Disabled
+              } else {
+                v.enabled == ActivationType::Enabled
+              }
+        )
+        .is_some()
+  }
+
+  pub(crate) fn check_service_profile(
+    &self,
+    provider: String,
+    verification_type: VerificationType,
+    verification_level: Option<String>
+  ) {
+    let config = self.config.clone().to_config();
     let service_profile = self.find_profile_by_account(env::predecessor_account_id());
 
     assert!(
-      self.provider_found(provider.clone()) && service_profile.providers.contains(&provider),
-      "The {} provider is not in use now",
-      provider
+      Self::math_profile_params(
+        config,
+        service_profile,
+        provider.clone(),
+        verification_type.clone(),
+        verification_level.clone(),
+        false
+      ),
+      "The {} provider for verifying with {:?} and {:?} is not in use now",
+      provider,
+      verification_type,
+      verification_level
     );
   }
 
@@ -225,28 +285,78 @@ impl KycWhitelist {
     self.find_profile_by_alias(profile_name)
   }
 
-  pub(crate) fn provider_found(&self, name: String) -> bool {
-    self.config
-      .clone()
-      .to_config()
+  pub(crate) fn provider_found(config: Config, provider: String, read_only: bool) -> bool {
+    config
       .providers
       .into_iter()
-      .find(|p| p.name == name && p.enabled)
+      .find(|p| p.name == provider &&
+        if read_only {
+          p.enabled != ActivationType::Disabled
+        } else {
+          p.enabled == ActivationType::Enabled
+        }
+      )
       .is_some()
   }
 
   pub(crate) fn find_whitelist_entry(
     &self,
     account_id: AccountId,
-    verification_type: VerificationType,
     provider: String,
+    verification_type: VerificationType,
+    verification_level: Option<String>,
   ) -> (Vec<VersionedWhitelistEntry>, Option<usize>) {
     let whitelist_entries = self.whitelist.get(&account_id).unwrap_or_default();
     let index = whitelist_entries.iter().position(|e| {
       let entry = e.clone().to_whitelist_entry();
-      entry.provider == provider && entry.verification_type == verification_type
+      entry.provider == provider &&
+        entry.verification_type == verification_type &&
+        entry.verification_level == verification_level
     });
     (whitelist_entries, index)
+  }
+
+  pub(crate) fn validate_service_profile(
+    service_profile: &ServiceProfile,
+    config: &Config,
+    is_new: bool
+  ) {
+    assert!(
+      !service_profile.service_name.is_empty(),
+      "The name of the service profile cannot be empty"
+    );
+    for (_, provider_verification_type) in service_profile.verification_types.iter().enumerate() {
+      assert!(
+        !is_new || provider_verification_type.enabled != ActivationType::Disabled,
+        "Profile {} has an inactive verification type",
+        service_profile.service_name
+      );
+      assert!(
+        config.providers
+          .clone()
+          .into_iter()
+          .find(
+            |p|
+              p.name == provider_verification_type.provider &&
+                p.enabled != ActivationType::Disabled)
+          .is_some(),
+        "Unknown provider {} in profile {}",
+        provider_verification_type.provider,
+        service_profile.service_name
+      );
+    }
+  }
+
+  pub(crate) fn validate_provider(provider_details: &ProviderDetails, is_new: bool) {
+    assert!(
+      !provider_details.name.is_empty(),
+      "The name of the provider cannot be empty"
+    );
+    assert!(
+      !is_new || provider_details.enabled != ActivationType::Disabled,
+      "The {} provider is inactive",
+      provider_details.name
+    );
   }
 
   /**
@@ -255,6 +365,7 @@ impl KycWhitelist {
 
   /// Returns 'true' if the given account ID is whitelisted.
   pub fn is_whitelisted(&self, account_id: AccountId, service_name: Option<String>) -> bool {
+    let config = self.config.clone().to_config();
     let profile = self.get_default_profile(service_name);
     let whitelist_entries = self.whitelist.get(&account_id).unwrap_or_default();
     whitelist_entries
@@ -262,10 +373,17 @@ impl KycWhitelist {
       .find(
         |e| {
           let entry = e.clone().to_whitelist_entry();
-          self.provider_found(entry.provider.clone()) &&
-            profile.providers.contains(&entry.provider) &&
-            (entry.ident_document_date_of_expiry.is_none() ||
-              env::block_timestamp() < entry.ident_document_date_of_expiry.unwrap().0)
+          Self::math_profile_params(
+            config.clone(),
+            profile.clone(),
+            entry.provider,
+            entry.verification_type,
+            entry.verification_level,
+            true,
+          ) && (
+            entry.ident_document_date_of_expiry.is_none() ||
+              env::block_timestamp() < entry.ident_document_date_of_expiry.unwrap().0
+          )
         })
       .is_some()
   }
@@ -275,13 +393,21 @@ impl KycWhitelist {
     &self, account_id: AccountId,
     service_name: Option<String>,
   ) -> Vec<WhitelistEntry> {
+    let config = self.config.clone().to_config();
     let profile = self.get_default_profile(service_name);
     let whitelist_entries = self.whitelist.get(&account_id).unwrap_or_default();
     whitelist_entries
       .into_iter()
       .filter(|e| {
         let entry = e.clone().to_whitelist_entry();
-        profile.providers.contains(&entry.provider) && self.provider_found(entry.provider)
+        Self::math_profile_params(
+          config.clone(),
+          profile.clone(),
+          entry.provider,
+          entry.verification_type,
+          entry.verification_level,
+          true,
+        )
       })
       .map(|e| e.into())
       .collect()
@@ -303,6 +429,7 @@ impl KycWhitelist {
   pub fn create_service_profile(&mut self, service_profile: ServiceProfile) {
     self.assert_is_whitelist_admin();
     let config = self.config.to_config_mut();
+    Self::validate_service_profile(&service_profile, &config, true);
 
     let index = config.service_profiles
       .iter()
@@ -325,6 +452,7 @@ impl KycWhitelist {
     self.assert_is_whitelist_admin();
 
     let config = self.config.to_config_mut();
+    Self::validate_service_profile(&service_profile, &config, false);
     let index = Self::find_profile_index(&config, service_name, service_account);
 
     let index_of_account = config.service_profiles
@@ -365,6 +493,7 @@ impl KycWhitelist {
   /// Insert provider
   pub fn create_provider(&mut self, provider: ProviderDetails) {
     self.assert_is_whitelist_admin();
+    Self::validate_provider(&provider, true);
 
     let config = self.config.to_config_mut();
     let index = config.providers.iter().position(|p| p.name == provider.name);
@@ -376,6 +505,7 @@ impl KycWhitelist {
   /// Update provider
   pub fn update_provider(&mut self, name: String, provider: ProviderDetails) {
     self.assert_is_whitelist_admin();
+    Self::validate_provider(&provider, false);
 
     let config = self.config.to_config_mut();
     let index = config.providers.iter().position(|p| p.name == name).expect("Provider not found");
@@ -398,6 +528,15 @@ impl KycWhitelist {
     self.assert_is_whitelist_admin();
 
     let config = self.config.to_config_mut();
+    assert!(
+      service_name.is_none() ||
+        config.service_profiles
+          .clone()
+          .into_iter()
+          .find(|p| p.service_name == service_name.clone().unwrap())
+          .is_some(),
+      "Service profile not found"
+    );
 
     config.default_profile = service_name;
   }
@@ -410,25 +549,43 @@ impl KycWhitelist {
   pub fn add_account(
     &mut self,
     account_id: AccountId,
-    verification_type: VerificationType,
     provider: String,
+    verification_type: VerificationType,
+    verification_level: Option<String>,
     ident_document_date_of_expiry: Option<U64>,
   ) -> bool {
-    self.check_service_profile(provider.clone());
+    assert!(
+      ident_document_date_of_expiry.is_none() ||
+        ident_document_date_of_expiry.unwrap().0 > env::block_timestamp(),
+      "The document expires in {}",
+      account_id
+    );
+
+    self.check_service_profile(
+      provider.clone(),
+      verification_type.clone(),
+      verification_level.clone()
+    );
 
     let whitelist_entry = WhitelistEntry {
       verification_date: env::block_timestamp().into(),
-      verification_type: verification_type.clone(),
       provider: provider.clone(),
+      verification_type: verification_type.clone(),
+      verification_level: verification_level.clone(),
       ident_document_date_of_expiry,
     };
     let (
       mut whitelist_entries,
       index
-    ) = self.find_whitelist_entry(account_id.clone(), verification_type, provider);
+    ) = self.find_whitelist_entry(
+      account_id.clone(),
+      provider,
+      verification_type,
+      verification_level
+    );
 
     if index.is_some() {
-      whitelist_entries.insert(index.unwrap(), whitelist_entry.into());
+      whitelist_entries[index.unwrap()] = whitelist_entry.into();
     } else {
       whitelist_entries.push(whitelist_entry.into());
     }
@@ -440,15 +597,25 @@ impl KycWhitelist {
   pub fn remove_account(
     &mut self,
     account_id: AccountId,
-    verification_type: VerificationType,
     provider: String,
+    verification_type: VerificationType,
+    verification_level: Option<String>,
   ) -> bool {
-    self.check_service_profile(provider.clone());
+    self.check_service_profile(
+      provider.clone(),
+      verification_type.clone(),
+      verification_level.clone()
+    );
 
     let (
       mut whitelist_entries,
       index
-    ) = self.find_whitelist_entry(account_id.clone(), verification_type, provider);
+    ) = self.find_whitelist_entry(
+      account_id.clone(),
+      provider,
+      verification_type,
+      verification_level
+    );
 
     if index.is_some() {
       whitelist_entries.remove(index.unwrap());
