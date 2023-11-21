@@ -633,6 +633,7 @@ impl KycWhitelist {
 #[derive(BorshStorageKey, BorshSerialize)]
 pub(crate) enum StorageKey {
   Whitelist,
+  WhitelistEntries,
 }
 
 #[cfg(not(target_arch = "wasm32"))]

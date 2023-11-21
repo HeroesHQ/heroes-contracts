@@ -14,13 +14,7 @@ impl KycWhitelist {
   pub fn migrate(config: Config, entries: Vec<(AccountId, Vec<WhitelistEntry>)>) -> Self {
     let old_state: OldKycWhitelist = env::state_read().expect("Old state doesn't exist");
     let mut new_whitelist: LookupMap<AccountId, Vec<VersionedWhitelistEntry>> =
-      LookupMap::new(StorageKey::Whitelist);
-
-    /*assert_eq!(
-      env::predecessor_account_id(),
-      old_state.admin_account,
-      "Only an administrator can perform this action"
-    );*/
+      LookupMap::new(StorageKey::WhitelistEntries);
 
     for (_, provider) in config.providers.iter().enumerate() {
       Self::validate_provider(provider, true);
