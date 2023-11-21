@@ -5,8 +5,7 @@ const { MongoClient } = require('mongodb');
 const nearAPI = require("near-api-js");
 const path = require("path");
 
-const client = new MongoClient(process.env.MONGO_URL || 'mongodb://localhost:27017');
-const databaseName = process.env.DB_NAME || "heroes";
+const client = new MongoClient(process.env.MONGO_URL || 'mongodb://localhost:27017/heroes');
 
 const credentialsPath = path.join(homedir, ".near-credentials");
 const keyStore = new nearAPI.keyStores.UnencryptedFileSystemKeyStore(
@@ -52,7 +51,7 @@ async function main () {
 
   await client.connect();
   console.log("Connected successfully to MongoDB server");
-  const db = client.db(databaseName);
+  const db = client.db();
 
   const applicants = await db
     .collection("kycapplicants")
@@ -99,8 +98,9 @@ async function main () {
         verification_date: convertDate(
           whitelistEntry.finishedAt || whitelistEntry.updatedAt || new Date()
         ),
-        verification_type: whitelistEntry.verificationType?.toUpperCase(),
         provider: whitelistEntry.provider,
+        verification_type: whitelistEntry.verificationType?.toUpperCase(),
+        verification_level: whitelistEntry.levelName,
         ident_document_date_of_expiry: null,
       });
     }
