@@ -39,7 +39,6 @@ const getNearConfig = () => {
 };
 
 const config = JSON.parse(process.env.CONTRACT_CONFIG || "{}");
-const contractAccountId = process.env.KYC_WHITELIST_CONTRACT_ID;
 
 const convertDate = (date) => {
   return String(new Date(date).getTime() * 1000000);
@@ -47,11 +46,19 @@ const convertDate = (date) => {
 
 async function main () {
   const near = await nearAPI.connect(getNearConfig());
-  const account = await near.account(contractAccountId);
 
   await client.connect();
   console.log("Connected successfully to MongoDB server");
   const db = client.db();
+
+  const heroesConfig = await db
+    .collection("configurations")
+    .find()
+    .limit(1)
+    .toArray();
+  const contractAccountId = heroesConfig?.[0]?.config?.kyc_whitelist_contract_id;
+  console.log(`Whitelist contract account: ${contractAccountId}`);
+  const account = await near.account(contractAccountId);
 
   const applicants = await db
     .collection("kycapplicants")
