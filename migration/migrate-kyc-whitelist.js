@@ -108,7 +108,12 @@ async function main () {
         provider: whitelistEntry.provider,
         verification_type: whitelistEntry.verificationType?.toUpperCase(),
         verification_level: whitelistEntry.levelName,
-        ident_document_date_of_expiry: null,
+        ident_document_date_of_expiry: whitelistEntry.provider === "fractal" &&
+            whitelistEntry.reviewResult?.details?.identification_document_date_of_expiry ?
+          convertDate(
+            whitelistEntry.reviewResult?.details?.identification_document_date_of_expiry
+          ) :
+          null,
       });
     }
     entries.push([accountId, whitelistEntries]);
