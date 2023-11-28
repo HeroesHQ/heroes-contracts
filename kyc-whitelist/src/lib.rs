@@ -1,26 +1,179 @@
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-use near_sdk::collections::LookupSet;
+use near_sdk::collections::{ LookupMap, LookupSet };
+use near_sdk::json_types::U64;
+use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, near_bindgen, AccountId, BorshStorageKey, PanicOnDefault};
+
+mod migrate;
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(crate = "near_sdk::serde")]
+pub enum VerificationType {
+  KYC,
+  KYB
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct WhitelistEntry {
+  /// KYC/KYB verification date
+  pub verification_date: U64,
+  /// Alias of the provider that performed the verification
+  pub provider: String,
+  /// Verification type: Know Your Customer or Know Your Business
+  pub verification_type: VerificationType,
+  /// Verification level
+  pub verification_level: Option<String>,
+  /// The validity period of the identity document
+  pub ident_document_date_of_expiry: Option<U64>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub enum VersionedWhitelistEntry {
+  Current(WhitelistEntry),
+}
+
+impl VersionedWhitelistEntry {
+  pub fn to_whitelist_entry(self) -> WhitelistEntry {
+    match self {
+      VersionedWhitelistEntry::Current(whitelist_entry) => whitelist_entry,
+    }
+  }
+}
+
+impl From<VersionedWhitelistEntry> for WhitelistEntry {
+  fn from(value: VersionedWhitelistEntry) -> Self {
+    match value {
+      VersionedWhitelistEntry::Current(whitelist_entry) => whitelist_entry,
+    }
+  }
+}
+
+impl From<WhitelistEntry> for VersionedWhitelistEntry {
+  fn from (value: WhitelistEntry) -> Self {
+    VersionedWhitelistEntry::Current(value)
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
+pub enum ActivationType {
+  Enabled,
+  NewChecksNotAllowed,
+  Disabled,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
+pub struct ProviderDetails {
+  pub name: String,
+  pub enabled: ActivationType,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
+pub struct ProviderVerificationType {
+  pub provider: String,
+  pub verification_type: VerificationType,
+  pub verification_level: Option<String>,
+  pub enabled: ActivationType,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct ServiceProfile {
+  pub service_name: String,
+  pub service_account: AccountId,
+  pub verification_types: Vec<ProviderVerificationType>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct Config {
+  pub providers: Vec<ProviderDetails>,
+  pub service_profiles: Vec<ServiceProfile>,
+  pub default_profile: Option<String>,
+}
+
+impl Default for Config {
+  fn default() -> Self {
+    Self {
+      providers: vec![],
+      service_profiles: vec![],
+      default_profile: None,
+    }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub enum VersionedConfig {
+  Current(Config),
+}
+
+impl VersionedConfig {
+  pub fn to_config(self) -> Config {
+    match self {
+      VersionedConfig::Current(config) => config,
+    }
+  }
+
+  pub fn to_config_mut(&mut self) -> &mut Config {
+    match self {
+      VersionedConfig::Current(config) => config,
+    }
+  }
+}
+
+impl From<VersionedConfig> for Config {
+  fn from(value: VersionedConfig) -> Self {
+    match value {
+      VersionedConfig::Current(config) => config,
+    }
+  }
+}
+
+impl From<Config> for VersionedConfig {
+  fn from(value: Config) -> Self {
+    VersionedConfig::Current(value)
+  }
+}
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
 pub struct KycWhitelist {
   /// Whitelist administrator
   pub admin_account: AccountId,
-  /// Service account
-  pub service_account: Option<AccountId>,
-  /// Whitelisted account IDs that completed KYC verification.
-  pub whitelist: LookupSet<AccountId>,
+  /// KYC/KYB verified whitelisted account details.
+  pub whitelist: LookupMap<AccountId, Vec<VersionedWhitelistEntry>>,
+  /// KYC/KYB contract configuration.
+  pub config: VersionedConfig,
 }
 
 #[near_bindgen]
 impl KycWhitelist {
   #[init]
-  pub fn new(admin_account: AccountId, service_account: Option<AccountId>) -> Self {
+  pub fn new(
+    admin_account: AccountId,
+    config: Option<Config>,
+  ) -> Self {
+    let versioned_config = if config.is_some() {
+      config.unwrap().into()
+    } else {
+      Config::default().into()
+    };
+
     Self {
       admin_account,
-      service_account,
-      whitelist: LookupSet::new(StorageKey::Whitelist),
+      whitelist: LookupMap::new(StorageKey::Whitelist),
+      config: versioned_config,
     }
   }
 
@@ -36,11 +189,173 @@ impl KycWhitelist {
     );
   }
 
-  pub(crate) fn assert_is_service_account(&self) {
-    assert_eq!(
-      self.service_account.clone().expect("The service account is not set"),
-      env::predecessor_account_id(),
-      "Predecessor is not service account"
+  pub(crate) fn find_profile_by_alias(&self, service_name: String) -> ServiceProfile {
+    let config = self.config.clone().to_config();
+    config.service_profiles
+      .into_iter()
+      .find(|p| p.service_name == service_name)
+      .expect("Service profile not found")
+  }
+
+  pub(crate) fn find_profile_by_account(&self, account_id: AccountId) -> ServiceProfile {
+    let config = self.config.clone().to_config();
+    config.service_profiles
+      .into_iter()
+      .find(|p| p.service_account == account_id)
+      .expect("Service profile not found")
+  }
+
+  pub(crate) fn find_profile_index(
+    config: &Config,
+    service_name: Option<String>,
+    service_account: Option<AccountId>,
+  ) -> usize {
+    assert_ne!(
+      service_name.is_some(),
+      service_account.is_some(),
+      "Expected either service_name or service_account"
+    );
+
+    config.service_profiles
+      .iter()
+      .position(|e|
+        if service_name.is_some() {
+          e.service_name == service_name.clone().unwrap()
+        } else {
+          e.service_account == service_account.clone().unwrap()
+        }
+      )
+      .expect("Service profile not found")
+  }
+
+  pub (crate) fn math_profile_params(
+    config: Config,
+    service_profile: ServiceProfile,
+    provider: String,
+    verification_type: VerificationType,
+    verification_level: Option<String>,
+    read_only: bool,
+  ) -> bool {
+    Self::provider_found(config, provider.clone(), read_only) &&
+      service_profile.verification_types
+        .into_iter()
+        .find(
+          |v|
+            *v.provider == provider &&
+              v.verification_type == verification_type &&
+              v.verification_level == verification_level &&
+              if read_only {
+                v.enabled != ActivationType::Disabled
+              } else {
+                v.enabled == ActivationType::Enabled
+              }
+        )
+        .is_some()
+  }
+
+  pub(crate) fn check_service_profile(
+    &self,
+    provider: String,
+    verification_type: VerificationType,
+    verification_level: Option<String>
+  ) {
+    let config = self.config.clone().to_config();
+    let service_profile = self.find_profile_by_account(env::predecessor_account_id());
+
+    assert!(
+      Self::math_profile_params(
+        config,
+        service_profile,
+        provider.clone(),
+        verification_type.clone(),
+        verification_level.clone(),
+        false
+      ),
+      "The {} provider for verifying with {:?} and {:?} is not in use now",
+      provider,
+      verification_type,
+      verification_level
+    );
+  }
+
+  pub(crate) fn get_default_profile(&self, service_name: Option<String>) -> ServiceProfile {
+    let config = self.config.clone().to_config();
+    let profile_name = service_name
+      .unwrap_or(config.default_profile.expect("Service name required"));
+    self.find_profile_by_alias(profile_name)
+  }
+
+  pub(crate) fn provider_found(config: Config, provider: String, read_only: bool) -> bool {
+    config
+      .providers
+      .into_iter()
+      .find(|p| p.name == provider &&
+        if read_only {
+          p.enabled != ActivationType::Disabled
+        } else {
+          p.enabled == ActivationType::Enabled
+        }
+      )
+      .is_some()
+  }
+
+  pub(crate) fn find_whitelist_entry(
+    &self,
+    account_id: AccountId,
+    provider: String,
+    verification_type: VerificationType,
+    verification_level: Option<String>,
+  ) -> (Vec<VersionedWhitelistEntry>, Option<usize>) {
+    let whitelist_entries = self.whitelist.get(&account_id).unwrap_or_default();
+    let index = whitelist_entries.iter().position(|e| {
+      let entry = e.clone().to_whitelist_entry();
+      entry.provider == provider &&
+        entry.verification_type == verification_type &&
+        entry.verification_level == verification_level
+    });
+    (whitelist_entries, index)
+  }
+
+  pub(crate) fn validate_service_profile(
+    service_profile: &ServiceProfile,
+    config: &Config,
+    is_new: bool
+  ) {
+    assert!(
+      !service_profile.service_name.is_empty(),
+      "The name of the service profile cannot be empty"
+    );
+    for (_, provider_verification_type) in service_profile.verification_types.iter().enumerate() {
+      assert!(
+        !is_new || provider_verification_type.enabled != ActivationType::Disabled,
+        "Profile {} has an inactive verification type",
+        service_profile.service_name
+      );
+      assert!(
+        config.providers
+          .clone()
+          .into_iter()
+          .find(
+            |p|
+              p.name == provider_verification_type.provider &&
+                p.enabled != ActivationType::Disabled)
+          .is_some(),
+        "Unknown provider {} in profile {}",
+        provider_verification_type.provider,
+        service_profile.service_name
+      );
+    }
+  }
+
+  pub(crate) fn validate_provider(provider_details: &ProviderDetails, is_new: bool) {
+    assert!(
+      !provider_details.name.is_empty(),
+      "The name of the provider cannot be empty"
+    );
+    assert!(
+      !is_new || provider_details.enabled != ActivationType::Disabled,
+      "The {} provider is inactive",
+      provider_details.name
     );
   }
 
@@ -49,23 +364,181 @@ impl KycWhitelist {
   **/
 
   /// Returns 'true' if the given account ID is whitelisted.
-  pub fn is_whitelisted(&self, account_id: AccountId) -> bool {
-    self.whitelist.contains(&account_id)
+  pub fn is_whitelisted(&self, account_id: AccountId, service_name: Option<String>) -> bool {
+    let config = self.config.clone().to_config();
+    let profile = self.get_default_profile(service_name);
+    let whitelist_entries = self.whitelist.get(&account_id).unwrap_or_default();
+    whitelist_entries
+      .into_iter()
+      .find(
+        |e| {
+          let entry = e.clone().to_whitelist_entry();
+          Self::math_profile_params(
+            config.clone(),
+            profile.clone(),
+            entry.provider,
+            entry.verification_type,
+            entry.verification_level,
+            true,
+          ) && (
+            entry.ident_document_date_of_expiry.is_none() ||
+              env::block_timestamp() < entry.ident_document_date_of_expiry.unwrap().0
+          )
+        })
+      .is_some()
   }
 
-  /// Returns the public key for the applicant's account
-  pub fn get_service_account(&self) -> Option<AccountId> {
-    self.service_account.clone()
+  /// Returns a whitelist items
+  pub fn get_whitelist_entry(
+    &self, account_id: AccountId,
+    service_name: Option<String>,
+  ) -> Vec<WhitelistEntry> {
+    let config = self.config.clone().to_config();
+    let profile = self.get_default_profile(service_name);
+    let whitelist_entries = self.whitelist.get(&account_id).unwrap_or_default();
+    whitelist_entries
+      .into_iter()
+      .filter(|e| {
+        let entry = e.clone().to_whitelist_entry();
+        Self::math_profile_params(
+          config.clone(),
+          profile.clone(),
+          entry.provider,
+          entry.verification_type,
+          entry.verification_level,
+          true,
+        )
+      })
+      .map(|e| e.into())
+      .collect()
+  }
+
+  pub fn get_config(&self) -> Config {
+    self.config.clone().into()
+  }
+
+  pub fn get_version() -> String {
+    "2.0.0".to_string()
   }
 
   /**
     Administrator
   **/
 
-  /// Update or remove service account
-  pub fn update_service_account(&mut self, service_account: Option<AccountId>) {
+  /// Create service profile
+  pub fn create_service_profile(&mut self, service_profile: ServiceProfile) {
     self.assert_is_whitelist_admin();
-    self.service_account = service_account;
+    let config = self.config.to_config_mut();
+    Self::validate_service_profile(&service_profile, &config, true);
+
+    let index = config.service_profiles
+      .iter()
+      .position(|e|
+        e.service_account == service_profile.service_account ||
+          e.service_name == service_profile.service_name
+      );
+    assert!(index.is_none(), "Profile with this account or name already exists");
+
+    config.service_profiles.push(service_profile);
+  }
+
+  /// Update service profile
+  pub fn update_service_profile(
+    &mut self,
+    service_name: Option<String>,
+    service_account: Option<AccountId>,
+    service_profile: ServiceProfile
+  ) {
+    self.assert_is_whitelist_admin();
+
+    let config = self.config.to_config_mut();
+    Self::validate_service_profile(&service_profile, &config, false);
+    let index = Self::find_profile_index(&config, service_name, service_account);
+
+    let index_of_account = config.service_profiles
+      .iter()
+      .position(|e| e.service_account == service_profile.service_account);
+    assert!(
+      index_of_account.is_none() || index_of_account.unwrap() == index,
+      "Account {} is already used in another profile",
+      service_profile.service_account
+    );
+
+    let index_of_alias = config.service_profiles
+      .iter()
+      .position(|e| e.service_name == service_profile.service_name);
+    assert!(
+      index_of_alias.is_none() || index_of_alias.unwrap() == index,
+      "Name {} is already used in another profile",
+      service_profile.service_name
+    );
+
+    config.service_profiles[index] = service_profile;
+  }
+
+  /// Remove service profile
+  pub fn remove_service_profile(
+    &mut self,
+    service_name: Option<String>,
+    service_account: Option<AccountId>
+  ) {
+    self.assert_is_whitelist_admin();
+
+    let config = self.config.to_config_mut();
+    let index = Self::find_profile_index(&config, service_name, service_account);
+
+    config.service_profiles.remove(index);
+  }
+
+  /// Insert provider
+  pub fn create_provider(&mut self, provider: ProviderDetails) {
+    self.assert_is_whitelist_admin();
+    Self::validate_provider(&provider, true);
+
+    let config = self.config.to_config_mut();
+    let index = config.providers.iter().position(|p| p.name == provider.name);
+    assert!(index.is_none(), "Provider with this name already exists");
+
+    config.providers.push(provider);
+  }
+
+  /// Update provider
+  pub fn update_provider(&mut self, name: String, provider: ProviderDetails) {
+    self.assert_is_whitelist_admin();
+    Self::validate_provider(&provider, false);
+
+    let config = self.config.to_config_mut();
+    let index = config.providers.iter().position(|p| p.name == name).expect("Provider not found");
+
+    config.providers[index] = provider;
+  }
+
+  /// Remove provider
+  pub fn remove_provider(&mut self, name: String) {
+    self.assert_is_whitelist_admin();
+
+    let config = self.config.to_config_mut();
+    let index = config.providers.iter().position(|p| p.name == name).expect("Provider not found");
+
+    config.providers.remove(index);
+  }
+
+  /// Set or unset default profile
+  pub fn set_default_profile(&mut self, service_name: Option<String>) {
+    self.assert_is_whitelist_admin();
+
+    let config = self.config.to_config_mut();
+    assert!(
+      service_name.is_none() ||
+        config.service_profiles
+          .clone()
+          .into_iter()
+          .find(|p| p.service_name == service_name.clone().unwrap())
+          .is_some(),
+      "Service profile not found"
+    );
+
+    config.default_profile = service_name;
   }
 
   /**
@@ -73,29 +546,104 @@ impl KycWhitelist {
   **/
 
   /// Adds a verified account ID to the whitelist.
-  pub fn add_account(&mut self, account_id: AccountId) -> bool {
-    self.assert_is_service_account();
-    self.whitelist.insert(&account_id)
+  pub fn add_account(
+    &mut self,
+    account_id: AccountId,
+    provider: String,
+    verification_type: VerificationType,
+    verification_level: Option<String>,
+    ident_document_date_of_expiry: Option<U64>,
+  ) -> bool {
+    assert!(
+      ident_document_date_of_expiry.is_none() ||
+        ident_document_date_of_expiry.unwrap().0 > env::block_timestamp(),
+      "The document expires in {}",
+      account_id
+    );
+
+    self.check_service_profile(
+      provider.clone(),
+      verification_type.clone(),
+      verification_level.clone()
+    );
+
+    let whitelist_entry = WhitelistEntry {
+      verification_date: env::block_timestamp().into(),
+      provider: provider.clone(),
+      verification_type: verification_type.clone(),
+      verification_level: verification_level.clone(),
+      ident_document_date_of_expiry,
+    };
+    let (
+      mut whitelist_entries,
+      index
+    ) = self.find_whitelist_entry(
+      account_id.clone(),
+      provider,
+      verification_type,
+      verification_level
+    );
+
+    if index.is_some() {
+      whitelist_entries[index.unwrap()] = whitelist_entry.into();
+    } else {
+      whitelist_entries.push(whitelist_entry.into());
+    }
+    self.whitelist.insert(&account_id, &whitelist_entries);
+    true
   }
 
   /// Removes the given account ID from the whitelist.
-  pub fn remove_account(&mut self, account_id: AccountId) -> bool {
-    self.assert_is_service_account();
-    self.whitelist.remove(&account_id)
+  pub fn remove_account(
+    &mut self,
+    account_id: AccountId,
+    provider: String,
+    verification_type: VerificationType,
+    verification_level: Option<String>,
+  ) -> bool {
+    self.check_service_profile(
+      provider.clone(),
+      verification_type.clone(),
+      verification_level.clone()
+    );
+
+    let (
+      mut whitelist_entries,
+      index
+    ) = self.find_whitelist_entry(
+      account_id.clone(),
+      provider,
+      verification_type,
+      verification_level
+    );
+
+    if index.is_some() {
+      whitelist_entries.remove(index.unwrap());
+      if whitelist_entries.is_empty() {
+        self.whitelist.remove(&account_id);
+      } else {
+        self.whitelist.insert(&account_id, &whitelist_entries);
+      }
+    }
+
+    true
   }
 }
 
 #[derive(BorshStorageKey, BorshSerialize)]
 pub(crate) enum StorageKey {
   Whitelist,
+  WhitelistEntries,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 #[cfg(test)]
 mod tests {
   use near_sdk::{AccountId, testing_env};
+  use near_sdk::json_types::U64;
   use near_sdk::test_utils::{accounts, VMContextBuilder};
-  use crate::KycWhitelist;
+  use crate::{ActivationType, KycWhitelist, ProviderDetails, ProviderVerificationType,
+              ServiceProfile, VerificationType, WhitelistEntry};
 
   fn admin_account() -> AccountId {
     accounts(0)
@@ -113,36 +661,165 @@ mod tests {
     accounts(3)
   }
 
+  fn provider() -> ProviderDetails {
+    ProviderDetails {
+      name: "fractal".to_string(),
+      enabled: ActivationType::Enabled,
+    }
+  }
+
+  fn service_profile() -> ServiceProfile {
+    ServiceProfile {
+      service_name: "heroes".to_string(),
+      service_account: service_account(),
+      verification_types: vec![
+        ProviderVerificationType {
+          provider: "fractal".to_string(),
+          verification_type: VerificationType::KYC,
+          verification_level: Some("basic+liveness+uniq".to_string()),
+          enabled: ActivationType::Enabled,
+        }
+      ],
+    }
+  }
+
+  fn modified_service_profile() -> ServiceProfile {
+    ServiceProfile {
+      service_name: "heroes".to_string(),
+      service_account: second_service_account(),
+      verification_types: vec![
+        ProviderVerificationType {
+          provider: "fractal".to_string(),
+          verification_type: VerificationType::KYC,
+          verification_level: Some("basic+liveness+uniq".to_string()),
+          enabled: ActivationType::Enabled,
+        }
+      ],
+    }
+  }
+
+  fn third_service_profile() -> ServiceProfile {
+    ServiceProfile {
+      service_name: "heroes3".to_string(),
+      service_account: service_account(),
+      verification_types: vec![
+        ProviderVerificationType {
+          provider: "fractal".to_string(),
+          verification_type: VerificationType::KYC,
+          verification_level: Some("basic+liveness".to_string()),
+          enabled: ActivationType::Enabled,
+        }
+      ],
+    }
+  }
+
+  fn default_profile() -> Option<String> {
+    Some("heroes".to_string())
+  }
+
   #[test]
   fn test_whitelist_flow() {
     let mut context = VMContextBuilder::new();
-    let mut contract = KycWhitelist::new(admin_account(), Some(service_account()));
-
-    testing_env!(context
-      .predecessor_account_id(service_account())
-      .build());
-
-    contract.add_account(user_account());
-    assert!(contract.is_whitelisted(user_account()));
-
-    contract.remove_account(user_account());
-    assert!(!contract.is_whitelisted(user_account()));
+    let mut contract = KycWhitelist::new(admin_account(), None);
 
     testing_env!(context
       .predecessor_account_id(admin_account())
       .build());
 
-    contract.update_service_account(Some(second_service_account()));
-    assert_eq!(
-      contract.get_service_account(),
-      Some(second_service_account())
-    );
+    contract.create_provider(provider());
+    assert_eq!(contract.config.clone().to_config().providers[0], provider());
 
-    contract.update_service_account(None);
-    assert_eq!(
-      contract.get_service_account(),
+    contract.create_service_profile(service_profile());
+    assert_eq!(contract.config.clone().to_config().service_profiles[0], service_profile());
+
+    contract.set_default_profile(default_profile());
+    assert_eq!(contract.config.clone().to_config().default_profile, default_profile());
+
+    testing_env!(context
+      .predecessor_account_id(service_account())
+      .build());
+
+    assert!(!contract.is_whitelisted(user_account(), default_profile()));
+    contract.add_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness+uniq".to_string()),
       None
     );
+    assert!(contract.is_whitelisted(user_account(), default_profile()));
+    assert!(contract.is_whitelisted(user_account(), None));
+    assert_eq!(
+      contract.get_whitelist_entry(user_account(), default_profile()),
+      vec![
+        WhitelistEntry {
+          verification_date: U64(0),
+          provider: "fractal".to_string(),
+          verification_type: VerificationType::KYC,
+          verification_level: Some("basic+liveness+uniq".to_string()),
+          ident_document_date_of_expiry: None,
+        }
+      ]
+    );
+
+    contract.remove_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness+uniq".to_string()),
+    );
+    assert!(!contract.is_whitelisted(user_account(), default_profile()));
+    assert!(!contract.is_whitelisted(user_account(), None));
+
+    testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    contract.update_service_profile(Some("heroes".to_string()), None, modified_service_profile());
+    assert_eq!(contract.config.clone().to_config().service_profiles[0], modified_service_profile());
+
+    contract.remove_service_profile(Some("heroes".to_string()), None);
+    assert!(contract.config.clone().to_config().service_profiles.is_empty());
+
+    contract.create_service_profile(modified_service_profile());
+    assert_eq!(contract.config.clone().to_config().service_profiles[0], modified_service_profile());
+
+    contract.update_service_profile(None, Some(second_service_account()), third_service_profile());
+    assert_eq!(contract.config.clone().to_config().service_profiles[0], third_service_profile());
+
+    contract.remove_service_profile(None, Some(service_account()));
+    assert!(contract.config.clone().to_config().service_profiles.is_empty());
+
+    contract.create_provider(ProviderDetails {
+      name: "fractal+idOS".to_string(),
+      enabled: ActivationType::NewChecksNotAllowed,
+    });
+    assert_eq!(contract.config.clone().to_config().providers.len(), 2);
+    assert_eq!(
+      contract.config.clone().to_config().providers[1],
+      ProviderDetails {
+        name: "fractal+idOS".to_string(),
+        enabled: ActivationType::NewChecksNotAllowed,
+      }
+    );
+
+    contract.update_provider("fractal+idOS".to_string(), ProviderDetails {
+      name: "fractal+idOS".to_string(),
+      enabled: ActivationType::Disabled,
+    });
+    assert_eq!(
+      contract.config.clone().to_config().providers[1],
+      ProviderDetails {
+        name: "fractal+idOS".to_string(),
+        enabled: ActivationType::Disabled,
+      }
+    );
+
+    contract.remove_provider("fractal+idOS".to_string());
+    assert_eq!(contract.config.clone().to_config().providers.len(), 1);
+
+    contract.remove_provider("fractal".to_string());
+    assert!(contract.config.clone().to_config().providers.is_empty());
   }
 
   #[test]
@@ -152,13 +829,20 @@ mod tests {
     let mut contract = KycWhitelist::new(admin_account(), None);
 
     testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    contract.create_provider(provider());
+
+    testing_env!(context
       .predecessor_account_id(service_account())
       .build());
-    contract.update_service_account(Some(service_account()));
+
+    contract.create_service_profile(service_profile());
   }
 
   #[test]
-  #[should_panic(expected = "The service account is not set")]
+  #[should_panic(expected = "Service profile not found")]
   fn test_service_account_is_not_set() {
     let mut context = VMContextBuilder::new();
     let mut contract = KycWhitelist::new(admin_account(), None);
@@ -167,19 +851,152 @@ mod tests {
       .predecessor_account_id(service_account())
       .build());
 
-    contract.add_account(user_account());
+    contract.add_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness+uniq".to_string()),
+      None
+    );
   }
 
   #[test]
-  #[should_panic(expected = "Predecessor is not service account")]
-  fn test_whitelist_user_account_using_non_service_account() {
+  #[should_panic(expected = "Service profile not found")]
+  fn test_whitelist_using_non_service_account() {
     let mut context = VMContextBuilder::new();
-    let mut contract = KycWhitelist::new(admin_account(), Some(service_account()));
+    let mut contract = KycWhitelist::new(admin_account(), None);
+
+    testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    contract.create_provider(provider());
+
+    contract.create_service_profile(service_profile());
 
     testing_env!(context
       .predecessor_account_id(user_account())
       .build());
 
-    contract.add_account(user_account());
+    contract.add_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness+uniq".to_string()),
+      None
+    );
+  }
+
+  #[test]
+  #[should_panic(expected = "Service name required")]
+  fn test_whitelist_default_service_is_not_specified() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = KycWhitelist::new(admin_account(), None);
+
+    testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    contract.create_provider(provider());
+
+    contract.create_service_profile(service_profile());
+
+    testing_env!(context
+      .predecessor_account_id(service_account())
+      .build());
+
+    contract.add_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness+uniq".to_string()),
+      None
+    );
+
+    let _result = contract.is_whitelisted(user_account(), None);
+  }
+
+  #[test]
+  #[should_panic(expected = "Unknown provider sumsub in profile heroes")]
+  fn test_use_unknown_provider() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = KycWhitelist::new(admin_account(), None);
+
+    testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    // provider: fractal
+    contract.create_provider(provider());
+
+    contract.create_service_profile(ServiceProfile {
+      service_name: "heroes".to_string(),
+      service_account: service_account(),
+      verification_types: vec![
+        ProviderVerificationType {
+          provider: "sumsub".to_string(),
+          verification_type: VerificationType::KYC,
+          verification_level: Some("basic-kyc-level".to_string()),
+          enabled: ActivationType::Enabled,
+        }
+      ],
+    });
+  }
+
+  #[test]
+  #[should_panic(expected = "Provider with this name already exists")]
+  fn test_try_create_an_already_existing_provider() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = KycWhitelist::new(admin_account(), None);
+
+    testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    contract.create_provider(provider());
+
+    contract.create_provider(provider());
+  }
+
+  #[test]
+  #[should_panic(expected = "Profile with this account or name already exists")]
+  fn test_try_create_an_already_existing_profile() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = KycWhitelist::new(admin_account(), None);
+
+    testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    contract.create_provider(provider());
+    contract.create_service_profile(service_profile());
+
+    contract.create_service_profile(service_profile());
+  }
+
+  #[test]
+  #[should_panic(expected = "The fractal provider for verifying with KYC and Some(\"basic+liveness\") is not in use now")]
+  fn test_whitelist_add_wrong_whitelist_entry() {
+    let mut context = VMContextBuilder::new();
+    let mut contract = KycWhitelist::new(admin_account(), None);
+
+    testing_env!(context
+      .predecessor_account_id(admin_account())
+      .build());
+
+    contract.create_provider(provider());
+    contract.create_service_profile(service_profile());
+
+    testing_env!(context
+      .predecessor_account_id(service_account())
+      .build());
+
+    contract.add_account(
+      user_account(),
+      "fractal".to_string(),
+      VerificationType::KYC,
+      Some("basic+liveness".to_string()),
+      None
+    );
   }
 }

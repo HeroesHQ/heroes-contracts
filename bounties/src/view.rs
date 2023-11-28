@@ -127,6 +127,6 @@ impl BountiesContract {
   }
 
   pub fn get_version() -> String {
-    "2.0.5".to_string()
+    "2.0.6".to_string()
   }
 }
