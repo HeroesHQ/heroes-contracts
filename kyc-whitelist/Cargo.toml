@@ -1,6 +1,6 @@
 [package]
 name = "kyc-whitelist"
-version = "1.0.0"
+version = "2.0.0"
 authors = ["Oleh Ivaniuk <fedencer7@gmail.com>"]
 edition = "2021"
 
