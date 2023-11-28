@@ -78,7 +78,7 @@ impl BountiesContract {
   #[init]
   pub fn new(
     admins_whitelist: Vec<AccountId>,
-    config: Option<VersionedConfig>,
+    config: Option<Config>,
     reputation_contract: Option<AccountId>,
     dispute_contract: Option<AccountId>,
     kyc_whitelist_contract: Option<AccountId>,
@@ -91,7 +91,7 @@ impl BountiesContract {
     let mut admins_whitelist_set = UnorderedSet::new(StorageKey::AdminWhitelist);
     admins_whitelist_set.extend(admins_whitelist.into_iter().map(|a| a.into()));
     let versioned_config = if config.is_some() {
-      config.unwrap()
+      config.unwrap().into()
     } else {
       Config::default().into()
     };
@@ -319,7 +319,7 @@ impl BountiesContract {
     );
 
     let sender_id = env::predecessor_account_id();
-    let (bounty, _, _) = self.check_if_allowed_to_create_claim_by_status(
+    let (bounty, _) = self.check_if_allowed_to_create_claim_by_status(
       id,
       sender_id.clone(),
       slot.clone()
@@ -359,8 +359,7 @@ impl BountiesContract {
       claims,
       claim_idx
     ) = self.check_if_allowed_to_approve_claim_by_status(id, claimer.clone());
-    assert!(claim_idx.is_some(), "No claimer found");
-    let claim = claims[claim_idx.unwrap()].clone();
+    let claim = claims[claim_idx].clone();
 
     bounty.check_access_rights();
     assert!(
@@ -744,7 +743,7 @@ impl BountiesContract {
     );
 
     bounty_claim.deadline = deadline;
-    claims.insert(claim_idx, bounty_claim);
+    claims[claim_idx] = bounty_claim;
     self.internal_save_claims(&claimer, &claims);
   }
 
@@ -811,7 +810,7 @@ impl BountiesContract {
 
     if bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks() {
       bounty_claim.set_payment_at(Some(U64::from(env::block_timestamp())));
-      claims.insert(claim_idx, bounty_claim);
+      claims[claim_idx] = bounty_claim;
       self.internal_save_claims(&claimer.clone().unwrap(), &claims);
 
     } else {
@@ -875,7 +874,7 @@ impl BountiesContract {
 
     if bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks() {
       bounty_claim.set_payment_confirmed_at(Some(U64::from(env::block_timestamp())));
-      claims.insert(claim_idx, bounty_claim.clone());
+      claims[claim_idx] = bounty_claim.clone();
       self.internal_save_claims(&sender_id, &claims);
 
       if bounty.is_different_tasks() {

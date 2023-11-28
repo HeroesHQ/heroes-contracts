@@ -438,12 +438,7 @@ impl BountiesContract {
     id: BountyIndex,
     claims: &[BountyClaim]
   ) -> Option<usize> {
-    for i in 0..claims.len() {
-      if claims[i].bounty_id == id {
-        return Some(i);
-      }
-    }
-    None
+    claims.iter().position(|c| c.bounty_id == id)
   }
 
   pub(crate) fn internal_add_claim(
@@ -453,7 +448,7 @@ impl BountiesContract {
   ) {
     let claim_idx = Self::internal_find_claim(id, claims);
     if claim_idx.is_some() {
-      claims.insert(claim_idx.unwrap(), new_claim);
+      claims[claim_idx.unwrap()] = new_claim;
     } else {
       claims.push(new_claim);
     }
@@ -1621,7 +1616,7 @@ impl BountiesContract {
     proposal_id: Option<U64>,
     slot: Option<usize>,
   ) {
-    let (mut bounty, mut claims, _) = self.check_if_allowed_to_create_claim_by_status(
+    let (mut bounty, mut claims) = self.check_if_allowed_to_create_claim_by_status(
       id,
       claimer.clone(),
       slot.clone(),
@@ -1673,7 +1668,7 @@ impl BountiesContract {
     id: BountyIndex,
     claimer: AccountId,
     slot: Option<usize>,
-  ) -> (Bounty, Vec<BountyClaim>, Option<usize>) {
+  ) -> (Bounty, Vec<BountyClaim>) {
     let bounty = self.get_bounty(id.clone());
     let bounty_statuses: Vec<BountyStatus>;
     let claim_statuses: Vec<ClaimStatus>;
@@ -1743,7 +1738,7 @@ impl BountiesContract {
       }
     }
 
-    let (_, claims, index) = self.internal_get_and_check_bounty_and_claim(
+    let (_, claims, _) = self.internal_get_and_check_bounty_and_claim(
       id.clone(),
       claimer.clone(),
       bounty_statuses,
@@ -1760,14 +1755,14 @@ impl BountiesContract {
       );
     }
 
-    (bounty, claims, index)
+    (bounty, claims)
   }
 
   pub(crate) fn check_if_allowed_to_approve_claim_by_status(
     &self,
     id: BountyIndex,
     claimer: AccountId,
-  ) -> (Bounty, Vec<BountyClaim>, Option<usize>) {
+  ) -> (Bounty, Vec<BountyClaim>, usize) {
     let bounty = self.get_bounty(id.clone());
     let bounty_statuses: Vec<BountyStatus>;
 
@@ -1800,18 +1795,19 @@ impl BountiesContract {
       "Bounty status does not allow to make a decision on a claim",
       "Claim status does not allow a decision to be made"
     );
+    let claim_idx = index.unwrap();
 
     if bounty.multitasking.is_some() {
       assert!(
         bounty.multitasking
           .clone()
           .unwrap()
-          .is_allowed_to_create_or_approve_claims(claims[index.unwrap()].slot.clone()),
+          .is_allowed_to_create_or_approve_claims(claims[claim_idx].slot.clone()),
         "It is no longer possible to create new claims"
       );
     }
 
-    (bounty, claims, index)
+    (bounty, claims, claim_idx)
   }
 
   pub(crate) fn check_if_claimer_in_kyc_whitelist(
@@ -1879,10 +1875,9 @@ impl BountiesContract {
     let (
       mut bounty,
       mut claims,
-      index
+      claim_idx
     ) = self.check_if_allowed_to_approve_claim_by_status(id, claimer.clone());
 
-    let claim_idx = index.unwrap();
     let mut bounty_claim = claims[claim_idx].clone();
     let result = if approve {
       self.internal_claimer_approval(id, &mut bounty, &mut bounty_claim, &claimer, is_kyc_delayed);
@@ -1892,7 +1887,7 @@ impl BountiesContract {
       self.internal_return_bonds(&claimer, bounty_claim.bond)
     };
 
-    claims.insert(claim_idx, bounty_claim);
+    claims[claim_idx] = bounty_claim;
     self.internal_save_claims(&claimer, &claims);
     result
   }
@@ -2065,6 +2060,9 @@ impl BountiesContract {
 
     let claims = self.get_bounty_claims(claimer.clone());
     let index = Self::internal_find_claim(id, &claims);
+
+    assert!(no_claim_found || index.is_some(), "No bounty claim found");
+
     let claim_found = index.is_some() &&
       claim_statuses
         .into_iter()

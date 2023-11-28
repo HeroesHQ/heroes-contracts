@@ -8,8 +8,7 @@ use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
                DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Multitasking, Postpaid,
-               ReferenceType, Reviewers, ReviewersParams, TokenDetails, ValidatorsDaoParams,
-               VersionedConfig};
+               ReferenceType, Reviewers, ReviewersParams, TokenDetails, ValidatorsDaoParams};
 use disputes::{Dispute, Proposal};
 use kyc_whitelist::{ActivationType, Config, VerificationType};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
@@ -283,7 +282,7 @@ impl Env {
       .call("new")
       .args_json(json!({
         "admins_whitelist": vec![bounties_contract_admin.id()],
-        "config": VersionedConfig::from(bounties_config),
+        "config": bounties_config,
         "reputation_contract": reputation_contract.id(),
         "dispute_contract": dispute_contract.id(),
         "kyc_whitelist_contract": kyc_whitelist_contract.id(),
