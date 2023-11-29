@@ -14,6 +14,7 @@ pub mod internal;
 pub mod receiver;
 pub mod types;
 pub mod view;
+mod upgrade;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -39,6 +40,9 @@ pub struct BountiesContract {
   /// Amount of $NEAR locked for bonds.
   pub locked_amount: Balance,
 
+  /// Amount of non-refunded bonds.
+  pub unlocked_amount: Balance,
+
   /// account ids that can perform all actions:
   /// - manage admins_whitelist
   /// - add new ft-token types
@@ -58,10 +62,8 @@ pub struct BountiesContract {
   /// KYC whitelist contract (optional)
   pub kyc_whitelist_contract: Option<AccountId>,
 
-  /// Whitelist accounts that can generate postpaid bounties.
-  /// A map whose keys are whitelist members, the values of map elements are not used
-  /// (deprecated part of the old structure)
-  pub owners_whitelist: LookupMap<AccountId, Vec<AccountId>>,
+  /// Whitelist accounts that can generate postpaid bounties
+  pub owners_whitelist: UnorderedSet<AccountId>,
 
   /// Total platform fees map per token ID
   pub total_fees: LookupMap<AccountId, FeeStats>,
@@ -104,12 +106,13 @@ impl BountiesContract {
       bounty_claimers: LookupMap::new(StorageKey::BountyClaimers),
       bounty_claimer_accounts: LookupMap::new(StorageKey::BountyClaimerAccounts),
       locked_amount: 0,
+      unlocked_amount: 0,
       admins_whitelist: admins_whitelist_set,
       config: versioned_config,
       reputation_contract,
       dispute_contract,
       kyc_whitelist_contract,
-      owners_whitelist: LookupMap::new(StorageKey::OwnersWhitelist),
+      owners_whitelist: UnorderedSet::new(StorageKey::OwnersWhitelist),
       total_fees: LookupMap::new(StorageKey::TotalFees),
       total_validators_dao_fees: LookupMap::new(StorageKey::TotalValidatorsDaoFees),
       recipient_of_platform_fee,
@@ -170,7 +173,7 @@ impl BountiesContract {
       vec![account_id.expect("Expected either account_id or account_ids")]
     };
     for account_id in &account_ids {
-      self.owners_whitelist.insert(account_id, &vec![]);
+      self.owners_whitelist.insert(account_id);
     }
   }
 
@@ -1125,6 +1128,24 @@ impl BountiesContract {
         true
       )
     }
+  }
+
+  #[payable]
+  pub fn withdraw_non_refunded_bonds(&mut self) -> Promise {
+    assert_one_yocto();
+    let receiver_id = env::predecessor_account_id();
+
+    assert_eq!(
+      self.recipient_of_platform_fee
+        .clone().expect("The recipient of the non-refundable bonds is not specified"),
+      receiver_id,
+      "This account does not have permission to perform this action"
+    );
+    assert!(self.unlocked_amount > 0, "The amount of non-refunded bonds is now zero");
+
+    let amount = self.unlocked_amount;
+    self.unlocked_amount = 0;
+    Promise::new(receiver_id).transfer(amount)
   }
 }
 
