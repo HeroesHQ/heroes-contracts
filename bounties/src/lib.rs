@@ -1779,6 +1779,8 @@ mod tests {
     let id = add_bounty(&mut contract, &accounts(1), None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
+    assert_eq!(contract.unlocked_amount, 0);
 
     testing_env!(context
       .predecessor_account_id(claimer.clone())
@@ -1791,6 +1793,8 @@ mod tests {
       ClaimStatus::Expired
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::New);
+    assert_eq!(contract.locked_amount, 0);
+    assert_eq!(contract.unlocked_amount, Config::default().bounty_claim_bond.0);
   }
 
   #[test]
@@ -1808,6 +1812,8 @@ mod tests {
     let id = add_bounty(&mut contract, &accounts(1), None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
+    assert_eq!(contract.unlocked_amount, 0);
 
     let bounty_forgiveness_period = Config::default().bounty_forgiveness_period.0;
     bounty_give_up(
@@ -1823,8 +1829,11 @@ mod tests {
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::New);
     assert_eq!(contract.locked_amount, 0);
+    assert_eq!(contract.unlocked_amount, 0);
 
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
+    assert_eq!(contract.unlocked_amount, 0);
 
     bounty_give_up(
       &mut context,
@@ -1838,7 +1847,8 @@ mod tests {
       ClaimStatus::Canceled
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::New);
-    assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
+    assert_eq!(contract.locked_amount, 0);
+    assert_eq!(contract.unlocked_amount, Config::default().bounty_claim_bond.0);
   }
 
   #[test]
