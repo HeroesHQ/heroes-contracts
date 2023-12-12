@@ -134,7 +134,11 @@ impl BountiesContract {
       .unwrap_or_default()
   }
 
+  pub fn get_status(&self) -> ContractStatus {
+    self.status.clone()
+  }
+
   pub fn get_version() -> String {
-    "2.0.6".to_string()
+    "2.0.7".to_string()
   }
 }

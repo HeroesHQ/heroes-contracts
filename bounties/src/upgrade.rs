@@ -44,6 +44,7 @@ impl BountiesContract {
       total_fees: old_state.total_fees,
       total_validators_dao_fees: old_state.total_validators_dao_fees,
       recipient_of_platform_fee: old_state.recipient_of_platform_fee,
+      status: ContractStatus::Genesis,
     }
   }
 }

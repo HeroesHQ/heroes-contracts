@@ -2295,4 +2295,11 @@ impl BountiesContract {
       env::panic_str("This bounty claim is not subject to finalization");
     }
   }
+
+  pub(crate) fn assert_live(&self) {
+    assert!(
+      matches!(self.status, ContractStatus::Live),
+      "The contract status is not Live"
+    );
+  }
 }
