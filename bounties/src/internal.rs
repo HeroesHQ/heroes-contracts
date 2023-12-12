@@ -524,6 +524,14 @@ impl BountiesContract {
     }
   }
 
+  pub(crate) fn internal_unlock_non_refunded_bond(&mut self, bond: Option<U128>) {
+    let bond = bond.unwrap_or(DEFAULT_BOUNTY_CLAIM_BOND);
+    if bond.0 != 0 {
+      self.locked_amount -= bond.0;
+      self.unlocked_amount += bond.0;
+    }
+  }
+
   pub(crate) fn internal_reset_bounty_to_initial_state(
     &mut self,
     id: BountyIndex,
@@ -625,6 +633,7 @@ impl BountiesContract {
     if return_bond {
       self.internal_return_bonds(receiver_id, claims[claim_idx].bond)
     } else {
+      self.internal_unlock_non_refunded_bond(claims[claim_idx].bond);
       PromiseOrValue::Value(())
     }
   }
@@ -2285,5 +2294,12 @@ impl BountiesContract {
     else {
       env::panic_str("This bounty claim is not subject to finalization");
     }
+  }
+
+  pub(crate) fn assert_live(&self) {
+    assert!(
+      matches!(self.status, ContractStatus::Live),
+      "The contract status is not Live"
+    );
   }
 }

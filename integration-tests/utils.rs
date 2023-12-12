@@ -142,6 +142,7 @@ impl Env {
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
+    Self::set_live_status(&bounties).await?;
     Self::register_user(&test_token, bounties.id()).await?;
     Self::add_token(&test_token, &bounties, &bounties_contract_admin).await?;
 
@@ -292,6 +293,7 @@ impl Env {
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
+    Self::set_live_status(&disputed_bounties).await?;
     Self::register_user(&test_token, disputed_bounties.id()).await?;
     Self::register_user(&test_token, bounties_contract_admin.id()).await?;
     Self::register_user(&test_token, validators_dao.id()).await?;
@@ -1203,6 +1205,17 @@ impl Env {
       .transact()
       .await?;
     Self::assert_contract_call_result(res, expected_msg).await?;
+    Ok(())
+  }
+
+  pub async fn set_live_status(bounties: &Contract) -> anyhow::Result<()> {
+    let res = bounties
+      .call("set_status")
+      .args_json(json!({ "status": "Live" }))
+      .max_gas()
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
     Ok(())
   }
 }

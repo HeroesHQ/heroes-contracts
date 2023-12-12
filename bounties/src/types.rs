@@ -120,6 +120,15 @@ pub enum BountyStatus {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum ContractStatus {
+  Genesis,
+  Live,
+  ReadOnly,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum Deadline {
   DueDate { due_date: U64 },
   MaxDeadline { max_deadline: U64 },

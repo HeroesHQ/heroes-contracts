@@ -15,6 +15,7 @@ impl FungibleTokenReceiver for BountiesContract {
     amount: U128,
     msg: String,
   ) -> PromiseOrValue<U128> {
+    self.assert_live();
     let token_id = &env::predecessor_account_id();
     self.assert_that_token_is_allowed(token_id);
 
