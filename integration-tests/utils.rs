@@ -1,6 +1,6 @@
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::Deserialize;
-use near_sdk::ONE_YOCTO;
+use near_sdk::{Balance, ONE_NEAR, ONE_YOCTO};
 use near_units::parse_near;
 use serde_json::{json, Value};
 use workspaces::{Account, AccountId, Contract, Worker};
@@ -31,6 +31,8 @@ pub const PLATFORM_FEE: U128 = U128(11 * 10u128.pow(16)); // 0.11 TFT
 pub const DAO_FEE: U128 = U128(11 * 10u128.pow(16)); // 0.11 TFT
 pub const MIN_AMOUNT_FOR_KYC: U128 = U128(2 * 10u128.pow(18)); // 2 TFT
 pub const MAX_DEADLINE: U64 = U64(604_800_000_000_000);
+pub const BOND: Balance = ONE_NEAR;
+pub const MAX_GAS: Balance = 3 * 10u128.pow(22); // 300 Tgas
 
 pub struct Env {
   pub worker: Worker<Sandbox>,
@@ -277,7 +279,8 @@ impl Env {
     Self::assert_contract_call_result(res, None).await?;
 
     let mut bounties_config = bounties::Config::default();
-    bounties_config.period_for_opening_dispute = U64(1_000_000_000 * 60 * 10); // 5 min
+    bounties_config.period_for_opening_dispute = U64(1_000_000_000 * 60 * 10); // 10 min
+    bounties_config.bounty_forgiveness_period = U64(1_000_000_000 * 60 * 10); // 10 min
 
     res = disputed_bounties
       .call("new")
@@ -418,14 +421,14 @@ impl Env {
     &self,
     bounties: &Contract,
     bounty_id: u64,
+    claimer_id: Option<&AccountId>,
     claim_status: ClaimStatus,
     bounty_status: BountyStatus,
   ) -> anyhow::Result<(BountyClaim, Bounty)> {
     let bounty_claims = Self::get_bounty_claims_by_id(bounties, bounty_id).await?;
-    assert_eq!(bounty_claims.len(), 1);
-    assert_eq!(bounty_claims[0].0.to_string(), self.freelancer.id().to_string());
-    let bounty_claim = bounty_claims[0].clone().1;
-    assert_eq!(bounty_claim.bounty_id, bounty_id);
+    let freelancer = claimer_id.unwrap_or(self.freelancer.id());
+    let claim_idx = bounty_claims.iter().position(|c| c.0.to_string() == freelancer.to_string());
+    let bounty_claim = bounty_claims[claim_idx.expect("No claim found")].clone().1;
     assert_eq!(bounty_claim.status, claim_status);
     let bounty = get_bounty(bounties, bounty_id).await?;
     assert_eq!(bounty.status, bounty_status);
@@ -1213,6 +1216,41 @@ impl Env {
       .call("set_status")
       .args_json(json!({ "status": "Live" }))
       .max_gas()
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub fn assert_almost_eq_with_max_delta(left: Balance, right: Balance, max_delta: Balance) {
+    assert!(
+      std::cmp::max(left, right) - std::cmp::min(left, right) <= max_delta,
+      "{}",
+      format!(
+        "Left {} is not even close to Right {} within delta {}",
+        left, right, max_delta
+      )
+    );
+  }
+
+  pub fn assert_eq_with_gas(left: Balance, right: Balance) {
+    Self::assert_almost_eq_with_max_delta(left, right, MAX_GAS);
+  }
+
+  pub async fn get_non_refunded_bonds_amount(bounties: &Contract) -> anyhow::Result<U128> {
+    let unlocked_amount = bounties
+      .call("get_non_refunded_bonds_amount")
+      .view()
+      .await?
+      .json()?;
+    Ok(unlocked_amount)
+  }
+
+  pub async fn withdraw_non_refunded_bonds(&self, bounties: &Contract) -> anyhow::Result<()> {
+    let res = self.bounties_contract_admin
+      .call(bounties.id(), "withdraw_non_refunded_bonds")
+      .max_gas()
+      .deposit(ONE_YOCTO)
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
