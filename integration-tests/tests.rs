@@ -42,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
   test_competition_flow(&e).await?;
   test_one_bounty_for_many(&e).await?;
   test_different_tasks_flow(&e).await?;
+  test_withdraw_non_refunded_bonds(&e).await?;
   Ok(())
 }
 
@@ -142,6 +143,7 @@ async fn test_bounty_claim(e: &Env) -> anyhow::Result<()> {
   let (bounty_claim, _) = e.assert_statuses(
     &e.bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::InProgress,
     BountyStatus::Claimed
   ).await?;
@@ -165,6 +167,7 @@ async fn test_claim_done(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Completed,
     BountyStatus::Claimed
   ).await?;
@@ -189,6 +192,7 @@ async fn test_claim_result_approve_by_validators_dao(e: &Env) -> anyhow::Result<
   e.assert_statuses(
     &e.bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Approved,
     BountyStatus::Completed,
   ).await?;
@@ -237,6 +241,7 @@ async fn test_claimer_give_up(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Canceled,
     BountyStatus::New,
   ).await?;
@@ -271,6 +276,7 @@ async fn test_claim_result_reject_by_project_owner(e: &Env) -> anyhow::Result<()
   e.assert_statuses(
     &e.bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::NotCompleted,
     BountyStatus::New,
   ).await?;
@@ -308,6 +314,7 @@ async fn test_claim_result_approve_by_project_owner(e: &Env) -> anyhow::Result<(
   e.assert_statuses(
     &e.bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Approved,
     BountyStatus::Completed,
   ).await?;
@@ -381,6 +388,7 @@ async fn test_claim_result_reject_by_validators_dao(e: &Env) -> anyhow::Result<(
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Completed,
     BountyStatus::Claimed,
   ).await?;
@@ -396,11 +404,12 @@ async fn test_claim_result_reject_by_validators_dao(e: &Env) -> anyhow::Result<(
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Rejected,
     BountyStatus::Claimed,
   ).await?;
 
-  // Period for opening a dispute: 5 min, wait for 500 blocks
+  // Period for opening a dispute: 10 min, wait for 500 blocks
   e.worker.fast_forward(500).await?;
   Env::bounty_action_by_user(
     &e.disputed_bounties,
@@ -413,6 +422,7 @@ async fn test_claim_result_reject_by_validators_dao(e: &Env) -> anyhow::Result<(
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::NotCompleted,
     BountyStatus::New,
   ).await?;
@@ -448,6 +458,7 @@ async fn test_bounty_claim_deadline_has_expired(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Canceled,
     BountyStatus::New,
   ).await?;
@@ -476,6 +487,7 @@ async fn test_bounty_claim_deadline_has_expired(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::InProgress,
     BountyStatus::Claimed,
   ).await?;
@@ -492,6 +504,7 @@ async fn test_bounty_claim_deadline_has_expired(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Expired,
     BountyStatus::New,
   ).await?;
@@ -549,6 +562,7 @@ async fn test_open_dispute_and_reject_by_dispute_dao(e: &Env) -> anyhow::Result<
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Disputed,
     BountyStatus::Claimed,
   ).await?;
@@ -575,7 +589,7 @@ async fn test_open_dispute_and_reject_by_dispute_dao(e: &Env) -> anyhow::Result<
     "Claimer's arguments".to_string()
   ).await?;
 
-  // Argument period: 5 min, wait for 500 blocks
+  // Argument period: 10 min, wait for 500 blocks
   e.worker.fast_forward(500).await?;
 
   e.escalation(
@@ -607,6 +621,7 @@ async fn test_open_dispute_and_reject_by_dispute_dao(e: &Env) -> anyhow::Result<
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::NotCompleted,
     BountyStatus::New,
   ).await?;
@@ -662,6 +677,7 @@ async fn test_cancel_dispute_by_claimer(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Rejected,
     BountyStatus::Claimed,
   ).await?;
@@ -679,6 +695,7 @@ async fn test_cancel_dispute_by_claimer(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::NotCompleted,
     BountyStatus::New,
   ).await?;
@@ -736,6 +753,7 @@ async fn test_cancel_dispute_by_project_owner(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Rejected,
     BountyStatus::Claimed,
   ).await?;
@@ -753,6 +771,7 @@ async fn test_cancel_dispute_by_project_owner(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Approved,
     BountyStatus::Completed,
   ).await?;
@@ -844,7 +863,7 @@ async fn test_open_dispute_and_approve_by_dispute_dao(e: &Env) -> anyhow::Result
   let dispute = e.get_dispute(dispute_id).await?;
   assert_eq!(dispute.status, DisputeStatus::New);
 
-  // Argument period: 5 min, wait for 500 blocks
+  // Argument period: 10 min, wait for 500 blocks
   e.worker.fast_forward(500).await?;
 
   e.escalation(
@@ -865,6 +884,7 @@ async fn test_open_dispute_and_approve_by_dispute_dao(e: &Env) -> anyhow::Result
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Approved,
     BountyStatus::Completed,
   ).await?;
@@ -947,6 +967,7 @@ async fn test_statistics_for_bounty_claim_approval(e: &Env) -> anyhow::Result<()
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Approved,
     BountyStatus::Completed,
   ).await?;
@@ -1321,6 +1342,7 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::New,
     BountyStatus::New
   ).await?;
@@ -1343,6 +1365,7 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::InProgress,
     BountyStatus::Claimed
   ).await?;
@@ -1358,6 +1381,7 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Completed,
     BountyStatus::Claimed
   ).await?;
@@ -1380,6 +1404,7 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Approved,
     BountyStatus::Completed
   ).await?;
@@ -1432,6 +1457,7 @@ async fn test_bounty_cancel(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::New,
     BountyStatus::New,
   ).await?;
@@ -1447,6 +1473,7 @@ async fn test_bounty_cancel(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::New,
     BountyStatus::Canceled,
   ).await?;
@@ -1462,6 +1489,7 @@ async fn test_bounty_cancel(e: &Env) -> anyhow::Result<()> {
   e.assert_statuses(
     &e.disputed_bounties,
     bounty_id.clone(),
+    None,
     ClaimStatus::Canceled,
     BountyStatus::Canceled,
   ).await?;
@@ -2927,7 +2955,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
   assert_eq!(bounty_claims[0].1.status, ClaimStatus::Rejected);
   assert_eq!(bounty_claims[1].1.status, ClaimStatus::Canceled);
 
-  // Period for opening a dispute: 5 min, wait for 500 blocks
+  // Period for opening a dispute: 10 min, wait for 500 blocks
   e.worker.fast_forward(500).await?;
   Env::bounty_action_by_user(
     &e.disputed_bounties,
@@ -3454,7 +3482,7 @@ async fn test_different_tasks_flow(e: &Env) -> anyhow::Result<()> {
   assert_eq!(bounty_claims[0].1.status, ClaimStatus::Rejected);
   assert_eq!(bounty_claims[1].1.status, ClaimStatus::Canceled);
 
-  // Period for opening a dispute: 5 min, wait for 500 blocks
+  // Period for opening a dispute: 10 min, wait for 500 blocks
   e.worker.fast_forward(500).await?;
   Env::bounty_action_by_user(
     &e.disputed_bounties,
@@ -3515,7 +3543,7 @@ async fn test_different_tasks_flow(e: &Env) -> anyhow::Result<()> {
   let dispute = e.get_dispute(dispute_id).await?;
   assert_eq!(dispute.status, DisputeStatus::New);
 
-  // Argument period: 5 min, wait for 500 blocks
+  // Argument period: 10 min, wait for 500 blocks
   e.worker.fast_forward(500).await?;
 
   e.escalation(
@@ -3723,5 +3751,197 @@ async fn test_different_tasks_flow(e: &Env) -> anyhow::Result<()> {
   assert_eq!(bounty_claims[1].1.status, ClaimStatus::Approved);
 
   println!("      Passed ✅ Test - different tasks flow");
+  Ok(())
+}
+
+async fn test_withdraw_non_refunded_bonds(e: &Env) -> anyhow::Result<()> {
+  let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
+  let contract_balance = e.disputed_bounties.view_account().await?.balance;
+
+  e.add_bounty(
+    &e.disputed_bounties,
+    json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
+    json!("WithoutApproval"),
+    None, None, None, None, None, None,
+  ).await?;
+  let bounty_id = last_bounty_id;
+
+  assert_eq!(Env::get_non_refunded_bonds_amount(&e.disputed_bounties).await?.0, 0);
+
+  let freelancer = e.add_account("freelancer45").await?;
+  Env::register_user(&e.test_token, freelancer.id()).await?;
+  let freelancer1_balance = freelancer.view_account().await?.balance;
+
+  e.bounty_claim(
+    &e.disputed_bounties,
+    bounty_id,
+    U64(1_000_000_000 * 60 * 60 * 24 * 2),
+    "Test claim".to_string(),
+    None,
+    Some(&freelancer),
+    None
+  ).await?;
+
+  e.assert_statuses(
+    &e.disputed_bounties,
+    bounty_id.clone(),
+    Some(&freelancer.id()),
+    ClaimStatus::InProgress,
+    BountyStatus::Claimed,
+  ).await?;
+
+  Env::assert_eq_with_gas(
+    contract_balance + BOND,
+    e.disputed_bounties.view_account().await?.balance
+  );
+  Env::assert_eq_with_gas(
+    freelancer1_balance - BOND,
+    freelancer.view_account().await?.balance
+  );
+
+  e.bounty_give_up(&e.disputed_bounties, bounty_id, Some(&freelancer)).await?;
+
+  e.assert_statuses(
+    &e.disputed_bounties,
+    bounty_id.clone(),
+    Some(&freelancer.id()),
+    ClaimStatus::Canceled,
+    BountyStatus::New,
+  ).await?;
+
+  // The bond is returned to the claimant 1
+  Env::assert_eq_with_gas(
+    contract_balance,
+    e.disputed_bounties.view_account().await?.balance
+  );
+  Env::assert_eq_with_gas(
+    freelancer1_balance,
+    freelancer.view_account().await?.balance
+  );
+
+  let freelancer2 = e.add_account("freelancer46").await?;
+  Env::register_user(&e.test_token, freelancer2.id()).await?;
+  let freelancer2_balance = freelancer2.view_account().await?.balance;
+  e.bounty_claim(
+    &e.disputed_bounties,
+    bounty_id,
+    U64(1_000_000_000 * 60 * 60 * 24 * 2),
+    "Test claim".to_string(),
+    None,
+    Some(&freelancer2),
+    None
+  ).await?;
+
+  e.assert_statuses(
+    &e.disputed_bounties,
+    bounty_id.clone(),
+    Some(&freelancer2.id()),
+    ClaimStatus::InProgress,
+    BountyStatus::Claimed,
+  ).await?;
+
+  Env::assert_eq_with_gas(
+    contract_balance + BOND,
+    e.disputed_bounties.view_account().await?.balance
+  );
+  Env::assert_eq_with_gas(
+    freelancer2_balance - BOND,
+    freelancer2.view_account().await?.balance
+  );
+
+  // Forgiveness period: 10 min, wait for 500 blocks
+  e.worker.fast_forward(500).await?;
+  e.bounty_give_up(&e.disputed_bounties, bounty_id, Some(&freelancer2)).await?;
+
+  e.assert_statuses(
+    &e.disputed_bounties,
+    bounty_id.clone(),
+    Some(&freelancer2.id()),
+    ClaimStatus::Canceled,
+    BountyStatus::New,
+  ).await?;
+
+  // The bond has not been returned to the claimant 2
+  Env::assert_eq_with_gas(
+    contract_balance + BOND,
+    e.disputed_bounties.view_account().await?.balance
+  );
+  Env::assert_eq_with_gas(
+    freelancer2_balance - BOND,
+    freelancer2.view_account().await?.balance
+  );
+
+  let freelancer3 = e.add_account("freelancer47").await?;
+  Env::register_user(&e.test_token, freelancer3.id()).await?;
+  let freelancer3_balance = freelancer3.view_account().await?.balance;
+  // Deadline 2 min
+  e.bounty_claim(
+    &e.disputed_bounties,
+    bounty_id,
+    U64(1_000_000_000 * 60 * 2),
+    "Test claim".to_string(),
+    None,
+    Some(&freelancer3),
+    None
+  ).await?;
+
+  e.assert_statuses(
+    &e.disputed_bounties,
+    bounty_id.clone(),
+    Some(&freelancer3.id()),
+    ClaimStatus::InProgress,
+    BountyStatus::Claimed,
+  ).await?;
+
+  Env::assert_eq_with_gas(
+    contract_balance + 2 * BOND,
+    e.disputed_bounties.view_account().await?.balance
+  );
+  Env::assert_eq_with_gas(
+    freelancer3_balance - BOND,
+    freelancer3.view_account().await?.balance
+  );
+
+  // Wait for 200 blocks
+  e.worker.fast_forward(200).await?;
+  Env::bounty_action_by_user(
+    &e.disputed_bounties, bounty_id,
+    &e.project_owner,
+    &BountyAction::Finalize { receiver_id: None },
+    None,
+  ).await?;
+
+  e.assert_statuses(
+    &e.disputed_bounties,
+    bounty_id.clone(),
+    Some(&freelancer3.id()),
+    ClaimStatus::Expired,
+    BountyStatus::New,
+  ).await?;
+
+  // The bond has not been returned to the claimant 3
+  Env::assert_eq_with_gas(
+    contract_balance + 2 * BOND,
+    e.disputed_bounties.view_account().await?.balance
+  );
+  Env::assert_eq_with_gas(
+    freelancer3_balance - BOND,
+    freelancer3.view_account().await?.balance
+  );
+
+  let available_bonds = Env::get_non_refunded_bonds_amount(&e.disputed_bounties).await?.0;
+  assert_eq!(available_bonds, 2 * BOND);
+  let bond_receiver_balance = e.bounties_contract_admin.view_account().await?.balance;
+
+  // Withdrawal of unreturned bonds
+  e.withdraw_non_refunded_bonds(&e.disputed_bounties).await?;
+
+  assert_eq!(Env::get_non_refunded_bonds_amount(&e.disputed_bounties).await?.0, 0);
+  Env::assert_eq_with_gas(
+    bond_receiver_balance + 2 * BOND,
+    e.bounties_contract_admin.view_account().await?.balance
+  );
+
+  println!("      Passed ✅ Test - withdraw non refunded bonds");
   Ok(())
 }
