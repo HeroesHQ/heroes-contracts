@@ -3757,6 +3757,8 @@ async fn test_different_tasks_flow(e: &Env) -> anyhow::Result<()> {
 async fn test_withdraw_non_refunded_bonds(e: &Env) -> anyhow::Result<()> {
   let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   let contract_balance = e.disputed_bounties.view_account().await?.balance;
+  let available_bonds = Env::get_non_refunded_bonds_amount(&e.disputed_bounties).await?.0;
+  let bond_receiver_balance = e.bounties_contract_admin.view_account().await?.balance;
 
   e.add_bounty(
     &e.disputed_bounties,
@@ -3765,8 +3767,6 @@ async fn test_withdraw_non_refunded_bonds(e: &Env) -> anyhow::Result<()> {
     None, None, None, None, None, None,
   ).await?;
   let bounty_id = last_bounty_id;
-
-  assert_eq!(Env::get_non_refunded_bonds_amount(&e.disputed_bounties).await?.0, 0);
 
   let freelancer = e.add_account("freelancer45").await?;
   Env::register_user(&e.test_token, freelancer.id()).await?;
@@ -3929,16 +3929,20 @@ async fn test_withdraw_non_refunded_bonds(e: &Env) -> anyhow::Result<()> {
     freelancer3.view_account().await?.balance
   );
 
-  let available_bonds = Env::get_non_refunded_bonds_amount(&e.disputed_bounties).await?.0;
-  assert_eq!(available_bonds, 2 * BOND);
-  let bond_receiver_balance = e.bounties_contract_admin.view_account().await?.balance;
+  assert_eq!(
+    available_bonds + 2 * BOND,
+    Env::get_non_refunded_bonds_amount(&e.disputed_bounties).await?.0
+  );
 
   // Withdrawal of unreturned bonds
   e.withdraw_non_refunded_bonds(&e.disputed_bounties).await?;
 
-  assert_eq!(Env::get_non_refunded_bonds_amount(&e.disputed_bounties).await?.0, 0);
+  assert_eq!(
+    0,
+    Env::get_non_refunded_bonds_amount(&e.disputed_bounties).await?.0
+  );
   Env::assert_eq_with_gas(
-    bond_receiver_balance + 2 * BOND,
+    bond_receiver_balance + available_bonds + 2 * BOND,
     e.bounties_contract_admin.view_account().await?.balance
   );
 
