@@ -8,7 +8,8 @@ use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
                DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Multitasking, Postpaid,
-               ReferenceType, Reviewers, ReviewersParams, TokenDetails, ValidatorsDaoParams};
+               ReferenceType, Reviewers, ReviewersParams, TokenDetails, ValidatorsDaoParams,
+               WhitelistType};
 use disputes::{Dispute, Proposal};
 use kyc_whitelist::{ActivationType, Config, VerificationType};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
@@ -1064,12 +1065,16 @@ impl Env {
     Ok(proposal)
   }
 
-  pub async fn add_to_owners_whitelist(
+  pub async fn add_to_postpaid_subscribers_whitelist(
     &self,
   ) -> anyhow::Result<()> {
     let res = self.bounties_contract_admin
-      .call(self.disputed_bounties.id(), "add_to_owners_whitelist")
-      .args_json((self.project_owner.id(), Option::<Vec<AccountId>>::None))
+      .call(self.disputed_bounties.id(), "add_to_some_whitelist")
+      .args_json((
+        self.project_owner.id(),
+        Option::<Vec<AccountId>>::None,
+        WhitelistType::PostpaidSubscribersWhitelist
+      ))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -1078,12 +1083,16 @@ impl Env {
     Ok(())
   }
 
-  pub async fn remove_from_owners_whitelist(
+  pub async fn remove_from_postpaid_subscribers_whitelist(
     &self,
   ) -> anyhow::Result<()> {
     let res = self.bounties_contract_admin
-      .call(self.disputed_bounties.id(), "remove_from_owners_whitelist")
-      .args_json((self.project_owner.id(), Option::<Vec<AccountId>>::None))
+      .call(self.disputed_bounties.id(), "remove_from_some_whitelist")
+      .args_json((
+        self.project_owner.id(),
+        Option::<Vec<AccountId>>::None,
+        WhitelistType::PostpaidSubscribersWhitelist
+      ))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()

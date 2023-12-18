@@ -19,6 +19,10 @@ impl BountiesContract {
     self.owners_whitelist.contains(&account_id)
   }
 
+  pub fn is_postpaid_subscriber_whitelisted(&self, account_id: AccountId) -> bool {
+    self.postpaid_subscribers_whitelist.contains(&account_id)
+  }
+
   pub fn get_reputation_contract_account_id(&self) -> Option<AccountId> {
     self.reputation_contract.clone()
   }
@@ -139,6 +143,6 @@ impl BountiesContract {
   }
 
   pub fn get_version() -> String {
-    "2.0.7".to_string()
+    "2.0.8".to_string()
   }
 }
