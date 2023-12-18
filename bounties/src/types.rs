@@ -1739,6 +1739,7 @@ pub struct ConfigCreate {
   pub validators_dao_fee_percentage: u32,
   pub penalty_platform_fee_percentage: u32,
   pub penalty_validators_dao_fee_percentage: u32,
+  pub use_owners_whitelist: bool,
 }
 
 impl ConfigCreate {
@@ -1754,6 +1755,7 @@ impl ConfigCreate {
       categories: config.categories,
       tags: config.tags,
       currencies: config.currencies,
+      use_owners_whitelist: self.use_owners_whitelist,
     }
   }
 }
@@ -1776,6 +1778,22 @@ pub struct ConfigV1 {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct ConfigV2 {
+  pub bounty_claim_bond: U128,
+  pub bounty_forgiveness_period: U64,
+  pub period_for_opening_dispute: U64,
+  pub categories: Vec<String>,
+  pub tags: Vec<String>,
+  pub platform_fee_percentage: u32,
+  pub validators_dao_fee_percentage: u32,
+  pub penalty_platform_fee_percentage: u32,
+  pub penalty_validators_dao_fee_percentage: u32,
+  pub currencies: Vec<String>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Config {
   pub bounty_claim_bond: U128,
   pub bounty_forgiveness_period: U64,
@@ -1787,6 +1805,7 @@ pub struct Config {
   pub penalty_platform_fee_percentage: u32,
   pub penalty_validators_dao_fee_percentage: u32,
   pub currencies: Vec<String>,
+  pub use_owners_whitelist: bool,
 }
 
 impl Config {
@@ -1816,6 +1835,7 @@ impl Default for Config {
       penalty_platform_fee_percentage: DEFAULT_PENALTY_PLATFORM_FEE_PERCENTAGE,
       penalty_validators_dao_fee_percentage: DEFAULT_PENALTY_VALIDATORS_DAO_FEE_PERCENTAGE,
       currencies: vec![],
+      use_owners_whitelist: false,
     }
   }
 }
@@ -1824,12 +1844,13 @@ impl Default for Config {
 #[serde(crate = "near_sdk::serde")]
 pub enum VersionedConfig {
   V1(ConfigV1),
+  V2(ConfigV2),
   Current(Config),
 }
 
 impl VersionedConfig {
-  fn upgrade_v1_to_v2(config: ConfigV1) -> Config {
-    Config {
+  fn upgrade_v1_to_v2(config: ConfigV1) -> ConfigV2 {
+    ConfigV2 {
       bounty_claim_bond: config.bounty_claim_bond,
       bounty_forgiveness_period: config.bounty_forgiveness_period,
       period_for_opening_dispute: config.period_for_opening_dispute,
@@ -1843,10 +1864,29 @@ impl VersionedConfig {
     }
   }
 
+  fn upgrade_v2_to_v3(config: ConfigV2) -> Config {
+    Config {
+      bounty_claim_bond: config.bounty_claim_bond,
+      bounty_forgiveness_period: config.bounty_forgiveness_period,
+      period_for_opening_dispute: config.period_for_opening_dispute,
+      categories: config.categories,
+      tags: config.tags,
+      platform_fee_percentage: config.platform_fee_percentage,
+      validators_dao_fee_percentage: config.validators_dao_fee_percentage,
+      penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
+      penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
+      currencies: config.currencies,
+      use_owners_whitelist: false,
+    }
+  }
+
   pub fn to_config(self) -> Config {
     match self {
       VersionedConfig::Current(config) => config,
-      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v1_to_v2(config_v1),
+      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v2_to_v3(
+        VersionedConfig::upgrade_v1_to_v2(config_v1)
+      ),
+      VersionedConfig::V2(config_v2) => VersionedConfig::upgrade_v2_to_v3(config_v2),
     }
   }
 
@@ -1864,7 +1904,10 @@ impl From<VersionedConfig> for Config {
   fn from(value: VersionedConfig) -> Self {
     match value {
       VersionedConfig::Current(config) => config,
-      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v1_to_v2(config_v1),
+      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v2_to_v3(
+        VersionedConfig::upgrade_v1_to_v2(config_v1)
+      ),
+      VersionedConfig::V2(config_v2) => VersionedConfig::upgrade_v2_to_v3(config_v2),
     }
   }
 }
@@ -1964,4 +2007,13 @@ pub(crate) enum StorageKey {
   Tokens,
   TotalFees,
   TotalValidatorsDaoFees,
+  PostpaidSubscribersWhitelist,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub enum WhitelistType {
+  AdministratorsWhitelist,
+  OwnersWhitelist,
+  PostpaidSubscribersWhitelist,
 }

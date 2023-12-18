@@ -2238,7 +2238,7 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     Some("You are not allowed to create postpaid bounties"),
   ).await?;
 
-  e.add_to_owners_whitelist().await?;
+  e.add_to_postpaid_subscribers_whitelist().await?;
 
   e.add_bounty(
     &e.disputed_bounties,
@@ -2347,7 +2347,7 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     Some([14, 6, 1, 24, 18, 4, 5, 4, 2]),
     Some(freelancer.id()),
   ).await?;
-  e.remove_from_owners_whitelist().await?;
+  e.remove_from_postpaid_subscribers_whitelist().await?;
 
   println!("      Passed ✅ Test - postpaid flow");
   Ok(())
@@ -2768,7 +2768,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
   assert_eq!(bounty_claims[0].1.status, ClaimStatus::NotCompleted);
 
-  e.add_to_owners_whitelist().await?;
+  e.add_to_postpaid_subscribers_whitelist().await?;
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
@@ -2787,7 +2787,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
     }),
     None,
   ).await?;
-  e.remove_from_owners_whitelist().await?;
+  e.remove_from_postpaid_subscribers_whitelist().await?;
 
   let next_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(next_bounty_id, last_bounty_id + 4);
@@ -3249,7 +3249,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     e.get_token_balance(freelancers[3].id()).await?
   );
 
-  e.add_to_owners_whitelist().await?;
+  e.add_to_postpaid_subscribers_whitelist().await?;
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
@@ -3268,7 +3268,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     }),
     None,
   ).await?;
-  e.remove_from_owners_whitelist().await?;
+  e.remove_from_postpaid_subscribers_whitelist().await?;
 
   let next_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(next_bounty_id, last_bounty_id + 3);
@@ -3625,7 +3625,7 @@ async fn test_different_tasks_flow(e: &Env) -> anyhow::Result<()> {
     e.get_token_balance(freelancers[3].id()).await?
   );
 
-  e.add_to_owners_whitelist().await?;
+  e.add_to_postpaid_subscribers_whitelist().await?;
   e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
@@ -3651,7 +3651,7 @@ async fn test_different_tasks_flow(e: &Env) -> anyhow::Result<()> {
     }),
     None,
   ).await?;
-  e.remove_from_owners_whitelist().await?;
+  e.remove_from_postpaid_subscribers_whitelist().await?;
 
   let next_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(next_bounty_id, last_bounty_id + 2);

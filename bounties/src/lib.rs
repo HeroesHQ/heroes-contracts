@@ -62,8 +62,11 @@ pub struct BountiesContract {
   /// KYC whitelist contract (optional)
   pub kyc_whitelist_contract: Option<AccountId>,
 
-  /// Whitelist accounts that can generate postpaid bounties
+  /// Whitelist accounts that can generate bounties
   pub owners_whitelist: UnorderedSet<AccountId>,
+
+  /// Whitelist accounts that can generate postpaid bounties
+  pub postpaid_subscribers_whitelist: UnorderedSet<AccountId>,
 
   /// Total platform fees map per token ID
   pub total_fees: LookupMap<AccountId, FeeStats>,
@@ -116,6 +119,7 @@ impl BountiesContract {
       dispute_contract,
       kyc_whitelist_contract,
       owners_whitelist: UnorderedSet::new(StorageKey::OwnersWhitelist),
+      postpaid_subscribers_whitelist: UnorderedSet::new(StorageKey::PostpaidSubscribersWhitelist),
       total_fees: LookupMap::new(StorageKey::TotalFees),
       total_validators_dao_fees: LookupMap::new(StorageKey::TotalValidatorsDaoFees),
       recipient_of_platform_fee,
@@ -124,10 +128,11 @@ impl BountiesContract {
   }
 
   #[payable]
-  pub fn add_to_admins_whitelist(
+  pub fn add_to_some_whitelist(
     &mut self,
     account_id: Option<AccountId>,
     account_ids: Option<Vec<AccountId>>,
+    whitelist_type: WhitelistType,
   ) {
     self.assert_live();
     assert_one_yocto();
@@ -138,15 +143,22 @@ impl BountiesContract {
       vec![account_id.expect("Expected either account_id or account_ids")]
     };
     for account_id in &account_ids {
-      self.admins_whitelist.insert(account_id);
+      match whitelist_type {
+        WhitelistType::AdministratorsWhitelist => { self.admins_whitelist.insert(account_id); },
+        WhitelistType::OwnersWhitelist => { self.owners_whitelist.insert(account_id); },
+        WhitelistType::PostpaidSubscribersWhitelist => {
+          self.postpaid_subscribers_whitelist.insert(account_id);
+        },
+      }
     }
   }
 
   #[payable]
-  pub fn remove_from_admins_whitelist(
+  pub fn remove_from_some_whitelist(
     &mut self,
     account_id: Option<AccountId>,
     account_ids: Option<Vec<AccountId>>,
+    whitelist_type: WhitelistType,
   ) {
     self.assert_live();
     assert_one_yocto();
@@ -157,50 +169,19 @@ impl BountiesContract {
       vec![account_id.expect("Expected either account_id or account_ids")]
     };
     for account_id in &account_ids {
-      self.admins_whitelist.remove(&account_id);
+      match whitelist_type {
+        WhitelistType::AdministratorsWhitelist => { self.admins_whitelist.remove(&account_id); },
+        WhitelistType::OwnersWhitelist => { self.owners_whitelist.remove(&account_id); },
+        WhitelistType::PostpaidSubscribersWhitelist => {
+          self.postpaid_subscribers_whitelist.remove(&account_id);
+        },
+      }
     }
     assert!(
-      !self.admins_whitelist.is_empty(),
+      !matches!(whitelist_type, WhitelistType::AdministratorsWhitelist) ||
+        !self.admins_whitelist.is_empty(),
       "Cannot remove all accounts from admin whitelist",
     );
-  }
-
-  #[payable]
-  pub fn add_to_owners_whitelist(
-    &mut self,
-    account_id: Option<AccountId>,
-    account_ids: Option<Vec<AccountId>>,
-  ) {
-    self.assert_live();
-    assert_one_yocto();
-    self.assert_admins_whitelist(&env::predecessor_account_id());
-    let account_ids = if let Some(account_ids) = account_ids {
-      account_ids
-    } else {
-      vec![account_id.expect("Expected either account_id or account_ids")]
-    };
-    for account_id in &account_ids {
-      self.owners_whitelist.insert(account_id);
-    }
-  }
-
-  #[payable]
-  pub fn remove_from_owners_whitelist(
-    &mut self,
-    account_id: Option<AccountId>,
-    account_ids: Option<Vec<AccountId>>,
-  ) {
-    self.assert_live();
-    assert_one_yocto();
-    self.assert_admins_whitelist(&env::predecessor_account_id());
-    let account_ids = if let Some(account_ids) = account_ids {
-      account_ids
-    } else {
-      vec![account_id.expect("Expected either account_id or account_ids")]
-    };
-    for account_id in &account_ids {
-      self.owners_whitelist.remove(&account_id);
-    }
   }
 
   #[payable]
@@ -788,7 +769,7 @@ impl BountiesContract {
     let sender_id = env::predecessor_account_id();
     assert!(bounty_create.postpaid.is_some(), "The postpaid parameter is incorrect");
     assert!(
-      self.is_owner_whitelisted(sender_id.clone()),
+      self.is_postpaid_subscriber_whitelisted(sender_id.clone()),
       "You are not allowed to create postpaid bounties"
     );
     if token_id.is_some() {
@@ -1203,7 +1184,7 @@ mod tests {
   use crate::{DEFAULT_BOUNTY_CLAIM_BOND, BountiesContract, Bounty, BountyAction, BountyClaim,
               BountyIndex, BountyMetadata, BountyStatus, ClaimerApproval, ClaimStatus, Config,
               ConfigCreate, ContractStatus, Deadline, FeeStats, KycConfig, Reviewers, TokenDetails, ValidatorsDao,
-              ValidatorsDaoParams};
+              ValidatorsDaoParams, WhitelistType};
 
   pub const TOKEN_DECIMALS: u8 = 18;
   pub const MAX_DEADLINE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
@@ -1400,10 +1381,18 @@ mod tests {
     );
     contract.set_status(ContractStatus::Live);
     let account_ids: Vec<AccountId> = vec![accounts(1), accounts(2)];
-    contract.add_to_admins_whitelist(None, Some(account_ids.clone()));
+    contract.add_to_some_whitelist(
+      None,
+      Some(account_ids.clone()),
+      WhitelistType::AdministratorsWhitelist
+    );
     assert_eq!(contract.get_admins_whitelist(), vec![accounts(0), accounts(1), accounts(2)]);
 
-    contract.add_to_admins_whitelist(Some(accounts(3)), None);
+    contract.add_to_some_whitelist(
+      Some(accounts(3)),
+      None,
+      WhitelistType::AdministratorsWhitelist
+    );
     assert_eq!(
       contract.get_admins_whitelist(),
       vec![accounts(0), accounts(1), accounts(2), accounts(3)]
@@ -1426,14 +1415,23 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    contract.add_to_admins_whitelist(
+    contract.add_to_some_whitelist(
       None,
-      Some(vec![accounts(1), accounts(2), accounts(3)])
+      Some(vec![accounts(1), accounts(2), accounts(3)]),
+      WhitelistType::AdministratorsWhitelist
     );
 
-    contract.remove_from_admins_whitelist(Some(accounts(3)), None);
+    contract.remove_from_some_whitelist(
+      Some(accounts(3)),
+      None,
+      WhitelistType::AdministratorsWhitelist
+    );
     assert_eq!(contract.get_admins_whitelist(), vec![accounts(0), accounts(1), accounts(2)]);
-    contract.remove_from_admins_whitelist(None, Some(vec![accounts(1), accounts(2)]));
+    contract.remove_from_some_whitelist(
+      None,
+      Some(vec![accounts(1), accounts(2)]),
+      WhitelistType::AdministratorsWhitelist
+    );
     assert_eq!(contract.get_admins_whitelist(), vec![accounts(0)]);
   }
 
@@ -1454,7 +1452,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    contract.add_to_admins_whitelist(None, None);
+    contract.add_to_some_whitelist(None, None, WhitelistType::AdministratorsWhitelist);
   }
 
   #[test]
@@ -1471,7 +1469,11 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    contract.add_to_admins_whitelist(Some(accounts(1)), None);
+    contract.add_to_some_whitelist(
+      Some(accounts(1)),
+      None,
+      WhitelistType::AdministratorsWhitelist
+    );
   }
 
   #[test]
@@ -1489,7 +1491,11 @@ mod tests {
     );
     testing_env!(context.predecessor_account_id(accounts(1)).attached_deposit(1).build());
     contract.set_status(ContractStatus::Live);
-    contract.add_to_admins_whitelist(Some(accounts(1)), None);
+    contract.add_to_some_whitelist(
+      Some(accounts(1)),
+      None,
+      WhitelistType::AdministratorsWhitelist
+    );
   }
 
   #[test]
@@ -1509,7 +1515,11 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    contract.remove_from_admins_whitelist(Some(accounts(0)), None);
+    contract.remove_from_some_whitelist(
+      Some(accounts(0)),
+      None,
+      WhitelistType::AdministratorsWhitelist
+    );
   }
 
   #[test]
@@ -1612,6 +1622,7 @@ mod tests {
       validators_dao_fee_percentage: 5_000,
       penalty_platform_fee_percentage: 500,
       penalty_validators_dao_fee_percentage: 500,
+      use_owners_whitelist: true,
     };
     contract.change_config(config_create.clone());
     let config = contract.get_config();
@@ -1623,6 +1634,7 @@ mod tests {
       validators_dao_fee_percentage: config.validators_dao_fee_percentage,
       penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
       penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
+      use_owners_whitelist: config.use_owners_whitelist,
     });
   }
 
@@ -2300,6 +2312,7 @@ mod tests {
       validators_dao_fee_percentage: config.validators_dao_fee_percentage,
       penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
       penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
+      use_owners_whitelist: config.use_owners_whitelist,
     });
 
     let project_owner = accounts(1);
