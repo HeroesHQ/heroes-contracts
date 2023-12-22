@@ -321,7 +321,7 @@ impl Default for KycConfig {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub enum PlaceOfCheckKYC {
-  CreatingClaim { deadline: U64, description: String },
+  CreatingClaim { deadline: Option<U64>, description: String },
   DecisionOnClaim { approve: bool, is_kyc_delayed: Option<DefermentOfKYC> },
   ClaimDone { description: String },
 }
@@ -850,6 +850,7 @@ pub struct BountyCreate {
   pub kyc_config: Option<KycConfig>,
   pub postpaid: Option<Postpaid>,
   pub multitasking: Option<Multitasking>,
+  pub allow_deadline_stretch: Option<bool>,
 }
 
 impl BountyCreate {
@@ -912,6 +913,7 @@ impl BountyCreate {
       } else {
         None
       },
+      allow_deadline_stretch: self.allow_deadline_stretch.unwrap_or_default(),
     }
   }
 }
@@ -996,6 +998,26 @@ pub struct BountyV3 {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyV4 {
+  pub token: Option<AccountId>,
+  pub amount: U128,
+  pub platform_fee: U128,
+  pub dao_fee: U128,
+  pub metadata: BountyMetadata,
+  pub deadline: Deadline,
+  pub claimer_approval: ClaimerApproval,
+  pub reviewers: Option<Reviewers>,
+  pub owner: AccountId,
+  pub status: BountyStatus,
+  pub created_at: U64,
+  pub kyc_config: KycConfig,
+  pub postpaid: Option<Postpaid>,
+  pub multitasking: Option<Multitasking>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Bounty {
   pub token: Option<AccountId>,
   pub amount: U128,
@@ -1011,6 +1033,7 @@ pub struct Bounty {
   pub kyc_config: KycConfig,
   pub postpaid: Option<Postpaid>,
   pub multitasking: Option<Multitasking>,
+  pub allow_deadline_stretch: bool,
 }
 
 impl Bounty {
@@ -1056,7 +1079,11 @@ impl Bounty {
           max_deadline.0 > 0,
           "The max deadline is incorrect"
         ),
-      Deadline::WithoutDeadline => ()
+      Deadline::WithoutDeadline =>
+        assert!(
+          !self.allow_deadline_stretch,
+          "This bounty has no deadline, so the claimant must specify a deadline"
+        ),
     }
     if self.reviewers.clone().is_some() {
       match self.reviewers.clone().unwrap() {
@@ -1082,7 +1109,7 @@ impl Bounty {
                 assert!(
                   env::block_timestamp() < date.0 &&
                     (
-                      self.deadline.get_deadline_type() != 1 ||
+                      !matches!(self.deadline, Deadline::DueDate { .. }) ||
                         date.0 <= self.deadline.get_deadline_value().0
                     ),
                   "The date until which it is allowed to create claims is incorrect"
@@ -1203,10 +1230,16 @@ impl Bounty {
     env::panic_str("Validators DAO are not used");
   }
 
-  pub fn is_claim_deadline_correct(&self, deadline: U64) -> bool {
+  pub fn is_claim_deadline_correct(&self, deadline: Option<U64>) -> bool {
+    if self.allow_deadline_stretch {
+      assert!(deadline.is_none(), "This bounty does not use a claim deadline");
+      return true;
+    } else {
+      assert!(deadline.is_some(), "For this bounty, you need to specify a claim deadline");
+    }
     match self.deadline {
-      Deadline::DueDate { due_date } => env::block_timestamp() + deadline.0 <= due_date.0,
-      Deadline::MaxDeadline { max_deadline } => deadline.0 <= max_deadline.0,
+      Deadline::DueDate { due_date } => env::block_timestamp() + deadline.unwrap().0 <= due_date.0,
+      Deadline::MaxDeadline { max_deadline } => deadline.unwrap().0 <= max_deadline.0,
       Deadline::WithoutDeadline => true,
     }
   }
@@ -1287,6 +1320,7 @@ pub enum VersionedBounty {
   V1(BountyV1),
   V2(BountyV2),
   V3(BountyV3),
+  V4(BountyV4),
   Current(Bounty),
 }
 
@@ -1328,7 +1362,7 @@ impl VersionedBounty {
     }
   }
 
-  fn upgrade_v3_to_v4(bounty: BountyV3) -> Bounty {
+  fn upgrade_v3_to_v4(bounty: BountyV3) -> BountyV4 {
     let postpaid = if bounty.postpaid.is_some() {
       match bounty.postpaid.clone().unwrap() {
         Postpaid::PaymentOutsideContractV1 { currency } =>
@@ -1344,7 +1378,7 @@ impl VersionedBounty {
     } else {
       None
     };
-    Bounty {
+    BountyV4 {
       token: bounty.token,
       amount: bounty.amount,
       platform_fee: bounty.platform_fee,
@@ -1362,20 +1396,48 @@ impl VersionedBounty {
     }
   }
 
+  fn upgrade_v4_to_v5(bounty: BountyV4) -> Bounty {
+    Bounty {
+      token: bounty.token,
+      amount: bounty.amount,
+      platform_fee: bounty.platform_fee,
+      dao_fee: bounty.dao_fee,
+      metadata: bounty.metadata,
+      deadline: bounty.deadline,
+      claimer_approval: bounty.claimer_approval,
+      reviewers: bounty.reviewers,
+      owner: bounty.owner,
+      status: bounty.status,
+      created_at: bounty.created_at,
+      kyc_config: bounty.kyc_config,
+      postpaid: bounty.postpaid,
+      multitasking: bounty.multitasking,
+      allow_deadline_stretch: false,
+    }
+  }
+
   pub fn to_bounty(self) -> Bounty {
     match self {
       VersionedBounty::Current(bounty) => bounty,
       VersionedBounty::V1(bounty_v1) =>
-        VersionedBounty::upgrade_v3_to_v4(
-          VersionedBounty::upgrade_v2_to_v3(
-            VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+        VersionedBounty::upgrade_v4_to_v5(
+          VersionedBounty::upgrade_v3_to_v4(
+            VersionedBounty::upgrade_v2_to_v3(
+              VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+            )
           )
         ),
       VersionedBounty::V2(bounty_v2) =>
-        VersionedBounty::upgrade_v3_to_v4(
-          VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+        VersionedBounty::upgrade_v4_to_v5(
+          VersionedBounty::upgrade_v3_to_v4(
+            VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+          )
         ),
-      VersionedBounty::V3(bounty_v3) => VersionedBounty::upgrade_v3_to_v4(bounty_v3),
+      VersionedBounty::V3(bounty_v3) =>
+        VersionedBounty::upgrade_v4_to_v5(
+          VersionedBounty::upgrade_v3_to_v4(bounty_v3)
+        ),
+      VersionedBounty::V4(bounty_v4) => VersionedBounty::upgrade_v4_to_v5(bounty_v4),
     }
   }
 }
@@ -1385,16 +1447,24 @@ impl From<VersionedBounty> for Bounty {
     match value {
       VersionedBounty::Current(bounty) => bounty,
       VersionedBounty::V1(bounty_v1) =>
-        VersionedBounty::upgrade_v3_to_v4(
-          VersionedBounty::upgrade_v2_to_v3(
-            VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+        VersionedBounty::upgrade_v4_to_v5(
+          VersionedBounty::upgrade_v3_to_v4(
+            VersionedBounty::upgrade_v2_to_v3(
+              VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+            )
           )
         ),
       VersionedBounty::V2(bounty_v2) =>
-        VersionedBounty::upgrade_v3_to_v4(
-          VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+        VersionedBounty::upgrade_v4_to_v5(
+          VersionedBounty::upgrade_v3_to_v4(
+            VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+          )
         ),
-      VersionedBounty::V3(bounty_v3) => VersionedBounty::upgrade_v3_to_v4(bounty_v3),
+      VersionedBounty::V3(bounty_v3) =>
+        VersionedBounty::upgrade_v4_to_v5(
+          VersionedBounty::upgrade_v3_to_v4(bounty_v3)
+        ),
+      VersionedBounty::V4(bounty_v4) => VersionedBounty::upgrade_v4_to_v5(bounty_v4),
     }
   }
 }
@@ -1529,7 +1599,7 @@ pub struct BountyClaimV3 {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct BountyClaim {
+pub struct BountyClaimV4 {
   /// Bounty id that was claimed.
   pub bounty_id: BountyIndex,
   /// When a claim is created.
@@ -1538,6 +1608,40 @@ pub struct BountyClaim {
   pub start_time: Option<U64>,
   /// Deadline specified by claimer.
   pub deadline: U64,
+  /// Description
+  pub description: String,
+  /// status
+  pub status: ClaimStatus,
+  /// Bounty payout proposal ID
+  pub bounty_payout_proposal_id: Option<U64>,
+  /// Proposal ID for applicant approval
+  pub approve_claimer_proposal_id: Option<U64>,
+  /// Timestamp when the status is set to rejected
+  pub rejected_timestamp: Option<U64>,
+  /// Dispute ID
+  pub dispute_id: Option<U64>,
+  /// Bounty owner deferred KYC verification or verification status will be tracked manually
+  pub is_kyc_delayed: Option<DefermentOfKYC>,
+  /// Payment data for PaymentOutsideContract mode
+  pub payment_timestamps: Option<PaymentTimestamps>,
+  /// Bounty slot number for different tasks
+  pub slot: Option<usize>,
+  /// Bond that was at the time of making the claim
+  pub bond: Option<U128>,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyClaim {
+  /// Bounty id that was claimed.
+  pub bounty_id: BountyIndex,
+  /// When a claim is created.
+  pub created_at: U64,
+  /// Start time of the claim.
+  pub start_time: Option<U64>,
+  /// Deadline specified by claimer.
+  pub deadline: Option<U64>,
   /// Description
   pub description: String,
   /// status
@@ -1571,7 +1675,15 @@ impl BountyClaim {
   }
 
   pub fn is_claim_expired(&self, bounty: &Bounty) -> bool {
-    env::block_timestamp() > self.get_start_time(bounty).0 + self.deadline.0
+    if self.deadline.is_some() {
+      env::block_timestamp() > self.get_start_time(bounty).0 + self.deadline.unwrap().0
+    } else {
+      env::block_timestamp() > match bounty.deadline {
+        Deadline::DueDate { due_date } => due_date.0,
+        Deadline::MaxDeadline { max_deadline } => self.get_start_time(bounty).0 + max_deadline.0,
+        _ => unreachable!(),
+      }
+    }
   }
 
   pub fn set_payment_at(&mut self, payment_at: Option<U64>) {
@@ -1593,6 +1705,7 @@ pub enum VersionedBountyClaim {
   V1(BountyClaimV1),
   V2(BountyClaimV2),
   V3(BountyClaimV3),
+  V4(BountyClaimV4),
   Current(BountyClaim),
 }
 
@@ -1631,8 +1744,8 @@ impl VersionedBountyClaim {
     }
   }
 
-  fn upgrade_v3_to_v4(bounty_claim: BountyClaimV3) -> BountyClaim {
-    BountyClaim {
+  fn upgrade_v3_to_v4(bounty_claim: BountyClaimV3) -> BountyClaimV4 {
+    BountyClaimV4 {
       bounty_id: bounty_claim.bounty_id,
       created_at: bounty_claim.created_at,
       start_time: bounty_claim.start_time,
@@ -1650,21 +1763,48 @@ impl VersionedBountyClaim {
     }
   }
 
+  fn upgrade_v4_to_v5(bounty_claim: BountyClaimV4) -> BountyClaim {
+    BountyClaim {
+      bounty_id: bounty_claim.bounty_id,
+      created_at: bounty_claim.created_at,
+      start_time: bounty_claim.start_time,
+      deadline: Some(bounty_claim.deadline),
+      description: bounty_claim.description,
+      status: bounty_claim.status,
+      bounty_payout_proposal_id: bounty_claim.bounty_payout_proposal_id,
+      approve_claimer_proposal_id: bounty_claim.approve_claimer_proposal_id,
+      rejected_timestamp: bounty_claim.rejected_timestamp,
+      dispute_id: bounty_claim.dispute_id,
+      is_kyc_delayed: bounty_claim.is_kyc_delayed,
+      payment_timestamps: bounty_claim.payment_timestamps,
+      slot: bounty_claim.slot,
+      bond: bounty_claim.bond,
+    }
+  }
+
   pub fn to_bounty_claim(self) -> BountyClaim {
     match self {
       VersionedBountyClaim::Current(bounty_claim) => bounty_claim,
       VersionedBountyClaim::V1(bounty_claim_v1) =>
-        VersionedBountyClaim::upgrade_v3_to_v4(
-          VersionedBountyClaim::upgrade_v2_to_v3(
-            VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
+        VersionedBountyClaim::upgrade_v4_to_v5(
+          VersionedBountyClaim::upgrade_v3_to_v4(
+            VersionedBountyClaim::upgrade_v2_to_v3(
+              VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
+            )
           )
         ),
       VersionedBountyClaim::V2(bounty_claim_v2) =>
-        VersionedBountyClaim::upgrade_v3_to_v4(
-          VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2)
+        VersionedBountyClaim::upgrade_v4_to_v5(
+          VersionedBountyClaim::upgrade_v3_to_v4(
+            VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2)
+          )
         ),
       VersionedBountyClaim::V3(bounty_claim_v3) =>
-        VersionedBountyClaim::upgrade_v3_to_v4(bounty_claim_v3)
+        VersionedBountyClaim::upgrade_v4_to_v5(
+          VersionedBountyClaim::upgrade_v3_to_v4(bounty_claim_v3)
+        ),
+      VersionedBountyClaim::V4(bounty_claim_v4) =>
+        VersionedBountyClaim::upgrade_v4_to_v5(bounty_claim_v4),
     }
   }
 }
@@ -1674,17 +1814,25 @@ impl From<VersionedBountyClaim> for BountyClaim {
     match value {
       VersionedBountyClaim::Current(bounty_claim) => bounty_claim,
       VersionedBountyClaim::V1(bounty_claim_v1) =>
-        VersionedBountyClaim::upgrade_v3_to_v4(
-          VersionedBountyClaim::upgrade_v2_to_v3(
-            VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
+        VersionedBountyClaim::upgrade_v4_to_v5(
+          VersionedBountyClaim::upgrade_v3_to_v4(
+            VersionedBountyClaim::upgrade_v2_to_v3(
+              VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
+            )
           )
         ),
       VersionedBountyClaim::V2(bounty_claim_v2) =>
-        VersionedBountyClaim::upgrade_v3_to_v4(
-          VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2)
+        VersionedBountyClaim::upgrade_v4_to_v5(
+          VersionedBountyClaim::upgrade_v3_to_v4(
+            VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2)
+          )
         ),
       VersionedBountyClaim::V3(bounty_claim_v3) =>
-        VersionedBountyClaim::upgrade_v3_to_v4(bounty_claim_v3)
+        VersionedBountyClaim::upgrade_v4_to_v5(
+          VersionedBountyClaim::upgrade_v3_to_v4(bounty_claim_v3)
+        ),
+      VersionedBountyClaim::V4(bounty_claim_v4) =>
+        VersionedBountyClaim::upgrade_v4_to_v5(bounty_claim_v4),
     }
   }
 }
