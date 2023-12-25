@@ -3869,8 +3869,6 @@ async fn test_withdraw_non_refunded_bonds(e: &Env) -> anyhow::Result<()> {
 }
 
 async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
-  let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
-
   let result = e.add_bounty(
     &e.disputed_bounties,
     json!("WithoutDeadline"),
@@ -3883,6 +3881,30 @@ async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
     "This bounty has no deadline, so the claimant must specify a deadline"
   ).await?;
 
+  let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
+  let _ = e.add_bounty(
+    &e.disputed_bounties,
+    // Max deadline: 10 min
+    json!({ "MaxDeadline": json!({ "max_deadline": U64(10 * 60 * 1_000 * 1_000_000) }) }),
+    json!("WithoutApproval"),
+    None, None, None, None, None, None, None,
+  ).await?;
+  let bounty_id = last_bounty_id;
+
+  let freelancer = e.add_account("freelancer48").await?;
+  Env::register_user(&e.test_token, freelancer.id()).await?;
+
+  e.bounty_claim(
+    &e.disputed_bounties,
+    bounty_id,
+    None, // Without deadline
+    "Test claim".to_string(),
+    None,
+    Some(&freelancer),
+    Some("For this bounty, you need to specify a claim deadline"),
+  ).await?;
+
+  let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   let _ = e.add_bounty(
     &e.disputed_bounties,
     // Max deadline: 10 min
@@ -3892,9 +3914,6 @@ async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
     Some(true),
   ).await?;
   let bounty_id = last_bounty_id;
-
-  let freelancer = e.add_account("freelancer48").await?;
-  Env::register_user(&e.test_token, freelancer.id()).await?;
 
   e.bounty_claim(
     &e.disputed_bounties,
@@ -4040,7 +4059,8 @@ async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
   e.bounty_claim(
     &e.disputed_bounties,
     bounty_id,
-    None, // Without deadline
+    // With deadline
+    Some(U64(1_000_000_000 * 60 * 60 * 24 * 2)),
     "Test claim".to_string(),
     None,
     Some(&freelancer2),
@@ -4183,7 +4203,8 @@ async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
   e.bounty_claim(
     &e.disputed_bounties,
     bounty_id,
-    None, // Without deadline
+    // With deadline
+    Some(U64(1_000_000_000 * 60 * 60 * 24 * 2)),
     "Test claim".to_string(),
     None,
     Some(&freelancer2),
@@ -4283,7 +4304,8 @@ async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
   e.bounty_claim(
     &e.disputed_bounties,
     bounty_id,
-    None, // Without deadline
+    // With deadline
+    Some(U64(1_000_000_000 * 60 * 60 * 24 * 2)),
     "Test claim".to_string(),
     Some(1),
     Some(&freelancer2),

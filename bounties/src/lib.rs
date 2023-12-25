@@ -746,6 +746,10 @@ impl BountiesContract {
       "Claim status does not allow to postpone the deadline"
     );
     assert!(
+      bounty_claim.deadline.is_some(),
+      "This bounty does not use a claim deadline"
+    );
+    assert!(
       bounty.is_claim_deadline_correct(Some(deadline)) &&
         deadline.0 > bounty_claim.deadline.unwrap().0,
       "The claim deadline is incorrect"
@@ -1182,9 +1186,9 @@ mod tests {
   use near_sdk::json_types::{U128, U64};
   use near_sdk::{testing_env, AccountId, Balance};
   use crate::{DEFAULT_BOUNTY_CLAIM_BOND, BountiesContract, Bounty, BountyAction, BountyClaim,
-              BountyIndex, BountyMetadata, BountyStatus, ClaimerApproval, ClaimStatus, Config,
-              ConfigCreate, ContractStatus, Deadline, FeeStats, KycConfig, Reviewers, TokenDetails, ValidatorsDao,
-              ValidatorsDaoParams, WhitelistType};
+              BountyIndex, BountyMetadata, BountyStatus, BountyUpdate, ClaimerApproval,
+              ClaimStatus, Config, ConfigCreate, ContractStatus, Deadline, FeeStats, KycConfig,
+              Reviewers, TokenDetails, ValidatorsDao, ValidatorsDaoParams, WhitelistType};
 
   pub const TOKEN_DECIMALS: u8 = 18;
   pub const MAX_DEADLINE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
@@ -1766,34 +1770,6 @@ mod tests {
   }
 
   #[test]
-  #[should_panic(expected = "This bounty does not use a claim deadline")]
-  fn test_bounty_claim_with_unnecessary_deadline() {
-    let mut context = VMContextBuilder::new();
-    testing_env!(context.build());
-    let mut contract = BountiesContract::new(
-      vec![accounts(0)],
-      None,
-      None,
-      None,
-      None,
-      None
-    );
-    contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None, Some(true));
-
-    testing_env!(context
-      .predecessor_account_id(accounts(2))
-      .attached_deposit(Config::default().bounty_claim_bond.0)
-      .build());
-    contract.bounty_claim(
-      id,
-      Some(U64(1_000_000_000 * 60 * 60 * 24 * 2)),
-      "Test description".to_string(),
-      None
-    );
-  }
-
-  #[test]
   #[should_panic(expected = "For this bounty, you need to specify a claim deadline")]
   fn test_bounty_claim_without_deadline() {
     let mut context = VMContextBuilder::new();
@@ -2017,6 +1993,135 @@ mod tests {
       contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
       ClaimStatus::Expired
     );
+  }
+
+  #[test]
+  fn test_bounty_owner_extended_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let owner = accounts(1);
+    let id = add_bounty(&mut contract, &owner, None, None);
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      Some(MAX_DEADLINE),
+      "Test description".to_string(),
+      None
+    );
+
+    testing_env!(context
+      .predecessor_account_id(owner.clone())
+      .attached_deposit(1)
+      .block_timestamp(MAX_DEADLINE.0 + 1)
+      .build());
+    contract.bounty_update(
+      id,
+      BountyUpdate {
+        deadline: Some(Deadline::MaxDeadline { max_deadline: U64(MAX_DEADLINE.0 * 2) }),
+        amount: None,
+        claimer_approval: None,
+        metadata: None,
+        reviewers: None,
+      }
+    );
+    contract.extend_claim_deadline(id, claimer.clone(), U64(MAX_DEADLINE.0 + 1_000_000));
+
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(1)
+      .block_timestamp(MAX_DEADLINE.0 + 1_000)
+      .build());
+    contract.bounty_done(id, "test description".to_string());
+    assert_eq!(
+      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      ClaimStatus::Completed
+    );
+  }
+
+  #[test]
+  #[should_panic(expected = "This bounty does not use a claim deadline")]
+  fn test_bounty_does_not_use_claim_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let owner = accounts(1);
+    let id = add_bounty(&mut contract, &owner, None, Some(true));
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      None,
+      "Test description".to_string(),
+      None
+    );
+
+    testing_env!(context
+      .predecessor_account_id(owner.clone())
+      .attached_deposit(1)
+      .build());
+    contract.extend_claim_deadline(id, claimer.clone(), U64(1_000_000));
+  }
+
+  #[test]
+  #[should_panic(expected = "The claim deadline is incorrect")]
+  fn test_claim_deadline_is_incorrect() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let owner = accounts(1);
+    let id = add_bounty(&mut contract, &owner, None, None);
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      Some(U64(1_000_000)),
+      "Test description".to_string(),
+      None
+    );
+
+    testing_env!(context
+      .predecessor_account_id(owner.clone())
+      .attached_deposit(1)
+      .build());
+    contract.extend_claim_deadline(id, claimer.clone(), U64(MAX_DEADLINE.0 + 1));
   }
 
   #[test]

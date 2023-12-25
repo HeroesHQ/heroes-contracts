@@ -1231,16 +1231,18 @@ impl Bounty {
   }
 
   pub fn is_claim_deadline_correct(&self, deadline: Option<U64>) -> bool {
-    if self.allow_deadline_stretch {
-      assert!(deadline.is_none(), "This bounty does not use a claim deadline");
-      return true;
-    } else {
+    if !self.allow_deadline_stretch {
       assert!(deadline.is_some(), "For this bounty, you need to specify a claim deadline");
     }
-    match self.deadline {
-      Deadline::DueDate { due_date } => env::block_timestamp() + deadline.unwrap().0 <= due_date.0,
-      Deadline::MaxDeadline { max_deadline } => deadline.unwrap().0 <= max_deadline.0,
-      Deadline::WithoutDeadline => true,
+
+    if deadline.is_some() {
+      match self.deadline {
+        Deadline::DueDate { due_date } => env::block_timestamp() + deadline.unwrap().0 <= due_date.0,
+        Deadline::MaxDeadline { max_deadline } => deadline.unwrap().0 <= max_deadline.0,
+        Deadline::WithoutDeadline => true,
+      }
+    } else {
+      return true;
     }
   }
 
