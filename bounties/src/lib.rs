@@ -305,7 +305,7 @@ impl BountiesContract {
   pub fn bounty_claim(
     &mut self,
     id: BountyIndex,
-    deadline: U64,
+    deadline: Option<U64>,
     description: String,
     slot: Option<usize>,
   ) -> PromiseOrValue<()> {
@@ -643,26 +643,25 @@ impl BountiesContract {
       changed = true;
     }
     if bounty_update.deadline.is_some() {
+      let new_deadline = bounty_update.deadline.clone().unwrap();
       if found_claim {
-        assert_ne!(
-          bounty.deadline.get_deadline_type(),
-          3,
+        assert!(
+          !matches!(bounty.deadline, Deadline::WithoutDeadline),
           "The deadline cannot be limited if there are already claims"
         );
-        if bounty_update.deadline.clone().unwrap().get_deadline_type() != 3 {
+        if !matches!(new_deadline, Deadline::WithoutDeadline) {
           assert_eq!(
             bounty.deadline.clone().get_deadline_type(),
             bounty_update.deadline.clone().unwrap().get_deadline_type(),
             "The type of deadline cannot be changed if there are already claims"
           );
           assert!(
-            bounty_update.deadline.clone().unwrap().get_deadline_value().0 >
-              bounty.deadline.clone().get_deadline_value().0,
+            new_deadline.get_deadline_value().0 > bounty.deadline.clone().get_deadline_value().0,
             "The deadline can be increased only in the upward direction"
           );
         }
       }
-      bounty.deadline = bounty_update.deadline.unwrap();
+      bounty.deadline = new_deadline;
       changed = true;
     }
     if bounty_update.reviewers.is_some() {
@@ -747,11 +746,16 @@ impl BountiesContract {
       "Claim status does not allow to postpone the deadline"
     );
     assert!(
-      bounty.is_claim_deadline_correct(deadline) && deadline.0 > bounty_claim.deadline.0,
+      bounty_claim.deadline.is_some(),
+      "This bounty does not use a claim deadline"
+    );
+    assert!(
+      bounty.is_claim_deadline_correct(Some(deadline)) &&
+        deadline.0 > bounty_claim.deadline.unwrap().0,
       "The claim deadline is incorrect"
     );
 
-    bounty_claim.deadline = deadline;
+    bounty_claim.deadline = Some(deadline);
     claims[claim_idx] = bounty_claim;
     self.internal_save_claims(&claimer, &claims);
   }
@@ -1182,9 +1186,9 @@ mod tests {
   use near_sdk::json_types::{U128, U64};
   use near_sdk::{testing_env, AccountId, Balance};
   use crate::{DEFAULT_BOUNTY_CLAIM_BOND, BountiesContract, Bounty, BountyAction, BountyClaim,
-              BountyIndex, BountyMetadata, BountyStatus, ClaimerApproval, ClaimStatus, Config,
-              ConfigCreate, ContractStatus, Deadline, FeeStats, KycConfig, Reviewers, TokenDetails, ValidatorsDao,
-              ValidatorsDaoParams, WhitelistType};
+              BountyIndex, BountyMetadata, BountyStatus, BountyUpdate, ClaimerApproval,
+              ClaimStatus, Config, ConfigCreate, ContractStatus, Deadline, FeeStats, KycConfig,
+              Reviewers, TokenDetails, ValidatorsDao, ValidatorsDaoParams, WhitelistType};
 
   pub const TOKEN_DECIMALS: u8 = 18;
   pub const MAX_DEADLINE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
@@ -1204,7 +1208,8 @@ mod tests {
   fn add_bounty(
     contract: &mut BountiesContract,
     owner: &AccountId,
-    validators_dao: Option<ValidatorsDao>
+    validators_dao: Option<ValidatorsDao>,
+    allow_deadline_stretch: Option<bool>,
   ) -> BountyIndex {
     let bounty_index: BountyIndex = 0;
     let bounty = Bounty {
@@ -1237,6 +1242,7 @@ mod tests {
       kyc_config: KycConfig::KycNotRequired,
       postpaid: None,
       multitasking: None,
+      allow_deadline_stretch: allow_deadline_stretch.unwrap_or_default(),
     };
     contract.internal_update_bounty(&bounty_index, bounty.clone());
     contract.account_bounties.insert(owner, &vec![bounty_index]);
@@ -1269,7 +1275,7 @@ mod tests {
       .attached_deposit(bond.clone())
       .block_timestamp(0)
       .build());
-    let deadline = U64(1_000_000_000 * 60 * 60 * 24 * 2);
+    let deadline = Some(U64(1_000_000_000 * 60 * 60 * 24 * 2));
     let description = "Test description".to_string();
 
     contract.bounty_claim(id, deadline, description.clone(), None);
@@ -1358,7 +1364,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
     contract.set_status(ContractStatus::ReadOnly);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
@@ -1651,7 +1657,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
 
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
@@ -1661,7 +1667,7 @@ mod tests {
         bounty_id: id.clone(),
         created_at: U64(0),
         start_time: Some(U64(0)),
-        deadline: U64(1_000_000_000 * 60 * 60 * 24 * 2),
+        deadline: Some(U64(1_000_000_000 * 60 * 60 * 24 * 2)),
         status: ClaimStatus::InProgress,
         bounty_payout_proposal_id: None,
         approve_claimer_proposal_id: None,
@@ -1693,14 +1699,14 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
 
     testing_env!(context
       .predecessor_account_id(accounts(2))
       .build());
     contract.bounty_claim(
       id,
-      U64(1_000_000_000 * 60 * 60 * 24 * 2),
+      Some(U64(1_000_000_000 * 60 * 60 * 24 * 2)),
       "Test description".to_string(),
       None
     );
@@ -1720,7 +1726,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     bounty_claim(&mut context, &mut contract, id.clone(), &accounts(2));
 
     testing_env!(context
@@ -1729,7 +1735,7 @@ mod tests {
       .build());
     contract.bounty_claim(
       id,
-      U64(1_000_000_000 * 60 * 60 * 24 * 2),
+      Some(U64(1_000_000_000 * 60 * 60 * 24 * 2)),
       "Test description".to_string(),
       None
     );
@@ -1749,7 +1755,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
 
     testing_env!(context
       .predecessor_account_id(accounts(2))
@@ -1757,10 +1763,33 @@ mod tests {
       .build());
     contract.bounty_claim(
       id,
-      U64(MAX_DEADLINE.0 + 1),
+      Some(U64(MAX_DEADLINE.0 + 1)),
       "Test description".to_string(),
       None
     );
+  }
+
+  #[test]
+  #[should_panic(expected = "For this bounty, you need to specify a claim deadline")]
+  fn test_bounty_claim_without_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
+
+    testing_env!(context
+      .predecessor_account_id(accounts(2))
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(id, None, "Test description".to_string(), None);
   }
 
   #[test]
@@ -1777,7 +1806,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
 
     testing_env!(context
       .predecessor_account_id(accounts(2))
@@ -1785,7 +1814,7 @@ mod tests {
       .build());
     contract.bounty_claim(
       id + 1,
-      MAX_DEADLINE,
+      Some(MAX_DEADLINE),
       "Test description".to_string(),
       None
     );
@@ -1804,9 +1833,44 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+    assert_eq!(
+      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      ClaimStatus::Completed
+    );
+    assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::Claimed);
+  }
+
+  #[test]
+  fn test_bounty_done_with_stretch_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, Some(true));
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      None, // without deadline
+      "Test description".to_string(),
+      None
+    );
 
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
     assert_eq!(
@@ -1830,7 +1894,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
 
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -1850,7 +1914,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -1871,7 +1935,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
@@ -1893,6 +1957,174 @@ mod tests {
   }
 
   #[test]
+  fn test_claim_that_has_expired_with_stretch_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, Some(true));
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      None, // without deadline
+      "Test description".to_string(),
+      None
+    );
+
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(1)
+      .block_timestamp(MAX_DEADLINE.0 + 1)
+      .build());
+    contract.bounty_done(id, "test description".to_string());
+    assert_eq!(
+      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      ClaimStatus::Expired
+    );
+  }
+
+  #[test]
+  fn test_bounty_owner_extended_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let owner = accounts(1);
+    let id = add_bounty(&mut contract, &owner, None, None);
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      Some(MAX_DEADLINE),
+      "Test description".to_string(),
+      None
+    );
+
+    testing_env!(context
+      .predecessor_account_id(owner.clone())
+      .attached_deposit(1)
+      .block_timestamp(MAX_DEADLINE.0 + 1)
+      .build());
+    contract.bounty_update(
+      id,
+      BountyUpdate {
+        deadline: Some(Deadline::MaxDeadline { max_deadline: U64(MAX_DEADLINE.0 * 2) }),
+        amount: None,
+        claimer_approval: None,
+        metadata: None,
+        reviewers: None,
+      }
+    );
+    contract.extend_claim_deadline(id, claimer.clone(), U64(MAX_DEADLINE.0 + 1_000_000));
+
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(1)
+      .block_timestamp(MAX_DEADLINE.0 + 1_000)
+      .build());
+    contract.bounty_done(id, "test description".to_string());
+    assert_eq!(
+      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      ClaimStatus::Completed
+    );
+  }
+
+  #[test]
+  #[should_panic(expected = "This bounty does not use a claim deadline")]
+  fn test_bounty_does_not_use_claim_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let owner = accounts(1);
+    let id = add_bounty(&mut contract, &owner, None, Some(true));
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      None,
+      "Test description".to_string(),
+      None
+    );
+
+    testing_env!(context
+      .predecessor_account_id(owner.clone())
+      .attached_deposit(1)
+      .build());
+    contract.extend_claim_deadline(id, claimer.clone(), U64(1_000_000));
+  }
+
+  #[test]
+  #[should_panic(expected = "The claim deadline is incorrect")]
+  fn test_claim_deadline_is_incorrect() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let owner = accounts(1);
+    let id = add_bounty(&mut contract, &owner, None, None);
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      Some(U64(1_000_000)),
+      "Test description".to_string(),
+      None
+    );
+
+    testing_env!(context
+      .predecessor_account_id(owner.clone())
+      .attached_deposit(1)
+      .build());
+    contract.extend_claim_deadline(id, claimer.clone(), U64(MAX_DEADLINE.0 + 1));
+  }
+
+  #[test]
   fn test_bounty_give_up() {
     let mut context = VMContextBuilder::new();
     testing_env!(context.build());
@@ -1905,7 +2137,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
@@ -1961,7 +2193,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
 
     bounty_give_up(
@@ -1987,7 +2219,7 @@ mod tests {
       None
     );
     contract.set_status(ContractStatus::Live);
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -2015,7 +2247,7 @@ mod tests {
     );
     contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -2070,7 +2302,7 @@ mod tests {
       gas_for_claim_approval: None,
       gas_for_claimer_approval: None,
     };
-    let id = add_bounty(&mut contract, &project_owner, Some(dao_params.to_validators_dao()));
+    let id = add_bounty(&mut contract, &project_owner, Some(dao_params.to_validators_dao()), None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -2099,7 +2331,7 @@ mod tests {
     );
     contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -2138,7 +2370,8 @@ mod tests {
           gas_for_claimer_approval: None,
         }
           .to_validators_dao()
-      )
+      ),
+      None,
     );
 
     let new_dao_params = ValidatorsDaoParams {
@@ -2174,7 +2407,7 @@ mod tests {
     );
     contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -2209,7 +2442,7 @@ mod tests {
     );
     contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
 
     testing_env!(context
       .predecessor_account_id(accounts(2))
@@ -2233,7 +2466,7 @@ mod tests {
     );
     contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -2272,7 +2505,7 @@ mod tests {
     );
     contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -2316,7 +2549,7 @@ mod tests {
     });
 
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);

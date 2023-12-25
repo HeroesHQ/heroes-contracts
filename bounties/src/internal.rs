@@ -74,7 +74,7 @@ impl BountiesContract {
         Multitasking::ContestOrHackathon { successful_claims_for_result, .. } => {
           let deadline = bounty.deadline.clone();
           assert!(
-            deadline.get_deadline_type() != 1 ||
+            !matches!(deadline, Deadline::DueDate { .. }) ||
               env::block_timestamp() > deadline.get_deadline_value().0,
             "The winner of the competition can be determined only after the deadline."
           );
@@ -1032,7 +1032,7 @@ impl BountiesContract {
     id: BountyIndex,
     claimer: AccountId,
     bounty: Bounty,
-    deadline: U64,
+    deadline: Option<U64>,
     description: String,
     slot: Option<usize>,
   ) -> PromiseOrValue<()> {
@@ -1620,7 +1620,7 @@ impl BountiesContract {
     &mut self,
     id: BountyIndex,
     claimer: AccountId,
-    deadline: U64,
+    deadline: Option<U64>,
     description: String,
     proposal_id: Option<U64>,
     slot: Option<usize>,

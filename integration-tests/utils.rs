@@ -31,7 +31,7 @@ pub const BOUNTY_AMOUNT: U128 = U128(99 * 10u128.pow(16)); // 0.99 TFT (Test fun
 pub const PLATFORM_FEE: U128 = U128(11 * 10u128.pow(16)); // 0.11 TFT
 pub const DAO_FEE: U128 = U128(11 * 10u128.pow(16)); // 0.11 TFT
 pub const MIN_AMOUNT_FOR_KYC: U128 = U128(2 * 10u128.pow(18)); // 2 TFT
-pub const MAX_DEADLINE: U64 = U64(604_800_000_000_000);
+pub const MAX_DEADLINE: U64 = U64(7 * 24 * 60 * 60 * 1_000 * 1_000_000); // 7 days
 pub const BOND: Balance = ONE_NEAR;
 pub const MAX_GAS: Balance = 3 * 10u128.pow(22); // 300 Tgas
 
@@ -418,6 +418,28 @@ impl Env {
     Ok(())
   }
 
+  pub async fn assert_exists_failed_receipts(
+    result: ExecutionFinalResult,
+    expected_msg: &str,
+  ) -> anyhow::Result<()> {
+    assert!(
+      result
+        .into_result()
+        .unwrap()
+        .receipt_outcomes()
+        .into_iter()
+        .find(|&e| e.is_failure())
+        .expect("No failed receipts")
+        .clone()
+        .into_result()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains(expected_msg)
+    );
+    Ok(())
+  }
+
   pub async fn assert_statuses(
     &self,
     bounties: &Contract,
@@ -545,7 +567,8 @@ impl Env {
     postpaid: Option<Postpaid>,
     multitasking: Option<Multitasking>,
     expected_msg: Option<&str>,
-  ) -> anyhow::Result<()> {
+    allow_deadline_stretch: Option<bool>,
+  ) -> anyhow::Result<ExecutionFinalResult> {
     let metadata = json!({
       "title": "Test bounty title",
       "description": "Test bounty description",
@@ -581,6 +604,7 @@ impl Env {
         Some(r) => json!(r),
         _ => json!(null),
       },
+      "allow_deadline_stretch": json!(allow_deadline_stretch.unwrap_or_default()),
     });
 
     let reviewers = match reviewers_params {
@@ -622,8 +646,8 @@ impl Env {
         .transact()
         .await?;
     }
-    Self::assert_contract_call_result(res, expected_msg).await?;
-    Ok(())
+    Self::assert_contract_call_result(res.clone(), expected_msg).await?;
+    Ok(res)
   }
 
   pub async fn external_ft_transfer(
@@ -684,7 +708,7 @@ impl Env {
     &self,
     bounties: &Contract,
     bounty_id: u64,
-    deadline: U64,
+    deadline: Option<U64>,
     description: String,
     slot: Option<usize>,
     user: Option<&Account>,
