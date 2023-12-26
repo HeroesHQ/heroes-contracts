@@ -7,9 +7,9 @@ use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Multitasking, Postpaid,
-               ReferenceType, Reviewers, ReviewersParams, TokenDetails, ValidatorsDaoParams,
-               WhitelistType};
+               ConfigCreate, DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Multitasking,
+               Postpaid, ReferenceType, Reviewers, ReviewersParams, TokenDetails,
+               ValidatorsDaoParams, WhitelistType};
 use disputes::{Dispute, Proposal};
 use kyc_whitelist::{ActivationType, Config, VerificationType};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
@@ -1089,15 +1089,17 @@ impl Env {
     Ok(proposal)
   }
 
-  pub async fn add_to_postpaid_subscribers_whitelist(
+  pub async fn add_to_some_whitelist(
     &self,
+    account: &AccountId,
+    whitelist_type: WhitelistType,
   ) -> anyhow::Result<()> {
     let res = self.bounties_contract_admin
       .call(self.disputed_bounties.id(), "add_to_some_whitelist")
       .args_json((
-        self.project_owner.id(),
+        account,
         Option::<Vec<AccountId>>::None,
-        WhitelistType::PostpaidSubscribersWhitelist
+        whitelist_type
       ))
       .max_gas()
       .deposit(ONE_YOCTO)
@@ -1107,15 +1109,17 @@ impl Env {
     Ok(())
   }
 
-  pub async fn remove_from_postpaid_subscribers_whitelist(
+  pub async fn remove_from_some_whitelist(
     &self,
+    account: &AccountId,
+    whitelist_type: WhitelistType,
   ) -> anyhow::Result<()> {
     let res = self.bounties_contract_admin
       .call(self.disputed_bounties.id(), "remove_from_some_whitelist")
       .args_json((
-        self.project_owner.id(),
+        account,
         Option::<Vec<AccountId>>::None,
-        WhitelistType::PostpaidSubscribersWhitelist
+        whitelist_type
       ))
       .max_gas()
       .deposit(ONE_YOCTO)
@@ -1287,6 +1291,64 @@ impl Env {
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn set_bounties_config(
+    &self,
+    bounties: &Contract,
+    config_create: &ConfigCreate
+  ) -> anyhow::Result<()> {
+    let res = self.bounties_contract_admin
+      .call(bounties.id(), "change_config")
+      .args_json((config_create,))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn get_bounties_config(bounties: &Contract) -> anyhow::Result<bounties::Config> {
+    let config = bounties
+      .call("get_config")
+      .view()
+      .await?
+      .json()?;
+    Ok(config)
+  }
+
+  async fn set_using_owner_whitelist(
+    &self,
+    bounties: &Contract,
+    use_owners_whitelist: bool,
+  ) -> anyhow::Result<()> {
+    let mut current_config = Self::get_bounties_config(bounties).await?;
+    current_config.use_owners_whitelist = true;
+    self.set_bounties_config(
+      bounties,
+      &ConfigCreate {
+        bounty_claim_bond: current_config.bounty_claim_bond,
+        bounty_forgiveness_period: current_config.bounty_forgiveness_period,
+        period_for_opening_dispute: current_config.period_for_opening_dispute,
+        platform_fee_percentage: current_config.platform_fee_percentage,
+        validators_dao_fee_percentage: current_config.validators_dao_fee_percentage,
+        penalty_platform_fee_percentage: current_config.penalty_platform_fee_percentage,
+        penalty_validators_dao_fee_percentage: current_config.penalty_validators_dao_fee_percentage,
+        use_owners_whitelist,
+      }
+    ).await?;
+    Ok(())
+  }
+
+  pub async fn start_using_owner_whitelist(&self, bounties: &Contract) -> anyhow::Result<()> {
+    self.set_using_owner_whitelist(bounties, true).await?;
+    Ok(())
+  }
+
+  pub async fn stop_using_owner_whitelist(&self, bounties: &Contract) -> anyhow::Result<()> {
+    self.set_using_owner_whitelist(bounties, false).await?;
     Ok(())
   }
 }
