@@ -5,7 +5,7 @@ use workspaces::Account;
 use bounties::{Bounty, BountyAction, BountyMetadata, BountyStatus, BountyUpdate, ClaimerApproval,
                ClaimStatus, ContactDetails, ContactType, Deadline, DefermentOfKYC, Experience,
                KycConfig, KycVerificationMethod, Multitasking, Postpaid, Reviewers, ReviewersParams,
-               StartConditions, Subtask, TokenDetails};
+               StartConditions, Subtask, TokenDetails, WhitelistType};
 use disputes::DisputeStatus;
 
 mod utils;
@@ -44,6 +44,7 @@ async fn main() -> anyhow::Result<()> {
   test_different_tasks_flow(&e).await?;
   test_withdraw_non_refunded_bonds(&e).await?;
   test_flow_with_stretch_claim_deadline(&e).await?;
+  test_owners_whitelist_flow(&e).await?;
   Ok(())
 }
 
@@ -2174,7 +2175,10 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     None,
   ).await?;
 
-  e.add_to_postpaid_subscribers_whitelist().await?;
+  e.add_to_some_whitelist(
+    e.project_owner.id(),
+    WhitelistType::PostpaidSubscribersWhitelist
+  ).await?;
 
   let _ = e.add_bounty(
     &e.disputed_bounties,
@@ -2283,7 +2287,11 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     Some([14, 6, 1, 24, 18, 4, 5, 4, 2]),
     Some(freelancer.id()),
   ).await?;
-  e.remove_from_postpaid_subscribers_whitelist().await?;
+
+  e.remove_from_some_whitelist(
+    e.project_owner.id(),
+    WhitelistType::PostpaidSubscribersWhitelist
+  ).await?;
 
   println!("      Passed ✅ Test - postpaid flow");
   Ok(())
@@ -2695,7 +2703,11 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
   let bounty_claims = Env::get_bounty_claims_by_id(&e.disputed_bounties, bounty_id).await?;
   assert_eq!(bounty_claims[0].1.status, ClaimStatus::NotCompleted);
 
-  e.add_to_postpaid_subscribers_whitelist().await?;
+  e.add_to_some_whitelist(
+    e.project_owner.id(),
+    WhitelistType::PostpaidSubscribersWhitelist
+  ).await?;
+
   let _ = e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
@@ -2714,7 +2726,11 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
     }),
     None, None,
   ).await?;
-  e.remove_from_postpaid_subscribers_whitelist().await?;
+
+  e.remove_from_some_whitelist(
+    e.project_owner.id(),
+    WhitelistType::PostpaidSubscribersWhitelist
+  ).await?;
 
   let next_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(next_bounty_id, last_bounty_id + 4);
@@ -3170,7 +3186,11 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     e.get_token_balance(freelancers[3].id()).await?
   );
 
-  e.add_to_postpaid_subscribers_whitelist().await?;
+  e.add_to_some_whitelist(
+    e.project_owner.id(),
+    WhitelistType::PostpaidSubscribersWhitelist
+  ).await?;
+
   let _ = e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
@@ -3189,7 +3209,11 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     }),
     None, None,
   ).await?;
-  e.remove_from_postpaid_subscribers_whitelist().await?;
+
+  e.remove_from_some_whitelist(
+    e.project_owner.id(),
+    WhitelistType::PostpaidSubscribersWhitelist
+  ).await?;
 
   let next_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(next_bounty_id, last_bounty_id + 3);
@@ -3543,7 +3567,10 @@ async fn test_different_tasks_flow(e: &Env) -> anyhow::Result<()> {
     e.get_token_balance(freelancers[3].id()).await?
   );
 
-  e.add_to_postpaid_subscribers_whitelist().await?;
+  e.add_to_some_whitelist(
+    e.project_owner.id(),
+    WhitelistType::PostpaidSubscribersWhitelist
+  ).await?;
   let _ = e.add_bounty(
     &e.disputed_bounties,
     json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
@@ -3569,7 +3596,11 @@ async fn test_different_tasks_flow(e: &Env) -> anyhow::Result<()> {
     }),
     None, None,
   ).await?;
-  e.remove_from_postpaid_subscribers_whitelist().await?;
+
+  e.remove_from_some_whitelist(
+    e.project_owner.id(),
+    WhitelistType::PostpaidSubscribersWhitelist
+  ).await?;
 
   let next_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
   assert_eq!(next_bounty_id, last_bounty_id + 2);
@@ -4410,5 +4441,65 @@ async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
   ).await?;
 
   println!("      Passed ✅ Test - flow with stretch claim deadline");
+  Ok(())
+}
+
+async fn test_owners_whitelist_flow(e: &Env) -> anyhow::Result<()> {
+  e.start_using_owner_whitelist(&e.disputed_bounties).await?;
+  let last_bounty_id = get_last_bounty_id(&e.disputed_bounties).await?;
+
+  let result = e.add_bounty(
+    &e.disputed_bounties,
+    json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
+    json!("WithoutApproval"),
+    None, None, None, None, None, None, None,
+  ).await?;
+  Env::assert_exists_failed_receipts(
+    result,
+    "You are not allowed to create bounties"
+  ).await?;
+
+  e.add_to_some_whitelist(
+    e.project_owner.id(),
+    WhitelistType::OwnersWhitelist,
+  ).await?;
+
+  let _ = e.add_bounty(
+    &e.disputed_bounties,
+    json!({ "MaxDeadline": json!({ "max_deadline": MAX_DEADLINE }) }),
+    json!("WithoutApproval"),
+    None, None, None, None, None, None, None,
+  ).await?;
+
+  let bounty_id = last_bounty_id;
+
+  let freelancer = e.add_account("freelancer56").await?;
+  Env::register_user(&e.test_token, freelancer.id()).await?;
+
+  e.bounty_claim(
+    &e.disputed_bounties,
+    bounty_id,
+    Some(U64(1_000_000_000 * 60 * 60 * 24 * 2)),
+    "Test claim".to_string(),
+    None,
+    Some(&freelancer),
+    None
+  ).await?;
+
+  e.assert_statuses(
+    &e.disputed_bounties,
+    bounty_id.clone(),
+    Some(&freelancer.id()),
+    ClaimStatus::InProgress,
+    BountyStatus::Claimed,
+  ).await?;
+
+  e.remove_from_some_whitelist(
+    e.project_owner.id(),
+    WhitelistType::OwnersWhitelist,
+  ).await?;
+  e.stop_using_owner_whitelist(&e.disputed_bounties).await?;
+
+  println!("      Passed ✅ Test - owners whitelist flow");
   Ok(())
 }
