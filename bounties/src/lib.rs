@@ -14,6 +14,7 @@ pub mod internal;
 pub mod receiver;
 pub mod types;
 pub mod view;
+mod upgrade;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -39,6 +40,9 @@ pub struct BountiesContract {
   /// Amount of $NEAR locked for bonds.
   pub locked_amount: Balance,
 
+  /// Amount of non-refunded bonds.
+  pub unlocked_amount: Balance,
+
   /// account ids that can perform all actions:
   /// - manage admins_whitelist
   /// - add new ft-token types
@@ -58,10 +62,11 @@ pub struct BountiesContract {
   /// KYC whitelist contract (optional)
   pub kyc_whitelist_contract: Option<AccountId>,
 
-  /// Whitelist accounts that can generate postpaid bounties.
-  /// A map whose keys are whitelist members, the values of map elements are not used
-  /// (deprecated part of the old structure)
-  pub owners_whitelist: LookupMap<AccountId, Vec<AccountId>>,
+  /// Whitelist accounts that can generate bounties
+  pub owners_whitelist: UnorderedSet<AccountId>,
+
+  /// Whitelist accounts that can generate postpaid bounties
+  pub postpaid_subscribers_whitelist: UnorderedSet<AccountId>,
 
   /// Total platform fees map per token ID
   pub total_fees: LookupMap<AccountId, FeeStats>,
@@ -71,6 +76,9 @@ pub struct BountiesContract {
 
   /// Recipient of platform fee (optional)
   pub recipient_of_platform_fee: Option<AccountId>,
+
+  /// Contract status
+  pub status: ContractStatus,
 }
 
 #[near_bindgen]
@@ -104,24 +112,29 @@ impl BountiesContract {
       bounty_claimers: LookupMap::new(StorageKey::BountyClaimers),
       bounty_claimer_accounts: LookupMap::new(StorageKey::BountyClaimerAccounts),
       locked_amount: 0,
+      unlocked_amount: 0,
       admins_whitelist: admins_whitelist_set,
       config: versioned_config,
       reputation_contract,
       dispute_contract,
       kyc_whitelist_contract,
-      owners_whitelist: LookupMap::new(StorageKey::OwnersWhitelist),
+      owners_whitelist: UnorderedSet::new(StorageKey::OwnersWhitelist),
+      postpaid_subscribers_whitelist: UnorderedSet::new(StorageKey::PostpaidSubscribersWhitelist),
       total_fees: LookupMap::new(StorageKey::TotalFees),
       total_validators_dao_fees: LookupMap::new(StorageKey::TotalValidatorsDaoFees),
       recipient_of_platform_fee,
+      status: ContractStatus::Genesis,
     }
   }
 
   #[payable]
-  pub fn add_to_admins_whitelist(
+  pub fn add_to_some_whitelist(
     &mut self,
     account_id: Option<AccountId>,
     account_ids: Option<Vec<AccountId>>,
+    whitelist_type: WhitelistType,
   ) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     let account_ids = if let Some(account_ids) = account_ids {
@@ -130,16 +143,24 @@ impl BountiesContract {
       vec![account_id.expect("Expected either account_id or account_ids")]
     };
     for account_id in &account_ids {
-      self.admins_whitelist.insert(account_id);
+      match whitelist_type {
+        WhitelistType::AdministratorsWhitelist => { self.admins_whitelist.insert(account_id); },
+        WhitelistType::OwnersWhitelist => { self.owners_whitelist.insert(account_id); },
+        WhitelistType::PostpaidSubscribersWhitelist => {
+          self.postpaid_subscribers_whitelist.insert(account_id);
+        },
+      }
     }
   }
 
   #[payable]
-  pub fn remove_from_admins_whitelist(
+  pub fn remove_from_some_whitelist(
     &mut self,
     account_id: Option<AccountId>,
     account_ids: Option<Vec<AccountId>>,
+    whitelist_type: WhitelistType,
   ) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     let account_ids = if let Some(account_ids) = account_ids {
@@ -148,48 +169,19 @@ impl BountiesContract {
       vec![account_id.expect("Expected either account_id or account_ids")]
     };
     for account_id in &account_ids {
-      self.admins_whitelist.remove(&account_id);
+      match whitelist_type {
+        WhitelistType::AdministratorsWhitelist => { self.admins_whitelist.remove(&account_id); },
+        WhitelistType::OwnersWhitelist => { self.owners_whitelist.remove(&account_id); },
+        WhitelistType::PostpaidSubscribersWhitelist => {
+          self.postpaid_subscribers_whitelist.remove(&account_id);
+        },
+      }
     }
     assert!(
-      !self.admins_whitelist.is_empty(),
+      !matches!(whitelist_type, WhitelistType::AdministratorsWhitelist) ||
+        !self.admins_whitelist.is_empty(),
       "Cannot remove all accounts from admin whitelist",
     );
-  }
-
-  #[payable]
-  pub fn add_to_owners_whitelist(
-    &mut self,
-    account_id: Option<AccountId>,
-    account_ids: Option<Vec<AccountId>>,
-  ) {
-    assert_one_yocto();
-    self.assert_admins_whitelist(&env::predecessor_account_id());
-    let account_ids = if let Some(account_ids) = account_ids {
-      account_ids
-    } else {
-      vec![account_id.expect("Expected either account_id or account_ids")]
-    };
-    for account_id in &account_ids {
-      self.owners_whitelist.insert(account_id, &vec![]);
-    }
-  }
-
-  #[payable]
-  pub fn remove_from_owners_whitelist(
-    &mut self,
-    account_id: Option<AccountId>,
-    account_ids: Option<Vec<AccountId>>,
-  ) {
-    assert_one_yocto();
-    self.assert_admins_whitelist(&env::predecessor_account_id());
-    let account_ids = if let Some(account_ids) = account_ids {
-      account_ids
-    } else {
-      vec![account_id.expect("Expected either account_id or account_ids")]
-    };
-    for account_id in &account_ids {
-      self.owners_whitelist.remove(&account_id);
-    }
   }
 
   #[payable]
@@ -198,6 +190,7 @@ impl BountiesContract {
     token_id: AccountId,
     min_amount_for_kyc: Option<U128>
   ) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     assert!(
@@ -209,6 +202,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn update_token(&mut self, token_id: AccountId, token_details: TokenDetails) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     assert!(
@@ -220,6 +214,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn update_kyc_whitelist_contract(&mut self, kyc_whitelist_contract: Option<AccountId>) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     self.kyc_whitelist_contract = kyc_whitelist_contract;
@@ -228,6 +223,7 @@ impl BountiesContract {
   /// Can be used only during migrations when updating contract versions
   #[payable]
   pub fn update_reputation_contract(&mut self, reputation_contract: AccountId) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     assert!(
@@ -240,6 +236,7 @@ impl BountiesContract {
   /// Can be used only during migrations when updating contract versions
   #[payable]
   pub fn update_dispute_contract(&mut self, dispute_contract: AccountId) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     assert!(
@@ -251,6 +248,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn change_config(&mut self, config_create: ConfigCreate) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     self.config = config_create.to_config(self.config.clone().to_config()).into();
@@ -263,6 +261,7 @@ impl BountiesContract {
     entry: Option<String>,
     entries: Option<Vec<String>>
   ) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     let (reference, entries) = self.get_configuration_dictionary(dict, entry, entries);
@@ -279,6 +278,7 @@ impl BountiesContract {
     entry: Option<String>,
     entries: Option<Vec<String>>
   ) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     let (reference, entries) = self.get_configuration_dictionary(dict, entry, entries);
@@ -293,6 +293,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn change_recipient_of_platform_fee(&mut self, recipient_of_platform_fee: AccountId) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admins_whitelist(&env::predecessor_account_id());
     self.recipient_of_platform_fee = Some(recipient_of_platform_fee);
@@ -304,10 +305,11 @@ impl BountiesContract {
   pub fn bounty_claim(
     &mut self,
     id: BountyIndex,
-    deadline: U64,
+    deadline: Option<U64>,
     description: String,
     slot: Option<usize>,
   ) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_eq!(
       env::attached_deposit(),
       self.config.clone().to_config().bounty_claim_bond.0,
@@ -353,6 +355,7 @@ impl BountiesContract {
     approve: bool,
     kyc_postponed: Option<DefermentOfKYC>
   ) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
     let (
       bounty,
@@ -384,6 +387,7 @@ impl BountiesContract {
   /// Only creator of the claim can call `done`.
   #[payable]
   pub fn bounty_done(&mut self, id: BountyIndex, description: String) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
 
     let mut bounty = self.get_bounty(id.clone());
@@ -440,6 +444,7 @@ impl BountiesContract {
   /// Only the claimant can call this method.
   #[payable]
   pub fn bounty_give_up(&mut self, id: BountyIndex) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
 
     let mut bounty = self.get_bounty(id.clone());
@@ -498,6 +503,7 @@ impl BountiesContract {
   /// Only the owner of the bounty can call this method.
   #[payable]
   pub fn bounty_cancel(&mut self, id: BountyIndex) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
 
     let bounty = self.get_bounty(id.clone());
@@ -514,6 +520,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn bounty_action(&mut self, id: BountyIndex, action: BountyAction) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
     let mut bounty = self.get_bounty(id.clone());
 
@@ -591,6 +598,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn bounty_update(&mut self, id: BountyIndex, bounty_update: BountyUpdate) {
+    self.assert_live();
     assert_one_yocto();
 
     let mut bounty = self.get_bounty(id.clone());
@@ -635,26 +643,25 @@ impl BountiesContract {
       changed = true;
     }
     if bounty_update.deadline.is_some() {
+      let new_deadline = bounty_update.deadline.clone().unwrap();
       if found_claim {
-        assert_ne!(
-          bounty.deadline.get_deadline_type(),
-          3,
+        assert!(
+          !matches!(bounty.deadline, Deadline::WithoutDeadline),
           "The deadline cannot be limited if there are already claims"
         );
-        if bounty_update.deadline.clone().unwrap().get_deadline_type() != 3 {
+        if !matches!(new_deadline, Deadline::WithoutDeadline) {
           assert_eq!(
             bounty.deadline.clone().get_deadline_type(),
             bounty_update.deadline.clone().unwrap().get_deadline_type(),
             "The type of deadline cannot be changed if there are already claims"
           );
           assert!(
-            bounty_update.deadline.clone().unwrap().get_deadline_value().0 >
-              bounty.deadline.clone().get_deadline_value().0,
+            new_deadline.get_deadline_value().0 > bounty.deadline.clone().get_deadline_value().0,
             "The deadline can be increased only in the upward direction"
           );
         }
       }
-      bounty.deadline = bounty_update.deadline.unwrap();
+      bounty.deadline = new_deadline;
       changed = true;
     }
     if bounty_update.reviewers.is_some() {
@@ -718,6 +725,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn extend_claim_deadline(&mut self, id: BountyIndex, claimer: AccountId, deadline: U64) {
+    self.assert_live();
     assert_one_yocto();
 
     let bounty = self.get_bounty(id.clone());
@@ -738,11 +746,16 @@ impl BountiesContract {
       "Claim status does not allow to postpone the deadline"
     );
     assert!(
-      bounty.is_claim_deadline_correct(deadline) && deadline.0 > bounty_claim.deadline.0,
+      bounty_claim.deadline.is_some(),
+      "This bounty does not use a claim deadline"
+    );
+    assert!(
+      bounty.is_claim_deadline_correct(Some(deadline)) &&
+        deadline.0 > bounty_claim.deadline.unwrap().0,
       "The claim deadline is incorrect"
     );
 
-    bounty_claim.deadline = deadline;
+    bounty_claim.deadline = Some(deadline);
     claims[claim_idx] = bounty_claim;
     self.internal_save_claims(&claimer, &claims);
   }
@@ -754,12 +767,13 @@ impl BountiesContract {
     token_id: Option<AccountId>,
     amount: U128
   ) {
+    self.assert_live();
     assert_one_yocto();
 
     let sender_id = env::predecessor_account_id();
     assert!(bounty_create.postpaid.is_some(), "The postpaid parameter is incorrect");
     assert!(
-      self.is_owner_whitelisted(sender_id.clone()),
+      self.is_postpaid_subscriber_whitelisted(sender_id.clone()),
       "You are not allowed to create postpaid bounties"
     );
     if token_id.is_some() {
@@ -771,6 +785,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn mark_as_paid(&mut self, id: BountyIndex, claimer: Option<AccountId>) {
+    self.assert_live();
     assert_one_yocto();
 
     let sender_id = env::predecessor_account_id();
@@ -833,6 +848,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn confirm_payment(&mut self, id: BountyIndex) {
+    self.assert_live();
     assert_one_yocto();
 
     let sender_id = env::predecessor_account_id();
@@ -903,6 +919,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn start_competition(&mut self, id: BountyIndex) {
+    self.assert_live();
     assert_one_yocto();
 
     let sender_id = env::predecessor_account_id();
@@ -954,6 +971,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn withdraw_platform_fee(&mut self, token_id: AccountId) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
     assert_eq!(
       self.recipient_of_platform_fee
@@ -975,6 +993,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn withdraw_validators_dao_fee(&mut self, token_id: AccountId) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
     let dao_account_id = env::predecessor_account_id();
     let balance = self.internal_get_unlocked_validators_dao_fee_amount(
@@ -994,6 +1013,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn withdraw(&mut self, id: BountyIndex) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
 
     let receiver_id = env::predecessor_account_id();
@@ -1028,6 +1048,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn update_validators_dao_params(&mut self, id: BountyIndex, dao_params: ValidatorsDaoParams) {
+    self.assert_live();
     assert_one_yocto();
     let mut bounty = self.get_bounty(id.clone());
 
@@ -1048,6 +1069,7 @@ impl BountiesContract {
 
   #[payable]
   pub fn open_dispute(&mut self, id: BountyIndex, description: String) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
 
     assert!(
@@ -1083,6 +1105,7 @@ impl BountiesContract {
     claimer: AccountId,
     success: bool
   ) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
 
     assert!(
@@ -1126,6 +1149,34 @@ impl BountiesContract {
       )
     }
   }
+
+  #[payable]
+  pub fn withdraw_non_refunded_bonds(&mut self) -> Promise {
+    self.assert_live();
+    assert_one_yocto();
+    let receiver_id = env::predecessor_account_id();
+
+    assert_eq!(
+      self.recipient_of_platform_fee
+        .clone().expect("The recipient of the non-refundable bonds is not specified"),
+      receiver_id,
+      "This account does not have permission to perform this action"
+    );
+    assert!(self.unlocked_amount > 0, "The amount of non-refunded bonds is now zero");
+
+    let amount = self.unlocked_amount;
+    self.unlocked_amount = 0;
+    Promise::new(receiver_id).transfer(amount)
+  }
+
+  #[private]
+  pub fn set_status(&mut self, status: ContractStatus) {
+    assert!(
+      !matches!(status, ContractStatus::Genesis),
+      "The status can't be set to Genesis"
+    );
+    self.status = status;
+  }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1135,9 +1186,9 @@ mod tests {
   use near_sdk::json_types::{U128, U64};
   use near_sdk::{testing_env, AccountId, Balance};
   use crate::{DEFAULT_BOUNTY_CLAIM_BOND, BountiesContract, Bounty, BountyAction, BountyClaim,
-              BountyIndex, BountyMetadata, BountyStatus, ClaimerApproval, ClaimStatus, Config,
-              ConfigCreate, Deadline, FeeStats, KycConfig, Reviewers, TokenDetails, ValidatorsDao,
-              ValidatorsDaoParams};
+              BountyIndex, BountyMetadata, BountyStatus, BountyUpdate, ClaimerApproval,
+              ClaimStatus, Config, ConfigCreate, ContractStatus, Deadline, FeeStats, KycConfig,
+              Reviewers, TokenDetails, ValidatorsDao, ValidatorsDaoParams, WhitelistType};
 
   pub const TOKEN_DECIMALS: u8 = 18;
   pub const MAX_DEADLINE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 7);
@@ -1157,7 +1208,8 @@ mod tests {
   fn add_bounty(
     contract: &mut BountiesContract,
     owner: &AccountId,
-    validators_dao: Option<ValidatorsDao>
+    validators_dao: Option<ValidatorsDao>,
+    allow_deadline_stretch: Option<bool>,
   ) -> BountyIndex {
     let bounty_index: BountyIndex = 0;
     let bounty = Bounty {
@@ -1190,6 +1242,7 @@ mod tests {
       kyc_config: KycConfig::KycNotRequired,
       postpaid: None,
       multitasking: None,
+      allow_deadline_stretch: allow_deadline_stretch.unwrap_or_default(),
     };
     contract.internal_update_bounty(&bounty_index, bounty.clone());
     contract.account_bounties.insert(owner, &vec![bounty_index]);
@@ -1222,7 +1275,7 @@ mod tests {
       .attached_deposit(bond.clone())
       .block_timestamp(0)
       .build());
-    let deadline = U64(1_000_000_000 * 60 * 60 * 24 * 2);
+    let deadline = Some(U64(1_000_000_000 * 60 * 60 * 24 * 2));
     let description = "Test description".to_string();
 
     contract.bounty_claim(id, deadline, description.clone(), None);
@@ -1298,6 +1351,26 @@ mod tests {
   }
 
   #[test]
+  #[should_panic(expected = "The contract status is not Live")]
+  fn test_contract_status_is_not_live() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0).into()],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
+    let claimer = accounts(2);
+    contract.set_status(ContractStatus::ReadOnly);
+    bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+  }
+
+  #[test]
   fn test_add_to_admins_whitelist() {
     let mut context = VMContextBuilder::new();
     testing_env!(context
@@ -1312,11 +1385,20 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
     let account_ids: Vec<AccountId> = vec![accounts(1), accounts(2)];
-    contract.add_to_admins_whitelist(None, Some(account_ids.clone()));
+    contract.add_to_some_whitelist(
+      None,
+      Some(account_ids.clone()),
+      WhitelistType::AdministratorsWhitelist
+    );
     assert_eq!(contract.get_admins_whitelist(), vec![accounts(0), accounts(1), accounts(2)]);
 
-    contract.add_to_admins_whitelist(Some(accounts(3)), None);
+    contract.add_to_some_whitelist(
+      Some(accounts(3)),
+      None,
+      WhitelistType::AdministratorsWhitelist
+    );
     assert_eq!(
       contract.get_admins_whitelist(),
       vec![accounts(0), accounts(1), accounts(2), accounts(3)]
@@ -1338,14 +1420,24 @@ mod tests {
       None,
       None
     );
-    contract.add_to_admins_whitelist(
+    contract.set_status(ContractStatus::Live);
+    contract.add_to_some_whitelist(
       None,
-      Some(vec![accounts(1), accounts(2), accounts(3)])
+      Some(vec![accounts(1), accounts(2), accounts(3)]),
+      WhitelistType::AdministratorsWhitelist
     );
 
-    contract.remove_from_admins_whitelist(Some(accounts(3)), None);
+    contract.remove_from_some_whitelist(
+      Some(accounts(3)),
+      None,
+      WhitelistType::AdministratorsWhitelist
+    );
     assert_eq!(contract.get_admins_whitelist(), vec![accounts(0), accounts(1), accounts(2)]);
-    contract.remove_from_admins_whitelist(None, Some(vec![accounts(1), accounts(2)]));
+    contract.remove_from_some_whitelist(
+      None,
+      Some(vec![accounts(1), accounts(2)]),
+      WhitelistType::AdministratorsWhitelist
+    );
     assert_eq!(contract.get_admins_whitelist(), vec![accounts(0)]);
   }
 
@@ -1365,7 +1457,8 @@ mod tests {
       None,
       None
     );
-    contract.add_to_admins_whitelist(None, None);
+    contract.set_status(ContractStatus::Live);
+    contract.add_to_some_whitelist(None, None, WhitelistType::AdministratorsWhitelist);
   }
 
   #[test]
@@ -1381,7 +1474,12 @@ mod tests {
       None,
       None
     );
-    contract.add_to_admins_whitelist(Some(accounts(1)), None);
+    contract.set_status(ContractStatus::Live);
+    contract.add_to_some_whitelist(
+      Some(accounts(1)),
+      None,
+      WhitelistType::AdministratorsWhitelist
+    );
   }
 
   #[test]
@@ -1398,7 +1496,12 @@ mod tests {
       None
     );
     testing_env!(context.predecessor_account_id(accounts(1)).attached_deposit(1).build());
-    contract.add_to_admins_whitelist(Some(accounts(1)), None);
+    contract.set_status(ContractStatus::Live);
+    contract.add_to_some_whitelist(
+      Some(accounts(1)),
+      None,
+      WhitelistType::AdministratorsWhitelist
+    );
   }
 
   #[test]
@@ -1417,7 +1520,12 @@ mod tests {
       None,
       None
     );
-    contract.remove_from_admins_whitelist(Some(accounts(0)), None);
+    contract.set_status(ContractStatus::Live);
+    contract.remove_from_some_whitelist(
+      Some(accounts(0)),
+      None,
+      WhitelistType::AdministratorsWhitelist
+    );
   }
 
   #[test]
@@ -1435,7 +1543,7 @@ mod tests {
       None,
       None
     );
-
+    contract.set_status(ContractStatus::Live);
     contract.add_token_id(get_token_id(), None);
     // For the unit test, the list of tokens has not changed.
     // The action is performed in the promise callback function (see simulation test).
@@ -1457,6 +1565,7 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
     add_token(&mut contract);
 
     contract.add_token_id(get_token_id(), None);
@@ -1477,6 +1586,7 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
     add_token(&mut contract);
 
     assert_eq!(
@@ -1508,6 +1618,7 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
 
     let config_create = ConfigCreate {
       bounty_claim_bond: U128::from(2_000_000_000_000_000_000_000_000),
@@ -1517,6 +1628,7 @@ mod tests {
       validators_dao_fee_percentage: 5_000,
       penalty_platform_fee_percentage: 500,
       penalty_validators_dao_fee_percentage: 500,
+      use_owners_whitelist: true,
     };
     contract.change_config(config_create.clone());
     let config = contract.get_config();
@@ -1528,6 +1640,7 @@ mod tests {
       validators_dao_fee_percentage: config.validators_dao_fee_percentage,
       penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
       penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
+      use_owners_whitelist: config.use_owners_whitelist,
     });
   }
 
@@ -1543,7 +1656,8 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
 
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
@@ -1553,7 +1667,7 @@ mod tests {
         bounty_id: id.clone(),
         created_at: U64(0),
         start_time: Some(U64(0)),
-        deadline: U64(1_000_000_000 * 60 * 60 * 24 * 2),
+        deadline: Some(U64(1_000_000_000 * 60 * 60 * 24 * 2)),
         status: ClaimStatus::InProgress,
         bounty_payout_proposal_id: None,
         approve_claimer_proposal_id: None,
@@ -1584,14 +1698,15 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
 
     testing_env!(context
       .predecessor_account_id(accounts(2))
       .build());
     contract.bounty_claim(
       id,
-      U64(1_000_000_000 * 60 * 60 * 24 * 2),
+      Some(U64(1_000_000_000 * 60 * 60 * 24 * 2)),
       "Test description".to_string(),
       None
     );
@@ -1610,7 +1725,8 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     bounty_claim(&mut context, &mut contract, id.clone(), &accounts(2));
 
     testing_env!(context
@@ -1619,7 +1735,7 @@ mod tests {
       .build());
     contract.bounty_claim(
       id,
-      U64(1_000_000_000 * 60 * 60 * 24 * 2),
+      Some(U64(1_000_000_000 * 60 * 60 * 24 * 2)),
       "Test description".to_string(),
       None
     );
@@ -1638,7 +1754,8 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
 
     testing_env!(context
       .predecessor_account_id(accounts(2))
@@ -1646,10 +1763,33 @@ mod tests {
       .build());
     contract.bounty_claim(
       id,
-      U64(MAX_DEADLINE.0 + 1),
+      Some(U64(MAX_DEADLINE.0 + 1)),
       "Test description".to_string(),
       None
     );
+  }
+
+  #[test]
+  #[should_panic(expected = "For this bounty, you need to specify a claim deadline")]
+  fn test_bounty_claim_without_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
+
+    testing_env!(context
+      .predecessor_account_id(accounts(2))
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(id, None, "Test description".to_string(), None);
   }
 
   #[test]
@@ -1665,7 +1805,8 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
 
     testing_env!(context
       .predecessor_account_id(accounts(2))
@@ -1673,7 +1814,7 @@ mod tests {
       .build());
     contract.bounty_claim(
       id + 1,
-      MAX_DEADLINE,
+      Some(MAX_DEADLINE),
       "Test description".to_string(),
       None
     );
@@ -1691,9 +1832,45 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+
+    bounty_done(&mut context, &mut contract, id.clone(), &claimer);
+    assert_eq!(
+      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      ClaimStatus::Completed
+    );
+    assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::Claimed);
+  }
+
+  #[test]
+  fn test_bounty_done_with_stretch_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, Some(true));
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      None, // without deadline
+      "Test description".to_string(),
+      None
+    );
 
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
     assert_eq!(
@@ -1716,7 +1893,8 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
 
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -1735,7 +1913,8 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -1755,9 +1934,12 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
+    assert_eq!(contract.unlocked_amount, 0);
 
     testing_env!(context
       .predecessor_account_id(claimer.clone())
@@ -1770,6 +1952,176 @@ mod tests {
       ClaimStatus::Expired
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::New);
+    assert_eq!(contract.locked_amount, 0);
+    assert_eq!(contract.unlocked_amount, Config::default().bounty_claim_bond.0);
+  }
+
+  #[test]
+  fn test_claim_that_has_expired_with_stretch_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, Some(true));
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      None, // without deadline
+      "Test description".to_string(),
+      None
+    );
+
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(1)
+      .block_timestamp(MAX_DEADLINE.0 + 1)
+      .build());
+    contract.bounty_done(id, "test description".to_string());
+    assert_eq!(
+      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      ClaimStatus::Expired
+    );
+  }
+
+  #[test]
+  fn test_bounty_owner_extended_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let owner = accounts(1);
+    let id = add_bounty(&mut contract, &owner, None, None);
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      Some(MAX_DEADLINE),
+      "Test description".to_string(),
+      None
+    );
+
+    testing_env!(context
+      .predecessor_account_id(owner.clone())
+      .attached_deposit(1)
+      .block_timestamp(MAX_DEADLINE.0 + 1)
+      .build());
+    contract.bounty_update(
+      id,
+      BountyUpdate {
+        deadline: Some(Deadline::MaxDeadline { max_deadline: U64(MAX_DEADLINE.0 * 2) }),
+        amount: None,
+        claimer_approval: None,
+        metadata: None,
+        reviewers: None,
+      }
+    );
+    contract.extend_claim_deadline(id, claimer.clone(), U64(MAX_DEADLINE.0 + 1_000_000));
+
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(1)
+      .block_timestamp(MAX_DEADLINE.0 + 1_000)
+      .build());
+    contract.bounty_done(id, "test description".to_string());
+    assert_eq!(
+      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      ClaimStatus::Completed
+    );
+  }
+
+  #[test]
+  #[should_panic(expected = "This bounty does not use a claim deadline")]
+  fn test_bounty_does_not_use_claim_deadline() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let owner = accounts(1);
+    let id = add_bounty(&mut contract, &owner, None, Some(true));
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      None,
+      "Test description".to_string(),
+      None
+    );
+
+    testing_env!(context
+      .predecessor_account_id(owner.clone())
+      .attached_deposit(1)
+      .build());
+    contract.extend_claim_deadline(id, claimer.clone(), U64(1_000_000));
+  }
+
+  #[test]
+  #[should_panic(expected = "The claim deadline is incorrect")]
+  fn test_claim_deadline_is_incorrect() {
+    let mut context = VMContextBuilder::new();
+    testing_env!(context.build());
+    let mut contract = BountiesContract::new(
+      vec![accounts(0)],
+      None,
+      None,
+      None,
+      None,
+      None
+    );
+    contract.set_status(ContractStatus::Live);
+    let owner = accounts(1);
+    let id = add_bounty(&mut contract, &owner, None, None);
+
+    let claimer = accounts(2);
+    testing_env!(context
+      .predecessor_account_id(claimer.clone())
+      .attached_deposit(Config::default().bounty_claim_bond.0)
+      .build());
+    contract.bounty_claim(
+      id,
+      Some(U64(1_000_000)),
+      "Test description".to_string(),
+      None
+    );
+
+    testing_env!(context
+      .predecessor_account_id(owner.clone())
+      .attached_deposit(1)
+      .build());
+    contract.extend_claim_deadline(id, claimer.clone(), U64(MAX_DEADLINE.0 + 1));
   }
 
   #[test]
@@ -1784,9 +2136,12 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
+    assert_eq!(contract.unlocked_amount, 0);
 
     let bounty_forgiveness_period = Config::default().bounty_forgiveness_period.0;
     bounty_give_up(
@@ -1802,8 +2157,11 @@ mod tests {
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::New);
     assert_eq!(contract.locked_amount, 0);
+    assert_eq!(contract.unlocked_amount, 0);
 
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
+    assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
+    assert_eq!(contract.unlocked_amount, 0);
 
     bounty_give_up(
       &mut context,
@@ -1817,7 +2175,8 @@ mod tests {
       ClaimStatus::Canceled
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::New);
-    assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
+    assert_eq!(contract.locked_amount, 0);
+    assert_eq!(contract.unlocked_amount, Config::default().bounty_claim_bond.0);
   }
 
   #[test]
@@ -1833,7 +2192,8 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
 
     bounty_give_up(
@@ -1858,7 +2218,8 @@ mod tests {
       None,
       None
     );
-    let id = add_bounty(&mut contract, &accounts(1), None);
+    contract.set_status(ContractStatus::Live);
+    let id = add_bounty(&mut contract, &accounts(1), None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -1884,8 +2245,9 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -1931,6 +2293,7 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
     let dao_params = ValidatorsDaoParams {
       account_id: "dao".parse().unwrap(),
@@ -1939,7 +2302,7 @@ mod tests {
       gas_for_claim_approval: None,
       gas_for_claimer_approval: None,
     };
-    let id = add_bounty(&mut contract, &project_owner, Some(dao_params.to_validators_dao()));
+    let id = add_bounty(&mut contract, &project_owner, Some(dao_params.to_validators_dao()), None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -1966,8 +2329,9 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -1992,6 +2356,7 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
     let id = add_bounty(
       &mut contract,
@@ -2005,7 +2370,8 @@ mod tests {
           gas_for_claimer_approval: None,
         }
           .to_validators_dao()
-      )
+      ),
+      None,
     );
 
     let new_dao_params = ValidatorsDaoParams {
@@ -2039,8 +2405,9 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -2073,8 +2440,9 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
 
     testing_env!(context
       .predecessor_account_id(accounts(2))
@@ -2096,8 +2464,9 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -2134,8 +2503,9 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
@@ -2160,6 +2530,7 @@ mod tests {
       None,
       None
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(accounts(0))
@@ -2174,10 +2545,11 @@ mod tests {
       validators_dao_fee_percentage: config.validators_dao_fee_percentage,
       penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
       penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
+      use_owners_whitelist: config.use_owners_whitelist,
     });
 
     let project_owner = accounts(1);
-    let id = add_bounty(&mut contract, &project_owner, None);
+    let id = add_bounty(&mut contract, &project_owner, None, None);
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);

@@ -25,7 +25,7 @@ impl BountiesContract {
     #[callback_result] result: Result<u64, PromiseError>,
     id: BountyIndex,
     claimer: AccountId,
-    deadline: U64,
+    deadline: Option<U64>,
     description: String,
     slot: Option<usize>,
   ) -> bool {

@@ -15,8 +15,14 @@ impl FungibleTokenReceiver for BountiesContract {
     amount: U128,
     msg: String,
   ) -> PromiseOrValue<U128> {
+    self.assert_live();
     let token_id = &env::predecessor_account_id();
     self.assert_that_token_is_allowed(token_id);
+    assert!(
+      !self.config.clone().to_config().use_owners_whitelist ||
+        self.is_owner_whitelisted(sender_id.clone()),
+      "You are not allowed to create bounties"
+    );
 
     let ft_message: FtMessage = serde_json::from_str(&msg).unwrap();
     match ft_message {

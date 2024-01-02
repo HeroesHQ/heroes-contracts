@@ -16,7 +16,11 @@ impl BountiesContract {
   }
 
   pub fn is_owner_whitelisted(&self, account_id: AccountId) -> bool {
-    self.owners_whitelist.contains_key(&account_id)
+    self.owners_whitelist.contains(&account_id)
+  }
+
+  pub fn is_postpaid_subscriber_whitelisted(&self, account_id: AccountId) -> bool {
+    self.postpaid_subscribers_whitelist.contains(&account_id)
   }
 
   pub fn get_reputation_contract_account_id(&self) -> Option<AccountId> {
@@ -44,6 +48,14 @@ impl BountiesContract {
   /// Returns available amount of NEAR that can be spent (outside of amount for storage and bonds).
   pub fn get_available_amount(&self) -> U128 {
     U128(env::account_balance() - self.get_locked_storage_amount().0 - self.locked_amount)
+  }
+
+  pub fn get_recipient_of_platform_fee(&self) -> Option<AccountId> {
+    self.recipient_of_platform_fee.clone()
+  }
+
+  pub fn get_non_refunded_bonds_amount(&self) -> U128 {
+    U128(self.unlocked_amount)
   }
 
   pub fn get_account_bounties(
@@ -126,7 +138,11 @@ impl BountiesContract {
       .unwrap_or_default()
   }
 
+  pub fn get_status(&self) -> ContractStatus {
+    self.status.clone()
+  }
+
   pub fn get_version() -> String {
-    "2.0.6".to_string()
+    "2.0.9".to_string()
   }
 }

@@ -1,14 +1,15 @@
 use near_sdk::json_types::{U128, U64};
 use near_sdk::serde::Deserialize;
-use near_sdk::ONE_YOCTO;
+use near_sdk::{Balance, ONE_NEAR, ONE_YOCTO};
 use near_units::parse_near;
 use serde_json::{json, Value};
 use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Multitasking, Postpaid,
-               ReferenceType, Reviewers, ReviewersParams, TokenDetails, ValidatorsDaoParams};
+               ConfigCreate, DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Multitasking,
+               Postpaid, ReferenceType, Reviewers, ReviewersParams, TokenDetails,
+               ValidatorsDaoParams, WhitelistType};
 use disputes::{Dispute, Proposal};
 use kyc_whitelist::{ActivationType, Config, VerificationType};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
@@ -30,7 +31,9 @@ pub const BOUNTY_AMOUNT: U128 = U128(99 * 10u128.pow(16)); // 0.99 TFT (Test fun
 pub const PLATFORM_FEE: U128 = U128(11 * 10u128.pow(16)); // 0.11 TFT
 pub const DAO_FEE: U128 = U128(11 * 10u128.pow(16)); // 0.11 TFT
 pub const MIN_AMOUNT_FOR_KYC: U128 = U128(2 * 10u128.pow(18)); // 2 TFT
-pub const MAX_DEADLINE: U64 = U64(604_800_000_000_000);
+pub const MAX_DEADLINE: U64 = U64(7 * 24 * 60 * 60 * 1_000 * 1_000_000); // 7 days
+pub const BOND: Balance = ONE_NEAR;
+pub const MAX_GAS: Balance = 3 * 10u128.pow(22); // 300 Tgas
 
 pub struct Env {
   pub worker: Worker<Sandbox>,
@@ -142,6 +145,7 @@ impl Env {
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
+    Self::set_live_status(&bounties).await?;
     Self::register_user(&test_token, bounties.id()).await?;
     Self::add_token(&test_token, &bounties, &bounties_contract_admin).await?;
 
@@ -276,7 +280,8 @@ impl Env {
     Self::assert_contract_call_result(res, None).await?;
 
     let mut bounties_config = bounties::Config::default();
-    bounties_config.period_for_opening_dispute = U64(1_000_000_000 * 60 * 10); // 5 min
+    bounties_config.period_for_opening_dispute = U64(1_000_000_000 * 60 * 10); // 10 min
+    bounties_config.bounty_forgiveness_period = U64(1_000_000_000 * 60 * 10); // 10 min
 
     res = disputed_bounties
       .call("new")
@@ -292,6 +297,7 @@ impl Env {
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
+    Self::set_live_status(&disputed_bounties).await?;
     Self::register_user(&test_token, disputed_bounties.id()).await?;
     Self::register_user(&test_token, bounties_contract_admin.id()).await?;
     Self::register_user(&test_token, validators_dao.id()).await?;
@@ -412,18 +418,40 @@ impl Env {
     Ok(())
   }
 
+  pub async fn assert_exists_failed_receipts(
+    result: ExecutionFinalResult,
+    expected_msg: &str,
+  ) -> anyhow::Result<()> {
+    assert!(
+      result
+        .into_result()
+        .unwrap()
+        .receipt_outcomes()
+        .into_iter()
+        .find(|&e| e.is_failure())
+        .expect("No failed receipts")
+        .clone()
+        .into_result()
+        .err()
+        .unwrap()
+        .to_string()
+        .contains(expected_msg)
+    );
+    Ok(())
+  }
+
   pub async fn assert_statuses(
     &self,
     bounties: &Contract,
     bounty_id: u64,
+    claimer_id: Option<&AccountId>,
     claim_status: ClaimStatus,
     bounty_status: BountyStatus,
   ) -> anyhow::Result<(BountyClaim, Bounty)> {
     let bounty_claims = Self::get_bounty_claims_by_id(bounties, bounty_id).await?;
-    assert_eq!(bounty_claims.len(), 1);
-    assert_eq!(bounty_claims[0].0.to_string(), self.freelancer.id().to_string());
-    let bounty_claim = bounty_claims[0].clone().1;
-    assert_eq!(bounty_claim.bounty_id, bounty_id);
+    let freelancer = claimer_id.unwrap_or(self.freelancer.id());
+    let claim_idx = bounty_claims.iter().position(|c| c.0.to_string() == freelancer.to_string());
+    let bounty_claim = bounty_claims[claim_idx.expect("No claim found")].clone().1;
     assert_eq!(bounty_claim.status, claim_status);
     let bounty = get_bounty(bounties, bounty_id).await?;
     assert_eq!(bounty.status, bounty_status);
@@ -539,7 +567,8 @@ impl Env {
     postpaid: Option<Postpaid>,
     multitasking: Option<Multitasking>,
     expected_msg: Option<&str>,
-  ) -> anyhow::Result<()> {
+    allow_deadline_stretch: Option<bool>,
+  ) -> anyhow::Result<ExecutionFinalResult> {
     let metadata = json!({
       "title": "Test bounty title",
       "description": "Test bounty description",
@@ -575,6 +604,7 @@ impl Env {
         Some(r) => json!(r),
         _ => json!(null),
       },
+      "allow_deadline_stretch": json!(allow_deadline_stretch.unwrap_or_default()),
     });
 
     let reviewers = match reviewers_params {
@@ -616,8 +646,8 @@ impl Env {
         .transact()
         .await?;
     }
-    Self::assert_contract_call_result(res, expected_msg).await?;
-    Ok(())
+    Self::assert_contract_call_result(res.clone(), expected_msg).await?;
+    Ok(res)
   }
 
   pub async fn external_ft_transfer(
@@ -678,7 +708,7 @@ impl Env {
     &self,
     bounties: &Contract,
     bounty_id: u64,
-    deadline: U64,
+    deadline: Option<U64>,
     description: String,
     slot: Option<usize>,
     user: Option<&Account>,
@@ -1059,12 +1089,18 @@ impl Env {
     Ok(proposal)
   }
 
-  pub async fn add_to_owners_whitelist(
+  pub async fn add_to_some_whitelist(
     &self,
+    account: &AccountId,
+    whitelist_type: WhitelistType,
   ) -> anyhow::Result<()> {
     let res = self.bounties_contract_admin
-      .call(self.disputed_bounties.id(), "add_to_owners_whitelist")
-      .args_json((self.project_owner.id(), Option::<Vec<AccountId>>::None))
+      .call(self.disputed_bounties.id(), "add_to_some_whitelist")
+      .args_json((
+        account,
+        Option::<Vec<AccountId>>::None,
+        whitelist_type
+      ))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -1073,12 +1109,18 @@ impl Env {
     Ok(())
   }
 
-  pub async fn remove_from_owners_whitelist(
+  pub async fn remove_from_some_whitelist(
     &self,
+    account: &AccountId,
+    whitelist_type: WhitelistType,
   ) -> anyhow::Result<()> {
     let res = self.bounties_contract_admin
-      .call(self.disputed_bounties.id(), "remove_from_owners_whitelist")
-      .args_json((self.project_owner.id(), Option::<Vec<AccountId>>::None))
+      .call(self.disputed_bounties.id(), "remove_from_some_whitelist")
+      .args_json((
+        account,
+        Option::<Vec<AccountId>>::None,
+        whitelist_type
+      ))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -1203,6 +1245,110 @@ impl Env {
       .transact()
       .await?;
     Self::assert_contract_call_result(res, expected_msg).await?;
+    Ok(())
+  }
+
+  pub async fn set_live_status(bounties: &Contract) -> anyhow::Result<()> {
+    let res = bounties
+      .call("set_status")
+      .args_json(json!({ "status": "Live" }))
+      .max_gas()
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub fn assert_almost_eq_with_max_delta(left: Balance, right: Balance, max_delta: Balance) {
+    assert!(
+      std::cmp::max(left, right) - std::cmp::min(left, right) <= max_delta,
+      "{}",
+      format!(
+        "Left {} is not even close to Right {} within delta {}",
+        left, right, max_delta
+      )
+    );
+  }
+
+  pub fn assert_eq_with_gas(left: Balance, right: Balance) {
+    Self::assert_almost_eq_with_max_delta(left, right, MAX_GAS);
+  }
+
+  pub async fn get_non_refunded_bonds_amount(bounties: &Contract) -> anyhow::Result<U128> {
+    let unlocked_amount = bounties
+      .call("get_non_refunded_bonds_amount")
+      .view()
+      .await?
+      .json()?;
+    Ok(unlocked_amount)
+  }
+
+  pub async fn withdraw_non_refunded_bonds(&self, bounties: &Contract) -> anyhow::Result<()> {
+    let res = self.bounties_contract_admin
+      .call(bounties.id(), "withdraw_non_refunded_bonds")
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn set_bounties_config(
+    &self,
+    bounties: &Contract,
+    config_create: &ConfigCreate
+  ) -> anyhow::Result<()> {
+    let res = self.bounties_contract_admin
+      .call(bounties.id(), "change_config")
+      .args_json((config_create,))
+      .max_gas()
+      .deposit(ONE_YOCTO)
+      .transact()
+      .await?;
+    Self::assert_contract_call_result(res, None).await?;
+    Ok(())
+  }
+
+  pub async fn get_bounties_config(bounties: &Contract) -> anyhow::Result<bounties::Config> {
+    let config = bounties
+      .call("get_config")
+      .view()
+      .await?
+      .json()?;
+    Ok(config)
+  }
+
+  async fn set_using_owner_whitelist(
+    &self,
+    bounties: &Contract,
+    use_owners_whitelist: bool,
+  ) -> anyhow::Result<()> {
+    let mut current_config = Self::get_bounties_config(bounties).await?;
+    current_config.use_owners_whitelist = true;
+    self.set_bounties_config(
+      bounties,
+      &ConfigCreate {
+        bounty_claim_bond: current_config.bounty_claim_bond,
+        bounty_forgiveness_period: current_config.bounty_forgiveness_period,
+        period_for_opening_dispute: current_config.period_for_opening_dispute,
+        platform_fee_percentage: current_config.platform_fee_percentage,
+        validators_dao_fee_percentage: current_config.validators_dao_fee_percentage,
+        penalty_platform_fee_percentage: current_config.penalty_platform_fee_percentage,
+        penalty_validators_dao_fee_percentage: current_config.penalty_validators_dao_fee_percentage,
+        use_owners_whitelist,
+      }
+    ).await?;
+    Ok(())
+  }
+
+  pub async fn start_using_owner_whitelist(&self, bounties: &Contract) -> anyhow::Result<()> {
+    self.set_using_owner_whitelist(bounties, true).await?;
+    Ok(())
+  }
+
+  pub async fn stop_using_owner_whitelist(&self, bounties: &Contract) -> anyhow::Result<()> {
+    self.set_using_owner_whitelist(bounties, false).await?;
     Ok(())
   }
 }
