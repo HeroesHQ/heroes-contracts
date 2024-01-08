@@ -636,7 +636,17 @@ impl BountiesContract {
     }
     if bounty_update.claimer_approval.is_some() {
       assert!(
-        !found_claim && bounty.status == BountyStatus::New,
+        !found_claim && bounty.status == BountyStatus::New ||
+          matches!(bounty.claimer_approval, ClaimerApproval::ApprovalByWhitelist { .. }) &&
+            matches!(
+              bounty_update.claimer_approval.clone().unwrap(),
+              ClaimerApproval::ApprovalByWhitelist { .. }
+            ) ||
+          matches!(bounty.claimer_approval, ClaimerApproval::WhitelistWithApprovals { .. }) &&
+            matches!(
+              bounty_update.claimer_approval.clone().unwrap(),
+              ClaimerApproval::WhitelistWithApprovals { .. }
+            ),
         "The approval setting cannot be changed if there are already claims"
       );
       bounty.claimer_approval = bounty_update.claimer_approval.unwrap();
