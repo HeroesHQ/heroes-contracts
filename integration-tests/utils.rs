@@ -335,7 +335,7 @@ impl Env {
     let res = test_token
       .call("storage_deposit")
       .args_json((user, Option::<bool>::None))
-      .deposit(parse_near!("90 N"))
+      .deposit(parse_near!("0.1 N"))
       .max_gas()
       .transact()
       .await?;
