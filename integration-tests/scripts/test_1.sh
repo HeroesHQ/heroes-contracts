@@ -47,16 +47,28 @@ near call "$BOUNTY_CONTRACT_ID" add_token_id "{\"token_id\":\"$TOKEN_ID\"}" --ac
 
 # Create a bounty
 printf "\nCreating a bounty:\n"
-
 # shellcheck disable=SC2003
 # shellcheck disable=SC2059
 ARGS=$(printf "$BOUNTY_TEMPLATE" "$BOUNTY_CONTRACT_ID" "$BOUNTY_AMOUNT" "$FREELANCER_ACCOUNT" "$(expr $BOUNTY_AMOUNT / 4)")
 near call "$TOKEN_ID" ft_transfer_call "$ARGS" --accountId "$OWNER_ACCOUNT" --depositYocto 1 --gas 300000000000000
-# TODO: asserting the results
+
+if [[ $(near view "$TOKEN_ID" ft_balance_of "{\"account_id\":\"$BOUNTY_CONTRACT_ID\"}" | grep -Po "'\d+'") == "'$BOUNTY_AMOUNT'" ]]; then
+  printf "\n\033[0;32m%s\033[0m\n" "Bounty contract token balance after bounty creation is correct"
+else
+  printf "\n\033[0;31m%s\033[0m\n" "Bounty contract token balance is incorrect after bounty creation"
+  exit 1
+fi
+
+if [[ $(near view "$BOUNTY_CONTRACT_ID" get_bounty '{"id":0}' | tr '\n' '\r'| sed -r "s/^.*status: '([A-Za-z]+)',.*$/\1/") == "New" ]]; then
+  printf "\n\033[0;32m%s\033[0m\n" "Bounty successfully created"
+else
+  printf "\n\033[0;31m%s\033[0m\n" "Bounty has not been created"
+  exit 1
+fi
 
 # Claim a bounty
 printf "\nClaim a bounty:\n"
-near call "$BOUNTY_CONTRACT_ID" bounty_claim '{"id":0,"deadline":"86400000000000","description":"test claim"}' --accountId "$FREELANCER_ACCOUNT" --deposit 1 --gas 25000000000000
+near call "$BOUNTY_CONTRACT_ID" bounty_claim '{"id":0,"deadline":"86400000000000","description":"I can do it"}' --accountId "$FREELANCER_ACCOUNT" --deposit 1 --gas 25000000000000
 
 # TODO: asserting the results
 
