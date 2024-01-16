@@ -615,6 +615,7 @@ impl BountiesContract {
 
     let claims = self.get_bounty_claims_by_id(id.clone());
     let found_claim = claims
+      .clone()
       .into_iter()
       .find(
         |c|
@@ -647,8 +648,28 @@ impl BountiesContract {
               bounty_update.claimer_approval.clone().unwrap(),
               ClaimerApproval::WhitelistWithApprovals { .. }
             ),
-        "The approval setting cannot be changed if there are already claims"
+        "The approval setting cannot be changed to this value"
       );
+      match bounty_update.claimer_approval.clone().unwrap() {
+        ClaimerApproval::ApprovalByWhitelist { claimers_whitelist } => {
+          assert!(
+            claims
+              .into_iter()
+              .find(
+                |c|
+                  !claimers_whitelist.contains(&c.0) &&
+                    (
+                      c.1.status == ClaimStatus::InProgress ||
+                        c.1.status == ClaimStatus::Competes ||
+                        c.1.status == ClaimStatus::ReadyToStart
+                    )
+              )
+              .is_none(),
+            "Approval settings cannot be changed if there are non-whitelisted claims"
+          );
+        },
+        _ => {}
+      }
       bounty.claimer_approval = bounty_update.claimer_approval.unwrap();
       changed = true;
     }
@@ -1196,7 +1217,7 @@ mod tests {
   use near_sdk::json_types::{U128, U64};
   use near_sdk::{testing_env, AccountId, Balance};
   use crate::{DEFAULT_BOUNTY_CLAIM_BOND, BountiesContract, Bounty, BountyAction, BountyClaim,
-              BountyIndex, BountyMetadata, BountyStatus, BountyUpdate, ClaimerApproval,
+              BountyFlow, BountyIndex, BountyMetadata, BountyStatus, BountyUpdate, ClaimerApproval,
               ClaimStatus, Config, ConfigCreate, ContractStatus, Deadline, FeeStats, KycConfig,
               Reviewers, TokenDetails, ValidatorsDao, ValidatorsDaoParams, WhitelistType};
 
@@ -1253,6 +1274,7 @@ mod tests {
       postpaid: None,
       multitasking: None,
       allow_deadline_stretch: allow_deadline_stretch.unwrap_or_default(),
+      bounty_flow: BountyFlow::default(),
     };
     contract.internal_update_bounty(&bounty_index, bounty.clone());
     contract.account_bounties.insert(owner, &vec![bounty_index]);

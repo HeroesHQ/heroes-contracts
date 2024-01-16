@@ -1586,17 +1586,21 @@ impl BountiesContract {
             kyc_verification_method == KycVerificationMethod::WhenCreatingClaim
           },
           PlaceOfCheckKYC::DecisionOnClaim { approve, is_kyc_delayed } => {
-            approve && is_kyc_delayed.is_none()
+            kyc_verification_method == KycVerificationMethod::DuringClaimApproval &&
+              approve && is_kyc_delayed.is_none()
           },
           _ => {
-            claim.is_some()
-              && claim.unwrap().is_kyc_delayed.is_some()
-              && matches!(
+            kyc_verification_method == KycVerificationMethod::DuringClaimApproval &&
+              (
+                claim.is_some()
+                  && claim.unwrap().is_kyc_delayed.is_some()
+                  && matches!(
                    claim.unwrap().is_kyc_delayed.clone().unwrap(),
                    DefermentOfKYC::BeforeDeadline
                  )
-              || claimer.is_some()
-              && !self.is_approval_required(&bounty, &claimer.unwrap())
+                  || claimer.is_some()
+                  && !self.is_approval_required(&bounty, &claimer.unwrap())
+              )
           }
         }
       },

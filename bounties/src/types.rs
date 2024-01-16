@@ -840,6 +840,20 @@ impl Postpaid {
   }
 }
 
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug))]
+pub enum BountyFlow {
+  SimpleBounty,
+  AdvancedFlow,
+}
+
+impl Default for BountyFlow {
+  fn default() -> Self {
+    BountyFlow::AdvancedFlow
+  }
+}
+
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub struct BountyCreate {
@@ -851,6 +865,7 @@ pub struct BountyCreate {
   pub postpaid: Option<Postpaid>,
   pub multitasking: Option<Multitasking>,
   pub allow_deadline_stretch: Option<bool>,
+  pub bounty_flow: Option<BountyFlow>,
 }
 
 impl BountyCreate {
@@ -914,6 +929,7 @@ impl BountyCreate {
         None
       },
       allow_deadline_stretch: self.allow_deadline_stretch.unwrap_or_default(),
+      bounty_flow: self.bounty_flow.clone().unwrap_or_default(),
     }
   }
 }
@@ -1018,6 +1034,27 @@ pub struct BountyV4 {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyV5 {
+  pub token: Option<AccountId>,
+  pub amount: U128,
+  pub platform_fee: U128,
+  pub dao_fee: U128,
+  pub metadata: BountyMetadata,
+  pub deadline: Deadline,
+  pub claimer_approval: ClaimerApproval,
+  pub reviewers: Option<Reviewers>,
+  pub owner: AccountId,
+  pub status: BountyStatus,
+  pub created_at: U64,
+  pub kyc_config: KycConfig,
+  pub postpaid: Option<Postpaid>,
+  pub multitasking: Option<Multitasking>,
+  pub allow_deadline_stretch: bool,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Bounty {
   pub token: Option<AccountId>,
   pub amount: U128,
@@ -1034,6 +1071,7 @@ pub struct Bounty {
   pub postpaid: Option<Postpaid>,
   pub multitasking: Option<Multitasking>,
   pub allow_deadline_stretch: bool,
+  pub bounty_flow: BountyFlow,
 }
 
 impl Bounty {
@@ -1183,6 +1221,43 @@ impl Bounty {
         },
       }
     }
+    if self.bounty_flow == BountyFlow::SimpleBounty {
+      assert!(
+        matches!(self.claimer_approval, ClaimerApproval::WithoutApproval) ||
+          matches!(self.claimer_approval, ClaimerApproval::ApprovalByWhitelist { .. }),
+        "claimer_approval and bounty_flow values are incompatible"
+      );
+      assert!(
+        !matches!(
+          self.kyc_config,
+          KycConfig::KycRequired {
+            kyc_verification_method: KycVerificationMethod::DuringClaimApproval
+          }
+        ),
+        "kyc_config and bounty_flow values are incompatible"
+      );
+      if self.multitasking.is_some() {
+        match self.multitasking.clone().unwrap() {
+          Multitasking::ContestOrHackathon { start_conditions, .. } => {
+            assert!(
+              start_conditions.is_none(),
+              "multitasking and bounty_flow values are incompatible"
+            );
+          },
+          Multitasking::OneForAll { min_slots_to_start, .. } => {
+            assert!(
+              min_slots_to_start.is_none(),
+              "multitasking and bounty_flow values are incompatible"
+            );
+          },
+          Multitasking::DifferentTasks { .. } => {},
+        }
+      }
+      assert!(
+        !self.allow_deadline_stretch,
+        "allow_deadline_stretch and bounty_flow values are incompatible"
+      );
+    }
   }
 
   pub fn check_access_rights(&self) {
@@ -1323,6 +1398,7 @@ pub enum VersionedBounty {
   V2(BountyV2),
   V3(BountyV3),
   V4(BountyV4),
+  V5(BountyV5),
   Current(Bounty),
 }
 
@@ -1398,8 +1474,8 @@ impl VersionedBounty {
     }
   }
 
-  fn upgrade_v4_to_v5(bounty: BountyV4) -> Bounty {
-    Bounty {
+  fn upgrade_v4_to_v5(bounty: BountyV4) -> BountyV5 {
+    BountyV5 {
       token: bounty.token,
       amount: bounty.amount,
       platform_fee: bounty.platform_fee,
@@ -1418,28 +1494,59 @@ impl VersionedBounty {
     }
   }
 
+  fn upgrade_v5_to_v6(bounty: BountyV5) -> Bounty {
+    Bounty {
+      token: bounty.token,
+      amount: bounty.amount,
+      platform_fee: bounty.platform_fee,
+      dao_fee: bounty.dao_fee,
+      metadata: bounty.metadata,
+      deadline: bounty.deadline,
+      claimer_approval: bounty.claimer_approval,
+      reviewers: bounty.reviewers,
+      owner: bounty.owner,
+      status: bounty.status,
+      created_at: bounty.created_at,
+      kyc_config: bounty.kyc_config,
+      postpaid: bounty.postpaid,
+      multitasking: bounty.multitasking,
+      allow_deadline_stretch: bounty.allow_deadline_stretch,
+      bounty_flow: BountyFlow::default(),
+    }
+  }
+
   pub fn to_bounty(self) -> Bounty {
     match self {
       VersionedBounty::Current(bounty) => bounty,
       VersionedBounty::V1(bounty_v1) =>
-        VersionedBounty::upgrade_v4_to_v5(
-          VersionedBounty::upgrade_v3_to_v4(
-            VersionedBounty::upgrade_v2_to_v3(
-              VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+        VersionedBounty::upgrade_v5_to_v6(
+          VersionedBounty::upgrade_v4_to_v5(
+            VersionedBounty::upgrade_v3_to_v4(
+              VersionedBounty::upgrade_v2_to_v3(
+                VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+              )
             )
           )
         ),
       VersionedBounty::V2(bounty_v2) =>
-        VersionedBounty::upgrade_v4_to_v5(
-          VersionedBounty::upgrade_v3_to_v4(
-            VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+        VersionedBounty::upgrade_v5_to_v6(
+          VersionedBounty::upgrade_v4_to_v5(
+            VersionedBounty::upgrade_v3_to_v4(
+              VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+            )
           )
         ),
       VersionedBounty::V3(bounty_v3) =>
-        VersionedBounty::upgrade_v4_to_v5(
-          VersionedBounty::upgrade_v3_to_v4(bounty_v3)
+        VersionedBounty::upgrade_v5_to_v6(
+          VersionedBounty::upgrade_v4_to_v5(
+            VersionedBounty::upgrade_v3_to_v4(bounty_v3)
+          )
         ),
-      VersionedBounty::V4(bounty_v4) => VersionedBounty::upgrade_v4_to_v5(bounty_v4),
+      VersionedBounty::V4(bounty_v4) =>
+        VersionedBounty::upgrade_v5_to_v6(
+          VersionedBounty::upgrade_v4_to_v5(bounty_v4)
+        ),
+      VersionedBounty::V5(bounty_v5) => VersionedBounty::upgrade_v5_to_v6(bounty_v5),
     }
   }
 }
@@ -1449,24 +1556,34 @@ impl From<VersionedBounty> for Bounty {
     match value {
       VersionedBounty::Current(bounty) => bounty,
       VersionedBounty::V1(bounty_v1) =>
-        VersionedBounty::upgrade_v4_to_v5(
-          VersionedBounty::upgrade_v3_to_v4(
-            VersionedBounty::upgrade_v2_to_v3(
-              VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+        VersionedBounty::upgrade_v5_to_v6(
+          VersionedBounty::upgrade_v4_to_v5(
+            VersionedBounty::upgrade_v3_to_v4(
+              VersionedBounty::upgrade_v2_to_v3(
+                VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+              )
             )
           )
         ),
       VersionedBounty::V2(bounty_v2) =>
-        VersionedBounty::upgrade_v4_to_v5(
-          VersionedBounty::upgrade_v3_to_v4(
-            VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+        VersionedBounty::upgrade_v5_to_v6(
+          VersionedBounty::upgrade_v4_to_v5(
+            VersionedBounty::upgrade_v3_to_v4(
+              VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+            )
           )
         ),
       VersionedBounty::V3(bounty_v3) =>
-        VersionedBounty::upgrade_v4_to_v5(
-          VersionedBounty::upgrade_v3_to_v4(bounty_v3)
+        VersionedBounty::upgrade_v5_to_v6(
+          VersionedBounty::upgrade_v4_to_v5(
+            VersionedBounty::upgrade_v3_to_v4(bounty_v3)
+          )
         ),
-      VersionedBounty::V4(bounty_v4) => VersionedBounty::upgrade_v4_to_v5(bounty_v4),
+      VersionedBounty::V4(bounty_v4) =>
+        VersionedBounty::upgrade_v5_to_v6(
+          VersionedBounty::upgrade_v4_to_v5(bounty_v4)
+        ),
+      VersionedBounty::V5(bounty_v5) => VersionedBounty::upgrade_v5_to_v6(bounty_v5),
     }
   }
 }
