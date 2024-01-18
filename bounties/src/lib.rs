@@ -366,6 +366,10 @@ impl BountiesContract {
 
     bounty.check_access_rights();
     assert!(
+      matches!(bounty.bounty_flow, BountyFlow::AdvancedFlow),
+      "This operation is not supported for simple bounty flow"
+    );
+    assert!(
       bounty.is_claim_deadline_correct(claim.deadline),
       "The claim deadline is no longer correct"
     );
@@ -391,6 +395,10 @@ impl BountiesContract {
     assert_one_yocto();
 
     let mut bounty = self.get_bounty(id.clone());
+    assert!(
+      matches!(bounty.bounty_flow, BountyFlow::AdvancedFlow),
+      "This operation is not supported for simple bounty flow"
+    );
     assert!(
       bounty.status == BountyStatus::Claimed ||
         bounty.status == BountyStatus::ManyClaimed ||
@@ -454,7 +462,10 @@ impl BountiesContract {
       (claims[claim_idx].status == ClaimStatus::New ||
         claims[claim_idx].status == ClaimStatus::InProgress ||
         claims[claim_idx].status == ClaimStatus::Competes ||
-        claims[claim_idx].status == ClaimStatus::ReadyToStart),
+        claims[claim_idx].status == ClaimStatus::ReadyToStart ||
+        claims[claim_idx].status == ClaimStatus::Completed &&
+          bounty.is_contest_or_hackathon() &&
+          (bounty.status == BountyStatus::New || bounty.status == BountyStatus::Canceled)),
       "The claim status does not allow to give up the bounty"
     );
 
@@ -476,7 +487,9 @@ impl BountiesContract {
       )
 
     } else {
-      if claims[claim_idx].status == ClaimStatus::Competes {
+      if claims[claim_idx].status == ClaimStatus::Competes ||
+        claims[claim_idx].status == ClaimStatus::Completed
+      {
         self.internal_participants_decrement(&mut bounty);
       } else if claims[claim_idx].status == ClaimStatus::ReadyToStart {
         if bounty.is_one_bounty_for_many_claimants() {

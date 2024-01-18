@@ -1406,11 +1406,20 @@ impl BountiesContract {
     claimer: &AccountId,
     is_kyc_delayed: Option<DefermentOfKYC>,
   ) {
+    let approved_status = if bounty.bounty_flow == BountyFlow::SimpleBounty {
+      ClaimStatus::Completed
+    } else {
+      if bounty.is_contest_or_hackathon() {
+        ClaimStatus::Competes
+      } else {
+        ClaimStatus::InProgress
+      }
+    };
     let start_time = Some(U64::from(env::block_timestamp()));
 
     if bounty.multitasking.is_none() {
       bounty.status = BountyStatus::Claimed;
-      claim.status = ClaimStatus::InProgress;
+      claim.status = approved_status;
 
     } else {
       let multitasking = bounty.multitasking.clone().unwrap();
@@ -1438,11 +1447,12 @@ impl BountiesContract {
           }
 
           self.internal_participants_increment(bounty);
-          claim.status = ClaimStatus::Competes;
+          claim.status = approved_status;
           if !started && bounty.status == BountyStatus::ManyClaimed {
             self.internal_start_competition(bounty, start_time);
           }
         },
+
         Multitasking::OneForAll { min_slots_to_start, .. } => {
           let started = bounty.status == BountyStatus::ManyClaimed;
           let paused = bounty.status == BountyStatus::AwaitingClaims;
@@ -1451,14 +1461,14 @@ impl BountiesContract {
             if !started {
               bounty.status = BountyStatus::ManyClaimed;
             }
-            claim.status = ClaimStatus::InProgress;
+            claim.status = approved_status;
 
           } else {
             if started || paused {
               if paused {
                 bounty.status = BountyStatus::ManyClaimed;
               }
-              claim.status = ClaimStatus::InProgress;
+              claim.status = approved_status;
 
             } else {
               let claims = self.get_claims_with_statuses(
@@ -1469,11 +1479,12 @@ impl BountiesContract {
 
               if claims.len() as u16 == min_slots_to_start.unwrap() - 1 {
                 bounty.status = BountyStatus::ManyClaimed;
-                claim.status = ClaimStatus::InProgress;
+                claim.status = approved_status;
                 self.internal_update_status_of_many_claims(
+                  bounty,
                   claims,
                   vec![ClaimStatus::ReadyToStart],
-                  ClaimStatus::InProgress,
+                  approved_status,
                   start_time,
                 );
 
@@ -1485,15 +1496,18 @@ impl BountiesContract {
 
           self.internal_occupied_slots_increment(bounty);
         },
+
         Multitasking::DifferentTasks { .. } => {
           self.internal_set_slot_account(bounty, claim.slot.clone().unwrap(), claimer.clone());
           let started = bounty.status == BountyStatus::ManyClaimed;
+
           if started {
-            claim.status = ClaimStatus::InProgress;
+            claim.status = approved_status;
+
           } else {
             if bounty.multitasking.clone().unwrap().are_all_slots_taken() {
               bounty.status = BountyStatus::ManyClaimed;
-              claim.status = ClaimStatus::InProgress;
+              claim.status = approved_status;
 
               let claims = self.get_claims_with_statuses(
                 id,
@@ -1501,27 +1515,33 @@ impl BountiesContract {
                 Some(claimer.clone())
               );
               self.internal_update_status_of_many_claims(
+                bounty,
                 claims,
                 vec![ClaimStatus::ReadyToStart],
-                ClaimStatus::InProgress,
+                approved_status,
                 start_time,
               );
             } else {
               claim.status = ClaimStatus::ReadyToStart;
             }
           }
+
+          if bounty.bounty_flow == BountyFlow::SimpleBounty && claim.status == approved_status {
+            self.internal_complete_slot(bounty, claim.slot.clone().unwrap());
+          }
         },
       }
     }
 
     self.internal_update_bounty(&id, bounty.clone());
-    if claim.status == ClaimStatus::InProgress ||
-      claim.status == ClaimStatus::Competes && bounty.status == BountyStatus::ManyClaimed
+    if claim.status == approved_status &&
+      (bounty.status == BountyStatus::ManyClaimed || bounty.status == BountyStatus::Claimed)
     {
       claim.start_time = start_time;
     }
     claim.is_kyc_delayed = is_kyc_delayed;
 
+    // TODO
     self.internal_update_statistic(
       Some(claimer.clone()),
       Some(bounty.clone().owner),
@@ -1531,6 +1551,7 @@ impl BountiesContract {
 
   pub(crate) fn internal_update_status_of_many_claims(
     &mut self,
+    bounty: &mut Bounty,
     claims: Vec<(AccountId, BountyClaim)>,
     old_statuses: Vec<ClaimStatus>,
     new_status: ClaimStatus,
@@ -1546,6 +1567,12 @@ impl BountiesContract {
           claims[claim_idx].status = new_status;
           if start_time.is_some() {
             claims[claim_idx].start_time = start_time;
+          }
+          if bounty.bounty_flow == BountyFlow::SimpleBounty &&
+            bounty.is_different_tasks() &&
+            new_status == ClaimStatus::Completed
+          {
+            self.internal_complete_slot(bounty, claims[claim_idx].slot.clone().unwrap());
           }
           self.internal_save_claims(&claimer, &claims);
         }
@@ -1667,6 +1694,7 @@ impl BountiesContract {
     self.internal_save_claims(&claimer, &claims);
     self.internal_add_bounty_claimer_account(id, claimer.clone());
     self.locked_amount += bond.0;
+    // TODO
     self.internal_update_statistic(
       Some(claimer.clone()),
       Some(bounty.owner.clone()),

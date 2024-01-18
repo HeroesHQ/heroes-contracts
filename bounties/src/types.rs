@@ -1236,23 +1236,10 @@ impl Bounty {
         ),
         "kyc_config and bounty_flow values are incompatible"
       );
-      if self.multitasking.is_some() {
-        match self.multitasking.clone().unwrap() {
-          Multitasking::ContestOrHackathon { start_conditions, .. } => {
-            assert!(
-              start_conditions.is_none(),
-              "multitasking and bounty_flow values are incompatible"
-            );
-          },
-          Multitasking::OneForAll { min_slots_to_start, .. } => {
-            assert!(
-              min_slots_to_start.is_none(),
-              "multitasking and bounty_flow values are incompatible"
-            );
-          },
-          Multitasking::DifferentTasks { .. } => {},
-        }
-      }
+      assert!(
+        !self.is_validators_dao_used(),
+        "Validators Dao cannot be used for Simple Bounty"
+      );
       assert!(
         !self.allow_deadline_stretch,
         "allow_deadline_stretch and bounty_flow values are incompatible"
@@ -1306,7 +1293,14 @@ impl Bounty {
   }
 
   pub fn is_claim_deadline_correct(&self, deadline: Option<U64>) -> bool {
-    if !self.allow_deadline_stretch {
+    if self.bounty_flow == BountyFlow::SimpleBounty {
+      assert!(deadline.is_none(), "This bounty does not have a claim deadline");
+      assert!(
+        !matches!(self.deadline, Deadline::DueDate { .. }) ||
+          env::block_timestamp() <= self.deadline.get_deadline_value().0,
+        "You can only create a claim until the bounty expires"
+      );
+    } else if !self.allow_deadline_stretch {
       assert!(deadline.is_some(), "For this bounty, you need to specify a claim deadline");
     }
 
