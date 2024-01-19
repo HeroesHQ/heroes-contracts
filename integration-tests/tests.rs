@@ -2,10 +2,10 @@ use std::string::ToString;
 use near_sdk::json_types::{U128, U64};
 use serde_json::json;
 use workspaces::Account;
-use bounties::{Bounty, BountyAction, BountyMetadata, BountyStatus, BountyUpdate, ClaimerApproval,
-               ClaimStatus, ContactDetails, ContactType, Deadline, DefermentOfKYC, Experience,
-               KycConfig, KycVerificationMethod, Multitasking, Postpaid, Reviewers, ReviewersParams,
-               StartConditions, Subtask, TokenDetails, WhitelistType};
+use bounties::{Bounty, BountyAction, BountyFlow, BountyMetadata, BountyStatus, BountyUpdate,
+               ClaimerApproval, ClaimStatus, ContactDetails, ContactType, Deadline, DefermentOfKYC,
+               Experience, KycConfig, KycVerificationMethod, Multitasking, Postpaid, Reviewers,
+               ReviewersParams, StartConditions, Subtask, TokenDetails, WhitelistType};
 use disputes::DisputeStatus;
 
 mod utils;
@@ -119,6 +119,7 @@ async fn test_create_bounty(e: &Env) -> anyhow::Result<()> {
       postpaid: None,
       multitasking: None,
       allow_deadline_stretch: false,
+      bounty_flow: BountyFlow::AdvancedFlow,
     }
   );
 
@@ -1573,6 +1574,7 @@ async fn test_bounty_update(e: &Env) -> anyhow::Result<()> {
       postpaid: None,
       multitasking: None,
       allow_deadline_stretch: false,
+      bounty_flow: BountyFlow::AdvancedFlow,
     }
   );
 
