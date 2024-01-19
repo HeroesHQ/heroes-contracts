@@ -635,7 +635,10 @@ impl BountiesContract {
           c.1.status == ClaimStatus::New ||
             c.1.status == ClaimStatus::InProgress ||
             c.1.status == ClaimStatus::Competes ||
-            c.1.status == ClaimStatus::ReadyToStart
+            c.1.status == ClaimStatus::ReadyToStart ||
+            c.1.status == ClaimStatus::Completed &&
+              bounty.is_contest_or_hackathon() &&
+              bounty.status == BountyStatus::New
       )
       .is_some();
     let mut changed = false;
@@ -674,7 +677,10 @@ impl BountiesContract {
                     (
                       c.1.status == ClaimStatus::InProgress ||
                         c.1.status == ClaimStatus::Competes ||
-                        c.1.status == ClaimStatus::ReadyToStart
+                        c.1.status == ClaimStatus::ReadyToStart ||
+                        c.1.status == ClaimStatus::Completed &&
+                          bounty.is_contest_or_hackathon() &&
+                          bounty.status == BountyStatus::New
                     )
               )
               .is_none(),
@@ -773,6 +779,10 @@ impl BountiesContract {
     assert_one_yocto();
 
     let bounty = self.get_bounty(id.clone());
+    assert!(
+      matches!(bounty.bounty_flow, BountyFlow::AdvancedFlow),
+      "This operation is not supported for simple bounty flow"
+    );
     assert!(
       bounty.status == BountyStatus::Claimed ||
         bounty.status == BountyStatus::ManyClaimed,
