@@ -6,9 +6,9 @@ use serde_json::{json, Value};
 use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
-use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               ConfigCreate, DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Multitasking,
-               Postpaid, ReferenceType, Reviewers, ReviewersParams, TokenDetails,
+use bounties::{Bounty, BountyAction, BountyClaim, BountyFlow, BountyStatus, BountyUpdate,
+               ClaimStatus, ConfigCreate, DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig,
+               Multitasking, Postpaid, ReferenceType, Reviewers, ReviewersParams, TokenDetails,
                ValidatorsDaoParams, WhitelistType};
 use disputes::{Dispute, Proposal};
 use kyc_whitelist::{ActivationType, Config, VerificationType};
@@ -566,8 +566,9 @@ impl Env {
     kyc_required: Option<KycConfig>,
     postpaid: Option<Postpaid>,
     multitasking: Option<Multitasking>,
-    expected_msg: Option<&str>,
     allow_deadline_stretch: Option<bool>,
+    bounty_flow: Option<BountyFlow>,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<ExecutionFinalResult> {
     let metadata = json!({
       "title": "Test bounty title",
@@ -605,6 +606,7 @@ impl Env {
         _ => json!(null),
       },
       "allow_deadline_stretch": json!(allow_deadline_stretch.unwrap_or_default()),
+      "bounty_flow": bounty_flow,
     });
 
     let reviewers = match reviewers_params {
