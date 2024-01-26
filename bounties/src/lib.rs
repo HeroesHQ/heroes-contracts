@@ -593,7 +593,7 @@ impl BountiesContract {
 
           let approve = matches!(action, BountyAction::ClaimApproved { .. });
           Self::assert_postpaid_is_ready(&bounty, &claims[claim_idx], approve);
-          self.assert_multitasking_requirements(id, &bounty, approve, &receiver_id);
+          self.assert_multitasking_requirements(id, &bounty, approve, &receiver_id, claim_number);
 
           let result = if approve {
             self.internal_bounty_payout(id, Some(receiver_id), claim_number)
@@ -953,7 +953,9 @@ impl BountiesContract {
           competition_winner.is_none(),
           "The winner of the contest has already been decided"
         );
-        bounty.multitasking = Some(multitasking.set_competition_winner(claimer));
+        bounty.multitasking = Some(
+          multitasking.set_competition_winner(Some((claimer.unwrap(), claim_number)))
+        );
       }
 
       bounty.postpaid = Some(
@@ -1025,7 +1027,8 @@ impl BountiesContract {
         let competition_winner = bounty.multitasking.clone().unwrap().get_competition_winner();
         assert!(
           competition_winner.is_some() &&
-            competition_winner.clone().unwrap() == sender_id,
+            competition_winner.clone().unwrap().0 == sender_id &&
+            competition_winner.clone().unwrap().1 == claim_number,
           "You aren't a contest winner"
         );
       }

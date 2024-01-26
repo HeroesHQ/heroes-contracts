@@ -67,6 +67,7 @@ impl BountiesContract {
     bounty: &Bounty,
     approve: bool,
     claimer: &AccountId,
+    claim_number: Option<u8>,
   ) {
     if approve && bounty.multitasking.is_some() {
       let multitasking = bounty.multitasking.clone().unwrap();
@@ -93,7 +94,8 @@ impl BountiesContract {
             let competition_winner = multitasking.get_competition_winner();
             assert!(
               competition_winner.is_some() &&
-                competition_winner.unwrap() == claimer.clone(),
+                competition_winner.clone().unwrap().0 == claimer.clone() &&
+                competition_winner.clone().unwrap().1 == claim_number,
               "Only the winner of the competition can be approved"
             );
           }
@@ -1315,7 +1317,7 @@ impl BountiesContract {
     &mut self,
     bounty:
     &mut Bounty,
-    winner: Option<AccountId>
+    winner: Option<(AccountId, Option<u8>)>
   ) {
     bounty.multitasking = Some(
       bounty.multitasking.clone().unwrap().set_competition_timestamp(None)
@@ -2130,7 +2132,10 @@ impl BountiesContract {
       match bounty.multitasking.clone().unwrap() {
         Multitasking::ContestOrHackathon { .. } => {
           self.internal_participants_decrement(&mut bounty);
-          self.internal_finish_competition(&mut bounty, Some(claimer.clone().unwrap()));
+          self.internal_finish_competition(
+            &mut bounty,
+            Some((claimer.clone().unwrap(), claim_number))
+          );
           bounty.status = BountyStatus::Completed;
         },
         Multitasking::OneForAll { number_of_slots, .. } => {

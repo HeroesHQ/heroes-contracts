@@ -353,11 +353,36 @@ pub struct Subtask {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct ContestOrHackathonEnv {
+pub struct ContestOrHackathonEnvV1 {
   pub started_at: Option<U64>,
   pub finished_at: Option<U64>,
   pub participants: u32,
   pub competition_winner: Option<AccountId>,
+}
+
+impl ContestOrHackathonEnvV1 {
+  pub fn to_v2(&self) -> ContestOrHackathonEnv {
+    ContestOrHackathonEnv {
+      started_at: self.started_at,
+      finished_at: self.finished_at,
+      participants: self.participants,
+      competition_winner: if self.competition_winner.is_some() {
+        Some((self.competition_winner.clone().unwrap(), None))
+      } else {
+        None
+      }
+    }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct ContestOrHackathonEnv {
+  pub started_at: Option<U64>,
+  pub finished_at: Option<U64>,
+  pub participants: u32,
+  pub competition_winner: Option<(AccountId, Option<u8>)>,
 }
 
 impl Default for ContestOrHackathonEnv {
@@ -471,6 +496,12 @@ impl DifferentTasksEnv {
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum Multitasking {
+  ContestOrHackathonV1 {
+    allowed_create_claim_to: Option<DateOrPeriod>,
+    successful_claims_for_result: Option<u16>,
+    start_conditions: Option<StartConditions>,
+    runtime_env: Option<ContestOrHackathonEnvV1>,
+  },
   ContestOrHackathon {
     allowed_create_claim_to: Option<DateOrPeriod>,
     successful_claims_for_result: Option<u16>,
@@ -621,7 +652,7 @@ impl Multitasking {
     self.get_contest_or_hackathon_env().participants
   }
 
-  pub fn get_competition_winner(&self) -> Option<AccountId> {
+  pub fn get_competition_winner(&self) -> Option<(AccountId, Option<u8>)> {
     self.get_contest_or_hackathon_env().competition_winner
   }
 
@@ -734,7 +765,7 @@ impl Multitasking {
     }
   }
 
-  pub fn set_competition_winner(self, competition_winner: Option<AccountId>) -> Self {
+  pub fn set_competition_winner(self, competition_winner: Option<(AccountId, Option<u8>)>) -> Self {
     match self {
       Self::ContestOrHackathon {
         allowed_create_claim_to,
@@ -1555,7 +1586,7 @@ impl VersionedBounty {
   fn upgrade_v5_to_v6(bounty: BountyV5) -> Bounty {
     let multitasking = if bounty.multitasking.is_some() {
       match bounty.multitasking.clone().unwrap() {
-        Multitasking::ContestOrHackathon {
+        Multitasking::ContestOrHackathonV1 {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
@@ -1564,7 +1595,11 @@ impl VersionedBounty {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
-          runtime_env,
+          runtime_env: if runtime_env.is_some() {
+            Some(runtime_env.unwrap().to_v2())
+          } else {
+            unreachable!();
+          },
         }),
         Multitasking::OneForAll {
           number_of_slots,
