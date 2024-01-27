@@ -207,6 +207,7 @@ impl Env {
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
+    Self::set_live_status(&dispute_contract).await?;
 
     let reputation_contract = worker.dev_deploy(&std::fs::read(REPUTATION_WASM)?).await?;
     res = reputation_contract
@@ -1261,8 +1262,8 @@ impl Env {
     Ok(())
   }
 
-  pub async fn set_live_status(bounties: &Contract) -> anyhow::Result<()> {
-    let res = bounties
+  pub async fn set_live_status(contarct: &Contract) -> anyhow::Result<()> {
+    let res = contarct
       .call("set_status")
       .args_json(json!({ "status": "Live" }))
       .max_gas()

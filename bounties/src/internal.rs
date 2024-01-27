@@ -1187,6 +1187,7 @@ impl BountiesContract {
       description,
       claimer: receiver_id.clone(),
       project_owner_delegate,
+      claim_number,
     };
 
     Promise::new(self.dispute_contract.clone().unwrap())

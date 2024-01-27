@@ -81,6 +81,7 @@ pub struct DisputeCreate {
   pub description: String,
   pub claimer: AccountId,
   pub project_owner_delegate: AccountId,
+  pub claim_number: Option<u8>,
 }
 
 #[derive(Deserialize)]

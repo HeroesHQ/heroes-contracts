@@ -25,7 +25,13 @@ pub const MESSAGE_DISPUTE_IS_NOT_PENDING: &str = "This action can be performed o
 
 #[ext_contract(ext_bounty_contract)]
 trait ExtBountyContract {
-  fn dispute_result(&self, id: u64, claimer: AccountId, success: bool) -> PromiseOrValue<()>;
+  fn dispute_result(
+    &self,
+    id: u64,
+    claimer: AccountId,
+    claim_number: Option<u8>,
+    success: bool
+  ) -> PromiseOrValue<()>;
 }
 
 #[derive(Deserialize, Serialize)]
@@ -35,6 +41,15 @@ pub struct Proposal {
   pub proposer: AccountId,
   pub description: String,
   pub status: String,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub enum ContractStatus {
+  Genesis,
+  Live,
+  ReadOnly,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone, PartialEq)]
@@ -68,11 +83,40 @@ pub struct Reason {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
+pub enum VersionedReason {
+  Current(Reason),
+}
+
+impl VersionedReason {
+  pub fn to_reason(self) -> Reason {
+    match self {
+      VersionedReason::Current(reason) => reason,
+    }
+  }
+}
+
+impl From<VersionedReason> for Reason {
+  fn from(value: VersionedReason) -> Self {
+    match value {
+      VersionedReason::Current(reason) => reason,
+    }
+  }
+}
+
+impl From<Reason> for VersionedReason {
+  fn from(value: Reason) -> VersionedReason {
+    VersionedReason::Current(value)
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
 pub struct DisputeCreate {
   pub bounty_id: u64,
   pub description: String,
   pub claimer: AccountId,
   pub project_owner_delegate: AccountId,
+  pub claim_number: Option<u8>,
 }
 
 impl DisputeCreate {
@@ -82,6 +126,7 @@ impl DisputeCreate {
       description: self.description.clone(),
       bounty_id: self.bounty_id.into(),
       claimer: self.claimer.clone(),
+      claim_number: self.claim_number.clone(),
       project_owner_delegate: self.project_owner_delegate.clone(),
       status: DisputeStatus::New,
       proposal_id: None,
@@ -93,7 +138,7 @@ impl DisputeCreate {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct Dispute {
+pub struct DisputeV1 {
   /// Time to start the dispute
   pub start_time: U64,
   /// Description of the cause of the dispute, provided by the claimant
@@ -112,6 +157,31 @@ pub struct Dispute {
   pub proposal_timestamp: Option<U64>,
 }
 
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct Dispute {
+  /// Time to start the dispute
+  pub start_time: U64,
+  /// Description of the cause of the dispute, provided by the claimant
+  pub description: String,
+  /// ID bounty which became the cause of the dispute
+  pub bounty_id: U64,
+  /// Claimer account
+  pub claimer: AccountId,
+  /// Claim number within one account
+  pub claim_number: Option<u8>,
+  /// Account of the project owner or validators DAO
+  pub project_owner_delegate: AccountId,
+  /// Dispute status
+  pub status: DisputeStatus,
+  /// Dispute resolution proposal ID
+  pub proposal_id: Option<U64>,
+  /// The timestamp when the proposal was created
+  pub proposal_timestamp: Option<U64>,
+
+}
+
 impl Dispute {
   pub fn get_side_of_dispute(&self) -> Side {
     let sender = env::predecessor_account_id();
@@ -120,6 +190,51 @@ impl Dispute {
     else {
       env::panic_str("You do not have access rights to perform this action");
     }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub enum VersionedDispute {
+  V1(DisputeV1),
+  Current(Dispute),
+}
+
+impl VersionedDispute {
+  fn upgrade_v1_to_v2(dispute: DisputeV1) -> Dispute {
+    Dispute {
+      start_time: dispute.start_time,
+      description: dispute.description,
+      bounty_id: dispute.bounty_id,
+      claimer: dispute.claimer,
+      claim_number: None,
+      project_owner_delegate: dispute.project_owner_delegate,
+      status: dispute.status,
+      proposal_id: dispute.proposal_id,
+      proposal_timestamp: dispute.proposal_timestamp,
+    }
+  }
+
+  pub fn to_dispute(self) -> Dispute {
+    match self {
+      VersionedDispute::Current(dispute) => dispute,
+      VersionedDispute::V1(dispute_v1) => VersionedDispute::upgrade_v1_to_v2(dispute_v1),
+    }
+  }
+}
+
+impl From<VersionedDispute> for Dispute {
+  fn from(value: VersionedDispute) -> Self {
+    match value {
+      VersionedDispute::Current(dispute) => dispute,
+      VersionedDispute::V1(dispute_v1) => VersionedDispute::upgrade_v1_to_v2(dispute_v1),
+    }
+  }
+}
+
+impl From<Dispute> for VersionedDispute {
+  fn from(value: Dispute) -> Self {
+    VersionedDispute::Current(value)
   }
 }
 
@@ -142,6 +257,34 @@ impl Default for Config {
       decision_period: DEFAULT_DECISION_PERIOD,
       add_proposal_bond: DEFAULT_ADD_PROPOSAL_BOND,
     }
+  }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+pub enum VersionedConfig {
+  Current(Config),
+}
+
+impl VersionedConfig {
+  pub fn to_config(self) -> Config {
+    match self {
+      VersionedConfig::Current(config) => config,
+    }
+  }
+}
+
+impl From<VersionedConfig> for Config {
+  fn from(value: VersionedConfig) -> Self {
+    match value {
+      VersionedConfig::Current(config) => config,
+    }
+  }
+}
+
+impl From<Config> for VersionedConfig {
+  fn from(value: Config) -> Self {
+    VersionedConfig::Current(value)
   }
 }
 
