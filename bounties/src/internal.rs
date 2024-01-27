@@ -706,9 +706,9 @@ impl BountiesContract {
 
     for account_id in account_ids {
       let claims = self.get_bounty_claims(account_id.clone());
-      let position = Self::internal_find_claims_by_id(id, &claims)
+      let position = claims
         .iter()
-        .position(|e| Self::is_claim_active(&e));
+        .position(|c| c.bounty_id == id && Self::is_claim_active(c));
       if position.is_some() {
         return (account_id, claims, position.unwrap());
       }
