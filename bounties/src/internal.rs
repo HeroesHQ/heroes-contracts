@@ -1581,7 +1581,6 @@ impl BountiesContract {
     }
     claim.is_kyc_delayed = is_kyc_delayed;
 
-    // TODO
     self.internal_update_statistic(
       Some(claimer.clone()),
       Some(bounty.clone().owner),
@@ -1739,7 +1738,7 @@ impl BountiesContract {
     self.internal_save_claims(&claimer, &claims);
     self.internal_add_bounty_claimer_account(id, claimer.clone());
     self.locked_amount += bond.0;
-    // TODO
+
     self.internal_update_statistic(
       Some(claimer.clone()),
       Some(bounty.owner.clone()),
