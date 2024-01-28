@@ -1700,7 +1700,7 @@ impl BountiesContract {
     proposal_id: Option<U64>,
     slot: Option<usize>,
   ) {
-    let (mut bounty, mut claims, claim_number) = self.check_if_allowed_to_create_claim_by_status(
+    let (mut bounty, _, claim_number) = self.check_if_allowed_to_create_claim_by_status(
       id,
       claimer.clone(),
       slot.clone(),
@@ -1735,6 +1735,7 @@ impl BountiesContract {
     if !self.is_approval_required(&bounty, &claimer) {
       self.internal_claimer_approval(id, &mut bounty, &mut bounty_claim, &claimer, None);
     }
+    let mut claims = self.get_bounty_claims(claimer.clone());
     Self::internal_add_claim(id, &mut claims, bounty_claim);
     self.internal_save_claims(&claimer, &claims);
     self.internal_add_bounty_claimer_account(id, claimer.clone());
@@ -1990,7 +1991,7 @@ impl BountiesContract {
   ) -> PromiseOrValue<()> {
     let (
       mut bounty,
-      mut claims,
+      claims,
       claim_idx
     ) = self.check_if_allowed_to_approve_claim_by_status(id, claimer.clone(), claim_number);
 
@@ -2003,6 +2004,7 @@ impl BountiesContract {
       self.internal_return_bonds(&claimer, bounty_claim.bond)
     };
 
+    let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &claimer, claim_number);
     claims[claim_idx] = bounty_claim;
     self.internal_save_claims(&claimer, &claims);
     result

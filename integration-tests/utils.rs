@@ -446,12 +446,18 @@ impl Env {
     bounties: &Contract,
     bounty_id: u64,
     claimer_id: Option<&AccountId>,
+    claim_number: Option<u8>,
     claim_status: ClaimStatus,
     bounty_status: BountyStatus,
   ) -> anyhow::Result<(BountyClaim, Bounty)> {
     let bounty_claims = Self::get_bounty_claims_by_id(bounties, bounty_id).await?;
     let freelancer = claimer_id.unwrap_or(self.freelancer.id());
-    let claim_idx = bounty_claims.iter().position(|c| c.0.to_string() == freelancer.to_string());
+    let claim_idx = bounty_claims
+      .iter()
+      .position(
+        |c|
+          c.0.to_string() == freelancer.to_string() && c.1.claim_number == claim_number
+      );
     let bounty_claim = bounty_claims[claim_idx.expect("No claim found")].clone().1;
     assert_eq!(bounty_claim.status, claim_status);
     let bounty = get_bounty(bounties, bounty_id).await?;
@@ -653,26 +659,6 @@ impl Env {
     }
     Self::assert_contract_call_result(res.clone(), expected_msg).await?;
     Ok(res)
-  }
-
-  pub async fn external_ft_transfer(
-    &self,
-    payer: &Account,
-    receiver: &Account,
-    amount: U128,
-  ) -> anyhow::Result<()> {
-    let res = payer
-      .call(self.test_token.id(), "ft_transfer")
-      .args_json(json!({
-          "receiver_id": receiver.id(),
-          "amount": amount,
-        }))
-      .max_gas()
-      .deposit(ONE_YOCTO)
-      .transact()
-      .await?;
-    Self::assert_contract_call_result(res, None).await?;
-    Ok(())
   }
 
   pub async fn mark_as_paid(
