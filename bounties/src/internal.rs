@@ -1747,7 +1747,7 @@ impl BountiesContract {
       ReputationActionKind::ClaimCreated
     );
 
-    log!("Created new claim for bounty {} by applicant {}", id, claimer);
+    log!("Created new claim for bounty {} by applicant {} #{:?}", id, claimer, claim_number);
   }
 
   pub(crate) fn internal_find_claims_by_id(
