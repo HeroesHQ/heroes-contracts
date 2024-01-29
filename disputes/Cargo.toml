@@ -1,11 +1,12 @@
 [package]
 name = "disputes"
-version = "2.0.1"
+version = "2.0.2"
 authors = ["Oleh Ivaniuk <fedencer7@gmail.com>"]
 edition = "2021"
 
 [dependencies]
 near-sdk = "4.1.1"
+serde = "1.0.149"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -113,19 +113,22 @@ impl BountiesContract {
     &self,
     id: BountyIndex,
   ) -> Vec<(AccountId, BountyClaim)> {
+    let mut result = vec![];
+
     self.bounty_claimer_accounts
       .get(&id)
       .unwrap_or_default()
       .into_iter()
-      .map(|account_id|
-        {
-          let (claims, index) = self.internal_get_claims(id, &account_id);
-          (
-            account_id,
-            claims[index].clone()
-          )
-        }
-      ).collect()
+      .for_each(|account_id| {
+        let claims = self.get_bounty_claims(account_id.clone());
+        Self::internal_find_claims_by_id(id, &claims)
+          .into_iter()
+          .for_each(|claim| {
+            result.push((account_id.clone(), claim));
+          });
+      });
+
+    result
   }
 
   pub fn get_total_fees(&self, token_id: AccountId) -> FeeStats {
@@ -143,6 +146,6 @@ impl BountiesContract {
   }
 
   pub fn get_version() -> String {
-    "2.0.10".to_string()
+    "2.0.11".to_string()
   }
 }

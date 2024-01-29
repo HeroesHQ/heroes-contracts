@@ -6,9 +6,9 @@ use serde_json::{json, Value};
 use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
-use bounties::{Bounty, BountyAction, BountyClaim, BountyStatus, BountyUpdate, ClaimStatus,
-               ConfigCreate, DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig, Multitasking,
-               Postpaid, ReferenceType, Reviewers, ReviewersParams, TokenDetails,
+use bounties::{Bounty, BountyAction, BountyClaim, BountyFlow, BountyStatus, BountyUpdate,
+               ClaimStatus, ConfigCreate, DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig,
+               Multitasking, Postpaid, ReferenceType, Reviewers, ReviewersParams, TokenDetails,
                ValidatorsDaoParams, WhitelistType};
 use disputes::{Dispute, Proposal};
 use kyc_whitelist::{ActivationType, Config, VerificationType};
@@ -207,6 +207,7 @@ impl Env {
       .transact()
       .await?;
     Self::assert_contract_call_result(res, None).await?;
+    Self::set_live_status(&dispute_contract).await?;
 
     let reputation_contract = worker.dev_deploy(&std::fs::read(REPUTATION_WASM)?).await?;
     res = reputation_contract
@@ -445,12 +446,18 @@ impl Env {
     bounties: &Contract,
     bounty_id: u64,
     claimer_id: Option<&AccountId>,
+    claim_number: Option<u8>,
     claim_status: ClaimStatus,
     bounty_status: BountyStatus,
   ) -> anyhow::Result<(BountyClaim, Bounty)> {
     let bounty_claims = Self::get_bounty_claims_by_id(bounties, bounty_id).await?;
     let freelancer = claimer_id.unwrap_or(self.freelancer.id());
-    let claim_idx = bounty_claims.iter().position(|c| c.0.to_string() == freelancer.to_string());
+    let claim_idx = bounty_claims
+      .iter()
+      .position(
+        |c|
+          c.0.to_string() == freelancer.to_string() && c.1.claim_number == claim_number
+      );
     let bounty_claim = bounty_claims[claim_idx.expect("No claim found")].clone().1;
     assert_eq!(bounty_claim.status, claim_status);
     let bounty = get_bounty(bounties, bounty_id).await?;
@@ -566,8 +573,10 @@ impl Env {
     kyc_required: Option<KycConfig>,
     postpaid: Option<Postpaid>,
     multitasking: Option<Multitasking>,
-    expected_msg: Option<&str>,
     allow_deadline_stretch: Option<bool>,
+    bounty_flow: Option<BountyFlow>,
+    allow_creating_many_claims: Option<bool>,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<ExecutionFinalResult> {
     let metadata = json!({
       "title": "Test bounty title",
@@ -605,6 +614,8 @@ impl Env {
         _ => json!(null),
       },
       "allow_deadline_stretch": json!(allow_deadline_stretch.unwrap_or_default()),
+      "bounty_flow": bounty_flow,
+      "allow_creating_many_claims": json!(allow_creating_many_claims.unwrap_or_default()),
     });
 
     let reviewers = match reviewers_params {
@@ -650,35 +661,16 @@ impl Env {
     Ok(res)
   }
 
-  pub async fn external_ft_transfer(
-    &self,
-    payer: &Account,
-    receiver: &Account,
-    amount: U128,
-  ) -> anyhow::Result<()> {
-    let res = payer
-      .call(self.test_token.id(), "ft_transfer")
-      .args_json(json!({
-          "receiver_id": receiver.id(),
-          "amount": amount,
-        }))
-      .max_gas()
-      .deposit(ONE_YOCTO)
-      .transact()
-      .await?;
-    Self::assert_contract_call_result(res, None).await?;
-    Ok(())
-  }
-
   pub async fn mark_as_paid(
     &self,
     bounties: &Contract,
     bounty_id: u64,
     claimer: Option<&AccountId>,
+    claim_number: Option<u8>,
   ) -> anyhow::Result<()> {
     let res = self.project_owner
       .call(bounties.id(), "mark_as_paid")
-      .args_json((bounty_id, claimer))
+      .args_json((bounty_id, claimer, claim_number))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -692,10 +684,11 @@ impl Env {
     bounties: &Contract,
     bounty_id: u64,
     user: Option<&Account>,
+    claim_number: Option<u8>,
   ) -> anyhow::Result<()> {
     let res = if user.is_some() { user.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "confirm_payment")
-      .args_json((bounty_id,))
+      .args_json((bounty_id, claim_number))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -732,11 +725,12 @@ impl Env {
     bounty_id: u64,
     description: String,
     freelancer: Option<&Account>,
+    claim_number: Option<u8>,
     expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let res = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "bounty_done")
-      .args_json((bounty_id, description))
+      .args_json((bounty_id, description, claim_number))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -774,11 +768,12 @@ impl Env {
     bounty_id: u64,
     user: &Account,
     action: &BountyAction,
+    claim_number: Option<u8>,
     expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let res = user
       .call(bounties.id(), "bounty_action")
-      .args_json((bounty_id, action))
+      .args_json((bounty_id, action, claim_number))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -795,6 +790,7 @@ impl Env {
     approve: bool,
     freelancer: Option<&Account>,
     kyc_postponed: Option<DefermentOfKYC>,
+    claim_number: Option<u8>,
     expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let freelancer = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer };
@@ -805,6 +801,7 @@ impl Env {
         freelancer.id(),
         approve,
         kyc_postponed,
+        claim_number,
       ))
       .max_gas()
       .deposit(ONE_YOCTO)
@@ -819,10 +816,11 @@ impl Env {
     bounties: &Contract,
     bounty_id: u64,
     freelancer: Option<&Account>,
+    claim_number: Option<u8>,
   ) -> anyhow::Result<()> {
     let res = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "bounty_give_up")
-      .args_json((bounty_id,))
+      .args_json((bounty_id, claim_number))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -869,10 +867,11 @@ impl Env {
     bounties: &Contract,
     bounty_id: u64,
     freelancer: Option<&Account>,
+    claim_number: Option<u8>,
   ) -> anyhow::Result<()> {
     let res = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "open_dispute")
-      .args_json((bounty_id, "Dispute description"))
+      .args_json((bounty_id, "Dispute description", claim_number))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -1235,11 +1234,12 @@ impl Env {
     &self,
     bounty_id: u64,
     freelancer: Option<&Account>,
+    claim_number: Option<u8>,
     expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let res = if freelancer.is_some() { freelancer.unwrap() } else { &self.freelancer }
       .call(self.disputed_bounties.id(), "withdraw")
-      .args_json((bounty_id,))
+      .args_json((bounty_id, claim_number))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
@@ -1248,8 +1248,8 @@ impl Env {
     Ok(())
   }
 
-  pub async fn set_live_status(bounties: &Contract) -> anyhow::Result<()> {
-    let res = bounties
+  pub async fn set_live_status(contarct: &Contract) -> anyhow::Result<()> {
+    let res = contarct
       .call("set_status")
       .args_json(json!({ "status": "Live" }))
       .max_gas()

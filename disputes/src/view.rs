@@ -15,7 +15,7 @@ impl DisputesContract {
   }
 
   pub fn get_config(&self) -> Config {
-    self.config.clone()
+    self.config.clone().into()
   }
 
   pub fn get_bounty_disputes(
@@ -26,13 +26,13 @@ impl DisputesContract {
       .get(&bounty_id)
       .unwrap_or_default()
       .into_iter()
-      .map(|id| (id, self.disputes.get(&id).unwrap()))
+      .map(|id| (id, self.disputes.get(&id).unwrap().into()))
       .collect()
   }
 
   pub fn get_dispute(&self, id: DisputeIndex) -> Dispute {
     let dispute = self.disputes.get(&id).expect("Dispute not found");
-    dispute
+    dispute.into()
   }
 
   pub fn get_last_dispute_id(&self) -> DisputeIndex {
@@ -42,7 +42,7 @@ impl DisputesContract {
   pub fn get_disputes_by_ids(&self, ids: Vec<DisputeIndex>) -> Vec<(DisputeIndex, Dispute)> {
     ids
       .into_iter()
-      .filter_map(|id| self.disputes.get(&id).map(|dispute| (id, dispute)))
+      .filter_map(|id| self.disputes.get(&id).map(|dispute| (id, dispute.into())))
       .collect()
   }
 
@@ -54,16 +54,20 @@ impl DisputesContract {
     let from_index = from_index.unwrap_or(0);
     let limit = limit.unwrap_or(self.last_dispute_id);
     (from_index..std::cmp::min(from_index + limit, self.last_dispute_id))
-      .filter_map(|id| self.disputes.get(&id).map(|dispute| (id, dispute)))
+      .filter_map(|id| self.disputes.get(&id).map(|dispute| (id, dispute.into())))
       .collect()
   }
 
   pub fn get_arguments(&self, id: DisputeIndex) -> Vec<Reason> {
     let arguments = self.arguments.get(&id).expect("No arguments");
-    arguments
+    arguments.into_iter().map(|r| r.into()).collect()
+  }
+
+  pub fn get_status(&self) -> ContractStatus {
+    self.status.clone()
   }
 
   pub fn get_version() -> String {
-    "2.0.1".to_string()
+    "2.0.2".to_string()
   }
 }
