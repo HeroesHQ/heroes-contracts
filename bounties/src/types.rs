@@ -503,12 +503,6 @@ pub enum Multitasking {
     start_conditions: Option<StartConditions>,
     runtime_env: Option<ContestOrHackathonEnvV1>,
   },
-  ContestOrHackathon {
-    allowed_create_claim_to: Option<DateOrPeriod>,
-    successful_claims_for_result: Option<u16>,
-    start_conditions: Option<StartConditions>,
-    runtime_env: Option<ContestOrHackathonEnv>,
-  },
   OneForAll {
     number_of_slots: u16,
     amount_per_slot: U128,
@@ -518,6 +512,12 @@ pub enum Multitasking {
   DifferentTasksV1 {
     subtasks: Vec<Subtask>,
     runtime_env: Option<DifferentTasksEnvV1>,
+  },
+  ContestOrHackathon {
+    allowed_create_claim_to: Option<DateOrPeriod>,
+    successful_claims_for_result: Option<u16>,
+    start_conditions: Option<StartConditions>,
+    runtime_env: Option<ContestOrHackathonEnv>,
   },
   DifferentTasks {
     subtasks: Vec<Subtask>,
