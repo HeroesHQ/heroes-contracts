@@ -54,7 +54,8 @@ impl BountiesContract {
         "The result cannot be rejected after the payment has been confirmed"
       );
       assert!(
-        payment_timestamps.payment_at.is_some() &&
+        !approve ||
+          payment_timestamps.payment_at.is_some() &&
           payment_timestamps.payment_confirmed_at.is_some(),
         "No payment confirmation"
       );
