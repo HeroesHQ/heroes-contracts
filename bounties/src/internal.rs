@@ -466,13 +466,8 @@ impl BountiesContract {
     sender_id: &AccountId,
     claim_number: Option<u8>
   ) -> (Vec<BountyClaim>, usize) {
-    let claims = self
-      .bounty_claimers
-      .get(&sender_id)
-      .expect("No claimer found")
-      .into_iter()
-      .map(|c| c.into())
-      .collect::<Vec<_>>();
+    let claims = self.get_bounty_claims(sender_id.clone());
+    assert!(claims.len() > 0, "No claimer found");
     let claim_idx = Self::internal_find_claim(id, &claims, claim_number)
       .expect("No bounty claim found");
     (claims, claim_idx)
