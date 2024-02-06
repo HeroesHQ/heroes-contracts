@@ -128,6 +128,19 @@ impl BountiesContract {
     id
   }
 
+  pub(crate) fn internal_tag_filter(&self, bounty: &mut Bounty) {
+    if bounty.metadata.tags.is_some() {
+      let tags: Vec<String> = bounty.metadata
+        .tags
+        .clone()
+        .unwrap()
+        .into_iter()
+        .filter(|t| self.config.clone().to_config().tags.contains(&t))
+        .collect();
+      bounty.metadata.tags = if tags.len() > 0 { Some(tags) } else { None };
+    }
+  }
+
   pub(crate) fn internal_create_bounty(
     &mut self,
     bounty_create: BountyCreate,
@@ -135,12 +148,13 @@ impl BountiesContract {
     token_id: Option<AccountId>,
     amount: U128
   ) {
-    let bounty = bounty_create.to_bounty(
+    let mut bounty = bounty_create.to_bounty(
       payer_id,
       token_id,
       amount,
       self.config.clone().to_config()
     );
+    self.internal_tag_filter(&mut bounty);
     self.check_bounty(&bounty);
     let index = self.internal_add_bounty(bounty);
     log!(

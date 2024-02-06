@@ -584,7 +584,7 @@ impl Env {
       "category": "Marketing",
       "attachments": vec!["http://ipfs-url/1", "http://ipfs-url/2"],
       "experience": "Intermediate",
-      "tags": vec!["Community", "NFT"],
+      "tags": vec!["Community", "NFT", "CustomTag"],
       "acceptance_criteria": "test acceptance criteria",
       "contact_details": json!({
         "contact": "example@domain.net",
