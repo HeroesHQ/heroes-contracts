@@ -100,12 +100,21 @@ impl BountiesContract {
 
   /// Get bounty claims for given user.
   pub fn get_bounty_claims(&self, account_id: AccountId) -> Vec<BountyClaim> {
-    self.bounty_claimers
+    let claims: Vec<BountyClaim> = self.bounty_claimers
       .get(&account_id)
       .unwrap_or_default()
       .into_iter()
       .map(|c| c.into())
-      .collect()
+      .collect();
+
+    let mut index = 0;
+    claims.clone().into_iter().filter(|c| {
+      let pos = claims.iter().position(
+        |e| e.bounty_id == c.bounty_id && e.claim_number == c.claim_number
+      );
+      index += 1;
+      pos.is_some() && pos.unwrap() == index - 1
+    }).collect()
   }
 
   /// Get claims for bounty id.
