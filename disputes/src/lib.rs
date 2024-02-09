@@ -12,6 +12,7 @@ pub mod internal;
 pub mod types;
 pub mod utils;
 pub mod view;
+mod upgrade;
 
 #[near_bindgen]
 #[derive(BorshDeserialize, BorshSerialize, PanicOnDefault)]
@@ -23,9 +24,9 @@ pub struct DisputesContract {
   /// Last available id for the dispute.
   pub last_dispute_id: DisputeIndex,
   /// Disputes map from ID to dispute information.
-  pub disputes: LookupMap<DisputeIndex, Dispute>,
+  pub disputes: LookupMap<DisputeIndex, VersionedDispute>,
   /// Arguments of the parties
-  pub arguments: LookupMap<DisputeIndex, Vec<Reason>>,
+  pub arguments: LookupMap<DisputeIndex, Vec<VersionedReason>>,
   /// Dispute indexes map per bounty ID.
   pub bounty_disputes: LookupMap<u64, Vec<DisputeIndex>>,
   /// account ids that can perform all actions:
@@ -34,7 +35,9 @@ pub struct DisputesContract {
   /// - etc.
   pub admin_whitelist: UnorderedSet<AccountId>,
   /// Dispute contract configuration.
-  pub config: Config,
+  pub config: VersionedConfig,
+  /// Contract status
+  pub status: ContractStatus,
 }
 
 #[near_bindgen]
@@ -61,7 +64,8 @@ impl DisputesContract {
       arguments: LookupMap::new(StorageKey::Reasons),
       bounty_disputes: LookupMap::new(StorageKey::BountyDisputes),
       admin_whitelist: admin_whitelist_set,
-      config: config.unwrap_or_default(),
+      config: config.unwrap_or_default().into(),
+      status: ContractStatus::Genesis,
     }
   }
 
@@ -71,6 +75,7 @@ impl DisputesContract {
     account_id: Option<AccountId>,
     account_ids: Option<Vec<AccountId>>,
   ) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admin_whitelist(&env::predecessor_account_id());
     let account_ids = if let Some(account_ids) = account_ids {
@@ -89,6 +94,7 @@ impl DisputesContract {
     account_id: Option<AccountId>,
     account_ids: Option<Vec<AccountId>>,
   ) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admin_whitelist(&env::predecessor_account_id());
     let account_ids = if let Some(account_ids) = account_ids {
@@ -107,13 +113,15 @@ impl DisputesContract {
 
   #[payable]
   pub fn change_config(&mut self, config: Config) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admin_whitelist(&env::predecessor_account_id());
-    self.config = config;
+    self.config = config.into();
   }
 
   #[payable]
   pub fn create_dispute(&mut self, dispute_create: DisputeCreate) -> DisputeIndex {
+    self.assert_live();
     assert_one_yocto();
     assert_eq!(
       self.bounties_contract,
@@ -131,6 +139,7 @@ impl DisputesContract {
 
   #[payable]
   pub fn provide_arguments(&mut self, id: DisputeIndex, description: String) -> usize {
+    self.assert_live();
     assert_one_yocto();
     let dispute = self.get_dispute(id);
     if dispute.status != DisputeStatus::New {
@@ -155,6 +164,7 @@ impl DisputesContract {
 
   #[payable]
   pub fn cancel_dispute(&mut self, id: DisputeIndex) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
     let dispute = self.get_dispute(id);
     if dispute.status != DisputeStatus::New {
@@ -162,11 +172,19 @@ impl DisputesContract {
     }
 
     let success = matches!(dispute.get_side_of_dispute(), Side::ProjectOwner);
-    self.internal_send_result_of_dispute(id, dispute.bounty_id, dispute.claimer, success, true)
+    self.internal_send_result_of_dispute(
+      id,
+      dispute.bounty_id,
+      dispute.claimer,
+      dispute.claim_number,
+      success,
+      true
+    )
   }
 
   #[payable]
   pub fn escalation(&mut self, id: DisputeIndex) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
     let dispute = self.get_dispute(id);
     if dispute.status != DisputeStatus::New {
@@ -186,6 +204,7 @@ impl DisputesContract {
     id: DisputeIndex,
     success: bool,
   ) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
     let dispute = self.get_dispute(id);
     assert_eq!(
@@ -201,7 +220,14 @@ impl DisputesContract {
       "The decision period is over, now you need to perform the 'finalize' action",
     );
 
-    self.internal_send_result_of_dispute(id, dispute.bounty_id, dispute.claimer, success, false)
+    self.internal_send_result_of_dispute(
+      id,
+      dispute.bounty_id,
+      dispute.claimer,
+      dispute.claim_number,
+      success,
+      false
+    )
   }
 
   #[payable]
@@ -209,6 +235,7 @@ impl DisputesContract {
     &mut self,
     id: DisputeIndex,
   ) -> PromiseOrValue<()> {
+    self.assert_live();
     assert_one_yocto();
     let dispute = self.get_dispute(id);
     if dispute.status != DisputeStatus::DecisionPending {
@@ -221,9 +248,19 @@ impl DisputesContract {
   /// Can be used only during migrations when updating contract versions
   #[payable]
   pub fn update_bounties_contract(&mut self, bounties_contract: AccountId) {
+    self.assert_live();
     assert_one_yocto();
     self.assert_admin_whitelist(&env::predecessor_account_id());
     self.bounties_contract = bounties_contract;
+  }
+
+  #[private]
+  pub fn set_status(&mut self, status: ContractStatus) {
+    assert!(
+      !matches!(status, ContractStatus::Genesis),
+      "The status can't be set to Genesis"
+    );
+    self.status = status;
   }
 }
 
@@ -233,7 +270,8 @@ mod tests {
   use near_sdk::{AccountId, ONE_NEAR, testing_env};
   use near_sdk::json_types::{U128, U64};
   use near_sdk::test_utils::{accounts, VMContextBuilder};
-  use crate::{Config, Dispute, DisputeCreate, DisputeIndex, DisputesContract, DisputeStatus, Reason, Side};
+  use crate::{Config, ContractStatus, Dispute, DisputeCreate, DisputeIndex, DisputesContract,
+              DisputeStatus, Reason, Side};
 
   fn create_dispute(
     context: &mut VMContextBuilder,
@@ -241,6 +279,7 @@ mod tests {
     bounty_id: u64,
     description: String,
     claimer: AccountId,
+    claim_number: Option<u8>,
     project_owner_delegate: AccountId,
   ) -> DisputeIndex {
     testing_env!(context
@@ -251,6 +290,7 @@ mod tests {
       description,
       claimer,
       project_owner_delegate,
+      claim_number,
     };
     contract.create_dispute(dispute_create)
   }
@@ -260,20 +300,20 @@ mod tests {
     dispute_id: DisputeIndex,
     new_status: DisputeStatus,
   ) {
-    let mut dispute = contract.disputes.get(&dispute_id).unwrap();
+    let mut dispute = contract.disputes.get(&dispute_id).unwrap().to_dispute();
     dispute.status = new_status;
-    contract.disputes.insert(&dispute_id, &dispute);
+    contract.disputes.insert(&dispute_id, &dispute.into());
   }
 
   fn escalation(
     contract: &mut DisputesContract,
     dispute_id: DisputeIndex,
   ) {
-    let mut dispute = contract.disputes.get(&dispute_id).unwrap();
+    let mut dispute = contract.disputes.get(&dispute_id).unwrap().to_dispute();
     dispute.status = DisputeStatus::DecisionPending;
     dispute.proposal_id = Some(1.into());
     dispute.proposal_timestamp = Some(0.into());
-    contract.disputes.insert(&dispute_id, &dispute);
+    contract.disputes.insert(&dispute_id, &dispute.into());
   }
 
   fn get_bounties_contract() -> AccountId {
@@ -293,6 +333,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -304,6 +345,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -312,6 +354,7 @@ mod tests {
       description: "Test description".to_string(),
       bounty_id: U64(1),
       claimer: accounts(1),
+      claim_number: None,
       project_owner_delegate: accounts(2),
       status: DisputeStatus::New,
       proposal_id: None,
@@ -337,6 +380,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(accounts(1))
@@ -348,6 +392,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
   }
@@ -362,6 +407,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -373,6 +419,7 @@ mod tests {
       1,
       "".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
   }
@@ -399,6 +446,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
     testing_env!(context
       .predecessor_account_id(accounts(0))
       .attached_deposit(1)
@@ -423,6 +471,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
     testing_env!(context
       .predecessor_account_id(accounts(0))
       .attached_deposit(1)
@@ -448,6 +497,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
     testing_env!(context
       .predecessor_account_id(accounts(0))
       .attached_deposit(1)
@@ -465,6 +515,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
     testing_env!(context.predecessor_account_id(accounts(0)).build());
     contract.add_to_admin_whitelist(Some(accounts(1)), None);
   }
@@ -479,6 +530,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
     testing_env!(context.predecessor_account_id(accounts(1)).attached_deposit(1).build());
     contract.add_to_admin_whitelist(Some(accounts(1)), None);
   }
@@ -493,6 +545,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
     testing_env!(context
       .predecessor_account_id(accounts(0))
       .attached_deposit(1)
@@ -509,6 +562,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     assert_eq!(contract.get_config(), Config::default());
 
@@ -535,6 +589,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -546,6 +601,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -589,6 +645,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -600,6 +657,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -621,6 +679,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -631,6 +690,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -652,6 +712,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
     testing_env!(context
       .predecessor_account_id(accounts(0))
       .attached_deposit(1)
@@ -670,6 +731,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -691,6 +753,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -701,6 +764,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -721,6 +785,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -731,6 +796,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -752,6 +818,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -762,6 +829,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -782,6 +850,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
     testing_env!(context
       .predecessor_account_id(accounts(0))
       .attached_deposit(1)
@@ -800,6 +869,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -822,6 +892,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -832,6 +903,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -852,6 +924,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -862,6 +935,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -883,6 +957,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -893,6 +968,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -913,6 +989,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
     testing_env!(context
       .predecessor_account_id(accounts(0))
       .attached_deposit(1)
@@ -930,6 +1007,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 
@@ -952,6 +1030,7 @@ mod tests {
       vec![accounts(0).into()],
       None,
     );
+    contract.set_status(ContractStatus::Live);
 
     testing_env!(context
       .predecessor_account_id(get_bounties_contract())
@@ -962,6 +1041,7 @@ mod tests {
       1,
       "Test description".to_string(),
       accounts(1),
+      None,
       accounts(2)
     );
 

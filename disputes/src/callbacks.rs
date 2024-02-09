@@ -20,7 +20,7 @@ impl DisputesContract {
       dispute.proposal_id = Some(U64::from(proposal_id));
       dispute.proposal_timestamp = Some(U64::from(env::block_timestamp()));
       dispute.status = DisputeStatus::DecisionPending;
-      self.disputes.insert(&id, &dispute);
+      self.disputes.insert(&id, &dispute.into());
       true
     }
   }
@@ -55,7 +55,7 @@ impl DisputesContract {
           DisputeStatus::InFavorOfProjectOwner
         }
       };
-      self.disputes.insert(&id, &dispute);
+      self.disputes.insert(&id, &dispute.into());
       true
     }
   }
@@ -85,7 +85,14 @@ impl DisputesContract {
           env::panic_str("The proposal status is not being processed");
         }
       };
-      self.internal_send_result_of_dispute(id, dispute.bounty_id, dispute.claimer, success, false)
+      self.internal_send_result_of_dispute(
+        id,
+        dispute.bounty_id,
+        dispute.claimer,
+        dispute.claim_number,
+        success,
+        false
+      )
     }
   }
 }

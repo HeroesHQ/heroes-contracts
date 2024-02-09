@@ -22,7 +22,7 @@ impl DisputesContract {
 
   pub(crate) fn internal_add_dispute(&mut self, dispute: Dispute) -> DisputeIndex {
     let id = self.last_dispute_id;
-    self.disputes.insert(&id, &dispute);
+    self.disputes.insert(&id, &dispute.clone().into());
     let bounty_id = dispute.bounty_id.0;
     let mut indices = self
       .bounty_disputes
@@ -39,13 +39,14 @@ impl DisputesContract {
     id: DisputeIndex,
     bounty_id: U64,
     claimer: AccountId,
+    claim_number: Option<u8>,
     success: bool,
     canceled: bool,
   ) -> PromiseOrValue<()> {
     ext_bounty_contract::ext(self.bounties_contract.clone())
       .with_static_gas(GAS_FOR_SEND_RESULT_OF_DISPUTE)
       .with_attached_deposit(1)
-      .dispute_result(bounty_id.0, claimer, success)
+      .dispute_result(bounty_id.0, claimer, claim_number, success)
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CLAIM_APPROVAL)
@@ -55,11 +56,13 @@ impl DisputesContract {
   }
 
   pub(crate) fn is_argument_period_expired(&self, dispute: &Dispute) -> bool {
-    env::block_timestamp() > dispute.start_time.0 + self.config.argument_period.0
+    env::block_timestamp() >
+      dispute.start_time.0 + self.config.clone().to_config().argument_period.0
   }
 
   pub(crate) fn is_decision_period_expired(&self, dispute: &Dispute) -> bool {
-    env::block_timestamp() > dispute.proposal_timestamp.unwrap().0 + self.config.decision_period.0
+    env::block_timestamp() >
+      dispute.proposal_timestamp.unwrap().0 + self.config.clone().to_config().decision_period.0
   }
 
   pub(crate) fn internal_add_proposal(
@@ -96,7 +99,7 @@ impl DisputesContract {
         })
           .to_string()
           .into_bytes(),
-        self.config.add_proposal_bond.0,
+        self.config.clone().to_config().add_proposal_bond.0,
         GAS_FOR_ADD_PROPOSAL,
       )
       .then(
@@ -133,12 +136,12 @@ impl DisputesContract {
     new_reason: Reason,
   ) -> usize {
     let mut reasons = self.arguments.get(id).unwrap_or_default();
-    reasons.push(new_reason);
+    reasons.push(new_reason.into());
     self.arguments.insert(id, &reasons);
     reasons.len() - 1
   }
 
-  pub fn internal_get_proposal_description(
+  pub(crate) fn internal_get_proposal_description(
     &self,
     id: &DisputeIndex,
     dispute: &Dispute
@@ -153,9 +156,16 @@ impl DisputesContract {
       }
     ).to_owned();
     for i in 0..reasons.len() {
-      let reason = &reasons[i];
-      full_description.push_str(Self::chunk_of_description(dispute, reason).as_str());
+      let reason = reasons[i].clone();
+      full_description.push_str(Self::chunk_of_description(dispute, &reason.into()).as_str());
     }
     full_description
+  }
+
+  pub(crate) fn assert_live(&self) {
+    assert!(
+      matches!(self.status, ContractStatus::Live),
+      "The contract status is not Live"
+    );
   }
 }
