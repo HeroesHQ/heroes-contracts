@@ -35,6 +35,7 @@ pub const DEFAULT_PENALTY_PLATFORM_FEE_PERCENTAGE: u32 = 0;
 pub const DEFAULT_PENALTY_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 0;
 pub const MAX_SLOTS: u16 = 300;
 pub const MIN_DEVIATION_FOR_TOTAL_BOUNTY_AMOUNT: u128 = 20;
+pub const MAX_DUE_DATE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 90); // 90 days
 
 pub const NO_DEPOSIT: Balance = 0;
 pub const INITIAL_CATEGORIES: [&str; 4] = ["Marketing", "Development", "Design", "Other"];
@@ -2220,6 +2221,7 @@ pub struct ConfigCreate {
   pub penalty_platform_fee_percentage: u32,
   pub penalty_validators_dao_fee_percentage: u32,
   pub use_owners_whitelist: bool,
+  pub max_due_date: Option<U64>,
 }
 
 impl ConfigCreate {
@@ -2236,6 +2238,7 @@ impl ConfigCreate {
       tags: config.tags,
       currencies: config.currencies,
       use_owners_whitelist: self.use_owners_whitelist,
+      max_due_date: self.max_due_date,
     }
   }
 }
@@ -2274,7 +2277,7 @@ pub struct ConfigV2 {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct Config {
+pub struct ConfigV3 {
   pub bounty_claim_bond: U128,
   pub bounty_forgiveness_period: U64,
   pub period_for_opening_dispute: U64,
@@ -2288,6 +2291,24 @@ pub struct Config {
   pub use_owners_whitelist: bool,
 }
 
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct Config {
+  pub bounty_claim_bond: U128,
+  pub bounty_forgiveness_period: U64,
+  pub period_for_opening_dispute: U64,
+  pub categories: Vec<String>,
+  pub tags: Vec<String>,
+  pub platform_fee_percentage: u32,
+  pub validators_dao_fee_percentage: u32,
+  pub penalty_platform_fee_percentage: u32,
+  pub penalty_validators_dao_fee_percentage: u32,
+  pub currencies: Vec<String>,
+  pub use_owners_whitelist: bool,
+  pub max_due_date: Option<U64>,
+}
+
 impl Config {
   fn default_categories() -> Vec<String> {
     let mut categories_set = vec![];
@@ -2299,6 +2320,10 @@ impl Config {
     let mut tags_set = vec![];
     tags_set.extend(INITIAL_TAGS.into_iter().map(|t| t.into()));
     tags_set
+  }
+
+  fn default_max_due_date() -> Option<U64> {
+    Some(MAX_DUE_DATE)
   }
 }
 
@@ -2316,6 +2341,7 @@ impl Default for Config {
       penalty_validators_dao_fee_percentage: DEFAULT_PENALTY_VALIDATORS_DAO_FEE_PERCENTAGE,
       currencies: vec![],
       use_owners_whitelist: false,
+      max_due_date: Config::default_max_due_date(),
     }
   }
 }
@@ -2325,6 +2351,7 @@ impl Default for Config {
 pub enum VersionedConfig {
   V1(ConfigV1),
   V2(ConfigV2),
+  V3(ConfigV3),
   Current(Config),
 }
 
@@ -2344,8 +2371,8 @@ impl VersionedConfig {
     }
   }
 
-  fn upgrade_v2_to_v3(config: ConfigV2) -> Config {
-    Config {
+  fn upgrade_v2_to_v3(config: ConfigV2) -> ConfigV3 {
+    ConfigV3 {
       bounty_claim_bond: config.bounty_claim_bond,
       bounty_forgiveness_period: config.bounty_forgiveness_period,
       period_for_opening_dispute: config.period_for_opening_dispute,
@@ -2360,13 +2387,35 @@ impl VersionedConfig {
     }
   }
 
+  fn upgrade_v3_to_v4(config: ConfigV3) -> Config {
+    Config {
+      bounty_claim_bond: config.bounty_claim_bond,
+      bounty_forgiveness_period: config.bounty_forgiveness_period,
+      period_for_opening_dispute: config.period_for_opening_dispute,
+      categories: config.categories,
+      tags: config.tags,
+      platform_fee_percentage: config.platform_fee_percentage,
+      validators_dao_fee_percentage: config.validators_dao_fee_percentage,
+      penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
+      penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
+      currencies: config.currencies,
+      use_owners_whitelist: config.use_owners_whitelist,
+      max_due_date: Config::default_max_due_date(),
+    }
+  }
+
   pub fn to_config(self) -> Config {
     match self {
       VersionedConfig::Current(config) => config,
-      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v2_to_v3(
-        VersionedConfig::upgrade_v1_to_v2(config_v1)
+      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v3_to_v4(
+        VersionedConfig::upgrade_v2_to_v3(
+          VersionedConfig::upgrade_v1_to_v2(config_v1)
+        )
       ),
-      VersionedConfig::V2(config_v2) => VersionedConfig::upgrade_v2_to_v3(config_v2),
+      VersionedConfig::V2(config_v2) => VersionedConfig::upgrade_v3_to_v4(
+        VersionedConfig::upgrade_v2_to_v3(config_v2)
+      ),
+      VersionedConfig::V3(config_v3) => VersionedConfig::upgrade_v3_to_v4(config_v3),
     }
   }
 
@@ -2384,10 +2433,15 @@ impl From<VersionedConfig> for Config {
   fn from(value: VersionedConfig) -> Self {
     match value {
       VersionedConfig::Current(config) => config,
-      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v2_to_v3(
-        VersionedConfig::upgrade_v1_to_v2(config_v1)
+      VersionedConfig::V1(config_v1) => VersionedConfig::upgrade_v3_to_v4(
+        VersionedConfig::upgrade_v2_to_v3(
+          VersionedConfig::upgrade_v1_to_v2(config_v1)
+        )
       ),
-      VersionedConfig::V2(config_v2) => VersionedConfig::upgrade_v2_to_v3(config_v2),
+      VersionedConfig::V2(config_v2) => VersionedConfig::upgrade_v3_to_v4(
+        VersionedConfig::upgrade_v2_to_v3(config_v2)
+      ),
+      VersionedConfig::V3(config_v3) => VersionedConfig::upgrade_v3_to_v4(config_v3),
     }
   }
 }

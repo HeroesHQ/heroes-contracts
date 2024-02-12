@@ -1777,6 +1777,7 @@ mod tests {
       penalty_platform_fee_percentage: 500,
       penalty_validators_dao_fee_percentage: 500,
       use_owners_whitelist: true,
+      max_due_date: None,
     };
     contract.change_config(config_create.clone());
     let config = contract.get_config();
@@ -1789,6 +1790,7 @@ mod tests {
       penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
       penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
       use_owners_whitelist: config.use_owners_whitelist,
+      max_due_date: None,
     });
   }
 
@@ -2695,6 +2697,7 @@ mod tests {
       penalty_platform_fee_percentage: config.penalty_platform_fee_percentage,
       penalty_validators_dao_fee_percentage: config.penalty_validators_dao_fee_percentage,
       use_owners_whitelist: config.use_owners_whitelist,
+      max_due_date: None,
     });
 
     let project_owner = accounts(1);
