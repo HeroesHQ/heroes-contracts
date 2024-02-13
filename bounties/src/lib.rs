@@ -371,7 +371,7 @@ impl BountiesContract {
       "This operation is not supported for simple bounty flow"
     );
     assert!(
-      bounty.is_claim_deadline_correct(claim.deadline),
+      !approve || bounty.is_claim_deadline_correct(claim.deadline),
       "The claim deadline is no longer correct"
     );
 
