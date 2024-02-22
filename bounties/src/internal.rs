@@ -2243,6 +2243,15 @@ impl BountiesContract {
       },
       _ => {}
     }
+    if self.config.clone().to_config().max_due_date.is_some() &&
+      bounty.deadline.get_deadline_type() == 1
+    {
+      assert!(
+        bounty.deadline.get_deadline_value().0 <=
+          env::block_timestamp() + self.config.clone().to_config().max_due_date.unwrap().0,
+        "Incorrect due date"
+      );
+    }
   }
 
   pub(crate) fn internal_finalize_active_claim(
