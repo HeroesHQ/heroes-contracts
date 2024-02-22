@@ -1339,6 +1339,7 @@ impl Env {
         penalty_platform_fee_percentage: current_config.penalty_platform_fee_percentage,
         penalty_validators_dao_fee_percentage: current_config.penalty_validators_dao_fee_percentage,
         use_owners_whitelist,
+        max_due_date: None,
       }
     ).await?;
     Ok(())
