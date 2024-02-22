@@ -667,6 +667,7 @@ impl Env {
     bounty_id: u64,
     claimer: Option<&AccountId>,
     claim_number: Option<u8>,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let res = self.project_owner
       .call(bounties.id(), "mark_as_paid")
@@ -675,7 +676,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res, None).await?;
+    Self::assert_contract_call_result(res, expected_msg).await?;
     Ok(())
   }
 
@@ -685,6 +686,7 @@ impl Env {
     bounty_id: u64,
     user: Option<&Account>,
     claim_number: Option<u8>,
+    expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let res = if user.is_some() { user.unwrap() } else { &self.freelancer }
       .call(bounties.id(), "confirm_payment")
@@ -693,7 +695,7 @@ impl Env {
       .deposit(ONE_YOCTO)
       .transact()
       .await?;
-    Self::assert_contract_call_result(res, None).await?;
+    Self::assert_contract_call_result(res, expected_msg).await?;
     Ok(())
   }
 
@@ -1337,6 +1339,7 @@ impl Env {
         penalty_platform_fee_percentage: current_config.penalty_platform_fee_percentage,
         penalty_validators_dao_fee_percentage: current_config.penalty_validators_dao_fee_percentage,
         use_owners_whitelist,
+        max_due_date: None,
       }
     ).await?;
     Ok(())
