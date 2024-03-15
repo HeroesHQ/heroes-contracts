@@ -1943,6 +1943,8 @@ impl BountiesContract {
     place_of_check: PlaceOfCheckKYC,
     slot: Option<usize>,
   ) -> PromiseOrValue<()> {
+    let remaining_gas = env::prepaid_gas().0.checked_sub(USED_GAS_BEFORE_WHITELIST_CHECK);
+    assert!(remaining_gas.is_some(), "Exceeded gas");
     Promise::new(self.kyc_whitelist_contract.clone().unwrap())
       .function_call(
         "is_whitelisted".to_string(),
@@ -1956,7 +1958,7 @@ impl BountiesContract {
       )
       .then(
         Self::ext(env::current_account_id())
-          .with_static_gas(GAS_FOR_AFTER_CHECK_IF_WHITELISTED)
+          .with_static_gas(remaining_gas.unwrap().into())
           .after_check_if_whitelisted(id, claimer, claim_number, place_of_check, slot)
       )
       .into()

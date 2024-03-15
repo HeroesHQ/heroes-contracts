@@ -379,7 +379,7 @@ impl BountiesContract {
       approve,
       is_kyc_delayed: kyc_postponed.clone()
     };
-    if self.is_kyc_check_required(bounty, None, None, place_of_check.clone()) {
+    if approve && self.is_kyc_check_required(bounty, None, None, place_of_check.clone()) {
       self.check_if_claimer_in_kyc_whitelist(id, claimer, claim_number, place_of_check, None)
 
     } else {
