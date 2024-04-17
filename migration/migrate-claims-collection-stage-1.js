@@ -1,32 +1,10 @@
 require('dotenv').config();
-// const Big = require("big.js");
-const homedir = require("os").homedir();
 const { MongoClient } = require('mongodb');
-const nearAPI = require("near-api-js");
-const path = require("path");
+
+const { nearInit } = require("./near");
 
 const client = new MongoClient(process.env.MONGO_URL || "mongodb://localhost:27017/heroes_claims_collection_migration");
 const bountyContractId = process.env.BOUNTY_CONTRACT_ID || "bounties.heroes.near";
-const network = process.env.NEAR_NETWORK_ENV || 'mainnet';
-
-// const Gas = Big(10).pow(12).mul(300).toFixed(0);
-
-const nearInit = async () => {
-  const credentialsPath = path.join(homedir, ".near-credentials");
-  const keyStore = new nearAPI.keyStores.UnencryptedFileSystemKeyStore(
-    credentialsPath
-  );
-  const config = {
-    networkId: network,
-    nodeUrl: network === "mainnet" ? "https://rpc.mainnet.near.org" : "https://rpc.testnet.near.org",
-    keyStore
-  };
-
-  const near = await nearAPI.connect(config);
-  const account = await near.account(bountyContractId);
-
-  return { account };
-};
 
 async function getOnePageBounties(near, fromIndex = 0, limit = 100) {
   return near.account.viewFunction({
@@ -175,7 +153,6 @@ async function main () {
   await setClaimIDs(db);
   await buildNewCollections(db);
 
-  // TODO
   return "Done.";
 }
 

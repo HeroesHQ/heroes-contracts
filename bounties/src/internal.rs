@@ -1651,6 +1651,18 @@ impl BountiesContract {
     }
   }
 
+  pub(crate) fn internal_add_claim(&mut self, bounty_claim: &BountyClaim) {
+    let claim_id = self.last_claim_id;
+    let mut bounty_claimers = self.bounty_claimers.get(&bounty_claim.owner).unwrap_or_default();
+    bounty_claimers.push(claim_id);
+    self.bounty_claimers.insert(&bounty_claim.owner, &bounty_claimers);
+    let mut bounty_claims = self.bounty_claims.get(&bounty_claim.bounty_id).unwrap_or_default();
+    bounty_claims.push(claim_id);
+    self.bounty_claims.insert(&bounty_claim.bounty_id, &bounty_claims);
+    self.last_claim_id += 1;
+    self.claims.insert(&claim_id, &bounty_claim.clone().into());
+  }
+
   pub(crate) fn internal_create_claim(
     &mut self,
     id: BountyIndex,
@@ -1697,22 +1709,14 @@ impl BountiesContract {
       self.internal_claimer_approval(id, &mut bounty, &mut bounty_claim, &claimer, None);
     }
 
-    let claim_id: ClaimIndex;
     let claims = self.get_bounty_claims(claimer.clone());
     let claim = claims.into_iter().find(|c| c.1.bounty_id == id && c.1.claim_number == claim_number);
     if claim.is_none() {
-      claim_id = self.last_claim_id;
-      let mut bounty_claimers = self.bounty_claimers.get(&claimer).unwrap_or_default();
-      bounty_claimers.push(claim_id);
-      self.bounty_claimers.insert(&claimer, &bounty_claimers);
-      let mut bounty_claims = self.bounty_claims.get(&id).unwrap_or_default();
-      bounty_claims.push(claim_id);
-      self.bounty_claims.insert(&id, &bounty_claims);
-      self.last_claim_id += 1;
+      self.internal_add_claim(&bounty_claim);
     } else {
-      claim_id = claim.unwrap().0;
+      let claim_id = claim.unwrap().0;
+      self.claims.insert(&claim_id, &bounty_claim.into());
     }
-    self.claims.insert(&claim_id, &bounty_claim.into());
     self.locked_amount += bond.0;
 
     self.internal_update_statistic(

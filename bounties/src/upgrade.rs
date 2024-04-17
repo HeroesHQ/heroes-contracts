@@ -51,7 +51,37 @@ impl BountiesContract {
       total_fees: old_state.total_fees,
       total_validators_dao_fees: old_state.total_validators_dao_fees,
       recipient_of_platform_fee: old_state.recipient_of_platform_fee,
-      status: ContractStatus::ReadOnly,
+      status: ContractStatus::Genesis,
+    }
+  }
+
+  #[private]
+  pub fn migrate_claims(&mut self, claims: Vec<BountyClaim>) {
+    assert!(
+      matches!(self.status, ContractStatus::Genesis),
+      "This action is only possible if the contract status is Genesis"
+    );
+
+    for (_, bounty_claim) in claims.iter().enumerate() {
+      let claims = self.get_bounty_claims(bounty_claim.owner.clone());
+      let claim = claims.into_iter().find(
+        |c|
+          c.1.bounty_id == bounty_claim.bounty_id && c.1.claim_number == bounty_claim.claim_number
+      );
+      let claim_info = json!({
+        "bounty_id": bounty_claim.bounty_id,
+        "owner": bounty_claim.owner,
+        "claim_number": bounty_claim.claim_number
+      });
+
+      if claim.is_none() {
+        self.internal_add_claim(bounty_claim);
+
+        env::log_str(format!("Claim {} added", claim_info).as_str());
+
+      } else {
+        env::log_str(format!("Claim {} skipped", claim_info).as_str());
+      }
     }
   }
 }
