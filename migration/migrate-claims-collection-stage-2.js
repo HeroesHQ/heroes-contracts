@@ -18,7 +18,7 @@ async function main () {
   const db = client.db();
 
   let skip = 0;
-  let claims = await db.collection("claims").find().skip(skip).limit(limit).toArray();
+  let claims = await db.collection("claims").find().sort({ "id": 1 }).skip(skip).limit(limit).toArray();
 
   while (claims.length > 0) {
     const entries = claims.map(c => ({
@@ -50,7 +50,7 @@ async function main () {
     });
 
     skip += claims.length;
-    claims = await db.collection("claims").find().skip(skip).limit(limit).toArray();
+    claims = await db.collection("claims").find().sort({ "id": 1 }).skip(skip).limit(limit).toArray();
   }
 
   return "Done.";

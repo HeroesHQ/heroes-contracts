@@ -1,6 +1,6 @@
-import path from "path";
 const homedir = require("os").homedir();
-import nearAPI from "near-api-js";
+const nearAPI = require("near-api-js");
+const path = require("path");
 
 const bountyContractId = process.env.BOUNTY_CONTRACT_ID || "bounties.heroes.near";
 const network = process.env.NEAR_NETWORK_ENV || 'mainnet';
