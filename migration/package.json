@@ -4,6 +4,7 @@
   "description": "",
   "scripts": {
     "migrate-kyc-whitelist": "node ./migrate-kyc-whitelist.js",
+    "migrate-claims-collection-stage-1": "node migrate-claims-collection-stage-1.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {

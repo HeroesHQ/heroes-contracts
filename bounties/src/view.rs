@@ -79,6 +79,10 @@ impl BountiesContract {
     self.last_bounty_id
   }
 
+  pub fn get_last_claim_id(&self) -> ClaimIndex {
+    self.last_claim_id
+  }
+
   pub fn get_bounties_by_ids(&self, ids: Vec<BountyIndex>) -> Vec<(BountyIndex, Bounty)> {
     ids
       .into_iter()
@@ -98,46 +102,32 @@ impl BountiesContract {
       .collect()
   }
 
+  /// Get claim by id.
+  pub fn get_bounty_claim(&self, id: ClaimIndex) -> BountyClaim {
+    self.claims
+      .get(&id)
+      .expect(format!("No claim found with ID {}", id).as_str())
+      .into()
+  }
+
   /// Get bounty claims for given user.
-  pub fn get_bounty_claims(&self, account_id: AccountId) -> Vec<BountyClaim> {
-    let claims: Vec<BountyClaim> = self.bounty_claimers
+  pub fn get_bounty_claims(&self, account_id: AccountId) -> Vec<(ClaimIndex, BountyClaim)> {
+    self.bounty_claimers
       .get(&account_id)
       .unwrap_or_default()
       .into_iter()
-      .map(|c| c.into())
-      .collect();
-
-    let mut index = 0;
-    claims.clone().into_iter().filter(|c| {
-      let pos = claims.iter().position(
-        |e| e.bounty_id == c.bounty_id && e.claim_number == c.claim_number
-      );
-      index += 1;
-      pos.is_some() && pos.unwrap() == index - 1
-    }).collect()
+      .map(|c| (c, self.get_bounty_claim(c)))
+      .collect()
   }
 
   /// Get claims for bounty id.
-  pub fn get_bounty_claims_by_id(
-    &self,
-    id: BountyIndex,
-  ) -> Vec<(AccountId, BountyClaim)> {
-    let mut result = vec![];
-
-    self.bounty_claimer_accounts
+  pub fn get_claims_by_bounty_id(&self, id: BountyIndex) -> Vec<(ClaimIndex, BountyClaim)> {
+    self.bounty_claims
       .get(&id)
       .unwrap_or_default()
       .into_iter()
-      .for_each(|account_id| {
-        let claims = self.get_bounty_claims(account_id.clone());
-        Self::internal_find_claims_by_id(id, &claims)
-          .into_iter()
-          .for_each(|claim| {
-            result.push((account_id.clone(), claim));
-          });
-      });
-
-    result
+      .map(|c| (c, self.get_bounty_claim(c)))
+      .collect()
   }
 
   pub fn get_total_fees(&self, token_id: AccountId) -> FeeStats {
@@ -155,6 +145,6 @@ impl BountiesContract {
   }
 
   pub fn get_version() -> String {
-    "2.0.14".to_string()
+    "2.0.15".to_string()
   }
 }

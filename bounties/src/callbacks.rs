@@ -147,7 +147,7 @@ impl BountiesContract {
         }
       } else {
         let claimer = receiver_id.unwrap();
-        let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
+        let (mut bounty, claim) = self.internal_get_and_check_bounty_and_claim(
           id.clone(),
           claimer.clone(),
           claim_number,
@@ -157,11 +157,12 @@ impl BountiesContract {
           "Bounty status does not allow completion",
           "The claim status does not allow you to complete the bounty"
         );
+        let (claim_id, mut bounty_claim) = claim.unwrap();
 
         if proposal.status == "Approved" {
           self.internal_bounty_payout(id, Some(claimer), claim_number)
         } else if proposal.status == "Rejected" {
-          self.internal_reject_claim(id, claimer, &mut bounty, index.unwrap(), &mut claims)
+          self.internal_reject_claim(id, claimer, &mut bounty, claim_id, &mut bounty_claim)
         } else {
           env::panic_str("The proposal status is not being processed");
         }
@@ -208,7 +209,7 @@ impl BountiesContract {
       false
     } else {
       let dispute_id = result.unwrap();
-      let (_, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
+      let (_, claim) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         claimer.clone(),
         claim_number,
@@ -218,10 +219,10 @@ impl BountiesContract {
         "Bounty status does not allow opening a dispute",
         "The claim status does not allow opening a dispute"
       );
-      let claim_idx = index.unwrap();
-      claims[claim_idx].status = ClaimStatus::Disputed;
-      claims[claim_idx].dispute_id = Some(dispute_id.into());
-      self.internal_save_claims(claimer, &claims);
+      let (claim_id, mut bounty_claim) = claim.unwrap();
+      bounty_claim.status = ClaimStatus::Disputed;
+      bounty_claim.dispute_id = Some(dispute_id.into());
+      self.claims.insert(&claim_id, &bounty_claim.into());
       true
     }
   }
@@ -238,7 +239,7 @@ impl BountiesContract {
       env::panic_str("Error checking dispute status");
     } else {
       let dispute = result.unwrap();
-      let (mut bounty, mut claims, index) = self.internal_get_and_check_bounty_and_claim(
+      let (mut bounty, claim) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         receiver_id.clone(),
         claim_number,
@@ -248,11 +249,11 @@ impl BountiesContract {
         "Bounty status does not allow to reject a claim as a result of a dispute",
         "Claim status does not allow rejection as a result of a dispute"
       );
-      let claim_idx = index.unwrap();
+      let (claim_id, mut bounty_claim) = claim.unwrap();
 
       if dispute.status == "InFavorOfClaimer" || dispute.status == "CanceledByProjectOwner" {
         if bounty.is_different_tasks() {
-          self.internal_claim_return_after_dispute(receiver_id, &mut claims, claim_idx)
+          self.internal_claim_return_after_dispute(claim_id, &mut bounty_claim)
         } else {
           self.internal_bounty_payout(id, Some(receiver_id), claim_number)
         }
@@ -261,8 +262,8 @@ impl BountiesContract {
           id,
           &receiver_id,
           &mut bounty,
-          claim_idx,
-          &mut claims,
+          claim_id,
+          &mut bounty_claim,
           None,
           true
         )
