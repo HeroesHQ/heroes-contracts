@@ -6,7 +6,7 @@ const { nearInit } = require("./near");
 
 const client = new MongoClient(process.env.MONGO_URL || "mongodb://localhost:27017/heroes_claims_collection_migration");
 const bountyContractId = process.env.BOUNTY_CONTRACT_ID || "bounties.heroes.near";
-const limit = process.env.CLAIMS_FOR_ONE_ITERATION || 20;
+const limit = Number(process.env.CLAIMS_FOR_ONE_ITERATION) || 20;
 
 const Gas = Big(10).pow(12).mul(300).toFixed(0);
 
@@ -23,7 +23,7 @@ async function main () {
   while (claims.length > 0) {
     const entries = claims.map(c => ({
       owner: c.owner || null,
-      bounty_id: c.bounty_id || null,
+      bounty_id: c.bounty_id || c.bounty_id === 0 ? c.bounty_id : null,
       created_at: c.created_at || null,
       start_time: c.start_time || null,
       deadline: c.deadline || null,
@@ -35,9 +35,9 @@ async function main () {
       dispute_id: c.dispute_id || null,
       is_kyc_delayed: c.is_kyc_delayed || null,
       payment_timestamps: c.payment_timestamps || null,
-      slot: c.slot || null,
+      slot: c.slot || c.slot === 0 ? c.slot : null,
       bond: c.bond || null,
-      claim_number: c.claim_number || null,
+      claim_number: c.claim_number || c.claim_number === 0 ? c.claim_number : null,
     }));
 
     console.log(JSON.stringify(entries));

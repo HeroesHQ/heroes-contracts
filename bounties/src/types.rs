@@ -2227,14 +2227,16 @@ pub(crate) enum StorageKey {
   AccountBounties,
   AdminWhitelist,
   Bounties,
-  Claims,
-  BountyClaimers,
-  BountyClaims,
+  _BountyClaimerAccounts,
+  _BountyClaimers,
   OwnersWhitelist,
   Tokens,
   TotalFees,
   TotalValidatorsDaoFees,
   PostpaidSubscribersWhitelist,
+  Claims,
+  BountyClaims,
+  BountyClaimers,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
