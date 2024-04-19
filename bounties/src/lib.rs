@@ -8,6 +8,7 @@ use near_sdk::{assert_one_yocto, env, is_promise_success, log, near_bindgen, ser
                Balance, Gas, ONE_YOCTO, PanicOnDefault, Promise, PromiseError, PromiseOrValue};
 
 pub use crate::types::*;
+use crate::upgrade::OldVersionedBountyClaim;
 
 pub mod callbacks;
 pub mod internal;
@@ -25,23 +26,17 @@ pub struct BountiesContract {
   /// Last available id for the bounty.
   pub last_bounty_id: BountyIndex,
 
-  /// Last available id for the claim.
-  pub last_claim_id: ClaimIndex,
-
   /// Bounties map from ID to bounty information.
   pub bounties: LookupMap<BountyIndex, VersionedBounty>,
 
   /// Bounty indexes map per owner account.
   pub account_bounties: LookupMap<AccountId, Vec<BountyIndex>>,
 
-  /// Claims map from ID to claim information.
-  pub claims: LookupMap<ClaimIndex, VersionedBountyClaim>,
+  /// [Deprecated] Bounty claimers map per user. Allows quickly to query for each users their claims.
+  pub old_bounty_claimers: LookupMap<AccountId, Vec<OldVersionedBountyClaim>>,
 
-  /// Bounty claim IDs are matched with the accounts of their owners.
-  pub bounty_claimers: LookupMap<AccountId, Vec<ClaimIndex>>,
-
-  /// Bounty claim IDs map per bounty ID.
-  pub bounty_claims: LookupMap<BountyIndex, Vec<ClaimIndex>>,
+  /// [Deprecated] Bounty claimer accounts map per bounty ID.
+  pub old_bounty_claimer_accounts: LookupMap<BountyIndex, Vec<AccountId>>,
 
   /// Amount of $NEAR locked for bonds.
   pub locked_amount: Balance,
@@ -85,6 +80,18 @@ pub struct BountiesContract {
 
   /// Contract status
   pub status: ContractStatus,
+
+  /// Last available id for the claim.
+  pub last_claim_id: ClaimIndex,
+
+  /// Claims map from ID to claim information.
+  pub claims: LookupMap<ClaimIndex, VersionedBountyClaim>,
+
+  /// Bounty claim IDs are matched with the accounts of their owners.
+  pub bounty_claimers: LookupMap<AccountId, Vec<ClaimIndex>>,
+
+  /// Bounty claim IDs map per bounty ID.
+  pub bounty_claims: LookupMap<BountyIndex, Vec<ClaimIndex>>,
 }
 
 #[near_bindgen]
@@ -113,12 +120,10 @@ impl BountiesContract {
     Self {
       tokens: UnorderedMap::new(StorageKey::Tokens),
       last_bounty_id: 0,
-      last_claim_id: 0,
       bounties: LookupMap::new(StorageKey::Bounties),
       account_bounties: LookupMap::new(StorageKey::AccountBounties),
-      claims: LookupMap::new(StorageKey::Claims),
-      bounty_claimers: LookupMap::new(StorageKey::BountyClaimers),
-      bounty_claims: LookupMap::new(StorageKey::BountyClaims),
+      old_bounty_claimers: LookupMap::new(StorageKey::OldBountyClaimers),
+      old_bounty_claimer_accounts: LookupMap::new(StorageKey::BountyClaimerAccounts),
       locked_amount: 0,
       unlocked_amount: 0,
       admins_whitelist: admins_whitelist_set,
@@ -132,6 +137,10 @@ impl BountiesContract {
       total_validators_dao_fees: LookupMap::new(StorageKey::TotalValidatorsDaoFees),
       recipient_of_platform_fee,
       status: ContractStatus::Genesis,
+      last_claim_id: 0,
+      claims: LookupMap::new(StorageKey::Claims),
+      bounty_claimers: LookupMap::new(StorageKey::BountyClaimers),
+      bounty_claims: LookupMap::new(StorageKey::BountyClaims),
     }
   }
 
