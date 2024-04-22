@@ -96,7 +96,7 @@ impl BountiesContract {
     limit: Option<BountyIndex>,
   ) -> Vec<(BountyIndex, Bounty)> {
     let from_index = from_index.unwrap_or(0);
-    let limit = limit.unwrap_or(self.last_bounty_id);
+    let limit = limit.unwrap_or(100);
     (from_index..std::cmp::min(from_index + limit, self.last_bounty_id))
       .filter_map(|id| self.bounties.get(&id).map(|bounty| (id, bounty.into())))
       .collect()
@@ -110,24 +110,50 @@ impl BountiesContract {
       .into()
   }
 
-  /// Get bounty claims for given user.
-  pub fn get_bounty_claims(&self, account_id: AccountId) -> Vec<(ClaimIndex, BountyClaim)> {
-    self.bounty_claimers
-      .get(&account_id)
-      .unwrap_or_default()
-      .into_iter()
-      .map(|c| (c, self.get_bounty_claim(c)))
+  pub fn get_bounty_claims(
+    &self,
+    from_index: Option<ClaimIndex>,
+    limit: Option<ClaimIndex>,
+  ) -> Vec<(ClaimIndex, BountyClaim)> {
+    let from_index = from_index.unwrap_or(0);
+    let limit = limit.unwrap_or(100);
+    (from_index..std::cmp::min(from_index + limit, self.last_bounty_id))
+      .filter_map(|id| self.claims.get(&id).map(|claim| (id, claim.into())))
       .collect()
   }
 
+  /// Get bounty claims for given user.
+  pub fn get_account_claims(
+    &self,
+    account_id: AccountId,
+    from_index: Option<usize>,
+    limit: Option<usize>,
+  ) -> Vec<(ClaimIndex, BountyClaim)> {
+    let from_index = from_index.unwrap_or(0);
+    let limit = limit.unwrap_or(100);
+
+    let claims = self.bounty_claimers
+      .get(&account_id)
+      .unwrap_or_default();
+
+    self.internal_get_one_page_of_claims(claims, from_index, limit)
+  }
+
   /// Get claims for bounty id.
-  pub fn get_claims_by_bounty_id(&self, id: BountyIndex) -> Vec<(ClaimIndex, BountyClaim)> {
-    self.bounty_claims
+  pub fn get_claims_by_bounty_id(
+    &self,
+    id: BountyIndex,
+    from_index: Option<usize>,
+    limit: Option<usize>,
+  ) -> Vec<(ClaimIndex, BountyClaim)> {
+    let from_index = from_index.unwrap_or(0);
+    let limit = limit.unwrap_or(100);
+
+    let claims = self.bounty_claims
       .get(&id)
-      .unwrap_or_default()
-      .into_iter()
-      .map(|c| (c, self.get_bounty_claim(c)))
-      .collect()
+      .unwrap_or_default();
+
+    self.internal_get_one_page_of_claims(claims, from_index, limit)
   }
 
   pub fn get_total_fees(&self, token_id: AccountId) -> FeeStats {

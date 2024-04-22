@@ -497,7 +497,7 @@ impl Env {
   ) -> anyhow::Result<Vec<(ClaimIndex, BountyClaim)>> {
     let bounty_claims = bounties
       .call("get_claims_by_bounty_id")
-      .args_json((bounty_id,))
+      .args_json((bounty_id, Some(0usize), Some(100usize)))
       .view()
       .await?
       .json()?;
@@ -517,13 +517,13 @@ impl Env {
     Ok(token_balance.0)
   }
 
-  pub async fn get_bounty_claims(
+  pub async fn get_account_claims(
     &self,
     bounties: &Contract,
   ) -> anyhow::Result<Vec<(ClaimIndex, BountyClaim)>> {
     let bounty_claims = bounties
-      .call("get_bounty_claims")
-      .args_json((self.freelancer.id(),))
+      .call("get_account_claims")
+      .args_json((self.freelancer.id(), Some(0usize), Some(100usize)))
       .view()
       .await?
       .json()?;

@@ -151,7 +151,7 @@ async fn test_bounty_claim(e: &Env) -> anyhow::Result<()> {
     BountyStatus::Claimed
   ).await?;
 
-  let freelancer_claims = e.get_bounty_claims(&e.bounties).await?;
+  let freelancer_claims = e.get_account_claims(&e.bounties).await?;
   assert_eq!(freelancer_claims.len(), 1);
   let freelancer_claim = freelancer_claims[0].1.clone();
   assert_eq!(freelancer_claim, bounty_claim);

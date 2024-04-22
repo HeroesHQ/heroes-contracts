@@ -176,11 +176,16 @@ impl BountiesContract {
     );
 
     for (_, bounty_claim) in claims.iter().enumerate() {
-      // TODO: optimize
-      let claims = self.get_bounty_claims(bounty_claim.owner.clone());
-      let claim = claims.into_iter().find(
-        |c|
-          c.1.bounty_id == bounty_claim.bounty_id && c.1.claim_number == bounty_claim.claim_number
+      let claims = self.internal_get_claims_by_account_id_an_bounty_id(
+        &bounty_claim.bounty_id,
+        &bounty_claim.owner,
+        true
+      );
+      let claim = self.internal_find_claim(
+        &claims,
+        bounty_claim.bounty_id.clone(),
+        bounty_claim.owner.clone(),
+        bounty_claim.claim_number.clone()
       );
       let claim_info = json!({
         "bounty_id": bounty_claim.bounty_id,

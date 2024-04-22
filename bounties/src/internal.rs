@@ -87,7 +87,6 @@ impl BountiesContract {
             "The competition does not continue"
           );
           if successful_claims_for_result.is_some() {
-            // TODO: optimize
             let claims = self.get_claims_with_statuses(id, vec![ClaimStatus::Completed], None);
             assert!(
               claims.len() as u16 >= successful_claims_for_result.unwrap(),
@@ -419,7 +418,6 @@ impl BountiesContract {
     let multitasking = bounty.multitasking.clone().unwrap();
     match multitasking.clone() {
       Multitasking::DifferentTasks { subtasks, .. } => {
-        // TODO: optimize
         let incomplete_slots = self.get_claims_with_statuses(
           id,
           vec![ClaimStatus::Completed, ClaimStatus::CompletedWithDispute],
@@ -1305,14 +1303,33 @@ impl BountiesContract {
     (reference, entries)
   }
 
+  pub(crate) fn internal_get_one_page_of_claims(
+    &self,
+    claims: Vec<ClaimIndex>,
+    from_index: usize,
+    limit: usize
+  ) -> Vec<(ClaimIndex, BountyClaim)> {
+    (from_index..std::cmp::min(from_index + limit, claims.len()))
+      .map(|c| (claims[c], self.get_bounty_claim(claims[c])))
+      .collect()
+  }
+
+  pub(crate) fn internal_get_claims_by_bounty_id(&self, id: BountyIndex) -> Vec<(ClaimIndex, BountyClaim)> {
+    self.bounty_claims
+      .get(&id)
+      .unwrap_or_default()
+      .into_iter()
+      .map(|c| (c, self.get_bounty_claim(c)))
+      .collect()
+  }
+
   pub(crate) fn get_claims_with_statuses(
     &self,
     id: BountyIndex,
     statuses: Vec<ClaimStatus>,
     except: Option<(AccountId, Option<u8>)>,
   ) -> Vec<(ClaimIndex, BountyClaim)> {
-    // TODO: optimize
-    self.get_claims_by_bounty_id(id)
+    self.internal_get_claims_by_bounty_id(id)
       .into_iter()
       .filter(
         |entry|
@@ -1528,7 +1545,6 @@ impl BountiesContract {
               claim.status = approved_status;
 
             } else {
-              // TODO: optimize
               let claims = self.get_claims_with_statuses(
                 id,
                 vec![ClaimStatus::ReadyToStart],
@@ -1538,7 +1554,6 @@ impl BountiesContract {
               if claims.len() as u16 == min_slots_to_start.unwrap() - 1 {
                 bounty.status = BountyStatus::ManyClaimed;
                 claim.status = approved_status;
-                // TODO: optimize
                 self.internal_update_status_of_many_claims(
                   bounty,
                   claims,
@@ -1573,13 +1588,11 @@ impl BountiesContract {
               bounty.status = BountyStatus::ManyClaimed;
               claim.status = approved_status;
 
-              // TODO: optimize
               let claims = self.get_claims_with_statuses(
                 id,
                 vec![ClaimStatus::ReadyToStart],
                 Some((claimer.clone(), claim.claim_number))
               );
-              // TODO: optimize
               self.internal_update_status_of_many_claims(
                 bounty,
                 claims,
