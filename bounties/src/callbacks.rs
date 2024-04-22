@@ -147,7 +147,7 @@ impl BountiesContract {
         }
       } else {
         let claimer = receiver_id.unwrap();
-        let (mut bounty, claim) = self.internal_get_and_check_bounty_and_claim(
+        let (mut bounty, claim, _) = self.internal_get_and_check_bounty_and_claim(
           id.clone(),
           claimer.clone(),
           claim_number,
@@ -209,7 +209,7 @@ impl BountiesContract {
       false
     } else {
       let dispute_id = result.unwrap();
-      let (_, claim) = self.internal_get_and_check_bounty_and_claim(
+      let (_, claim, _) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         claimer.clone(),
         claim_number,
@@ -239,7 +239,7 @@ impl BountiesContract {
       env::panic_str("Error checking dispute status");
     } else {
       let dispute = result.unwrap();
-      let (mut bounty, claim) = self.internal_get_and_check_bounty_and_claim(
+      let (mut bounty, claim, _) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         receiver_id.clone(),
         claim_number,

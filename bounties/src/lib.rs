@@ -690,6 +690,7 @@ impl BountiesContract {
     let sender_id = env::predecessor_account_id();
     assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
 
+    // TODO: optimize
     let claims = self.get_claims_by_bounty_id(id.clone());
     let found_claim = claims
       .clone()

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::*;
 
 impl BountiesContract {
@@ -85,6 +87,7 @@ impl BountiesContract {
             "The competition does not continue"
           );
           if successful_claims_for_result.is_some() {
+            // TODO: optimize
             let claims = self.get_claims_with_statuses(id, vec![ClaimStatus::Completed], None);
             assert!(
               claims.len() as u16 >= successful_claims_for_result.unwrap(),
@@ -416,6 +419,7 @@ impl BountiesContract {
     let multitasking = bounty.multitasking.clone().unwrap();
     match multitasking.clone() {
       Multitasking::DifferentTasks { subtasks, .. } => {
+        // TODO: optimize
         let incomplete_slots = self.get_claims_with_statuses(
           id,
           vec![ClaimStatus::Completed, ClaimStatus::CompletedWithDispute],
@@ -453,15 +457,69 @@ impl BountiesContract {
     }
   }
 
+  pub(crate) fn internal_get_claims_by_account_id_an_bounty_id(
+    &self,
+    id: &BountyIndex,
+    claimer: &AccountId,
+    no_panic: bool,
+  ) -> Vec<ClaimIndex> {
+    let account_claims: HashSet<ClaimIndex> = self.bounty_claimers
+      .get(claimer)
+      .unwrap_or_default()
+      .into_iter()
+      .collect();
+    assert!(no_panic || account_claims.len() > 0, "No claimer found");
+
+    let bounty_claims: HashSet<ClaimIndex> = self.bounty_claims
+      .get(id)
+      .unwrap_or_default()
+      .into_iter()
+      .collect();
+
+    let mut claims = account_claims
+      .intersection(&bounty_claims)
+      .map(|c| c.clone())
+      .collect::<Vec<_>>();
+    claims.sort();
+
+    claims
+  }
+
   pub(crate) fn internal_find_claim(
-    claims: Vec<(ClaimIndex, BountyClaim)>,
+    &self,
+    claims: &Vec<ClaimIndex>,
     id: BountyIndex,
     claimer: AccountId,
     claim_number: Option<u8>
   ) -> Option<(ClaimIndex, BountyClaim)> {
-    claims
-      .into_iter()
-      .find(|c| c.1.bounty_id == id && c.1.owner == claimer && c.1.claim_number == claim_number)
+    let claim_index: ClaimIndex;
+
+    if claim_number.is_some() {
+      let some_number = claim_number.unwrap() as usize;
+      if claims.len() <= some_number {
+        return None;
+      }
+      claim_index = claims[some_number];
+    } else {
+      if claims.len() != 1 {
+        return None;
+      }
+      claim_index = claims[0];
+    }
+
+    let claim = self.claims.get(&claim_index);
+    if claim.is_none() {
+      return None;
+    }
+
+    let bounty_claim: BountyClaim = claim.unwrap().into();
+    if bounty_claim.owner != claimer ||
+      bounty_claim.claim_number != claim_number ||
+      bounty_claim.bounty_id != id
+    {
+      return None;
+    }
+    Some((claim_index, bounty_claim))
   }
 
   pub(crate) fn internal_get_claim(
@@ -470,11 +528,9 @@ impl BountiesContract {
     claimer: AccountId,
     claim_number: Option<u8>
   ) -> (ClaimIndex, BountyClaim) {
-    let claims = self.get_bounty_claims(claimer.clone());
-    assert!(claims.len() > 0, "No claimer found");
-    let claim = Self::internal_find_claim(claims, id, claimer, claim_number);
-    assert!(claim.is_some(), "No bounty claim found");
-    claim.unwrap()
+    let claims = self.internal_get_claims_by_account_id_an_bounty_id(&id, &claimer, false);
+    let claim = self.internal_find_claim(&claims, id, claimer, claim_number);
+    claim.expect("No bounty claim found")
   }
 
   pub(crate) fn internal_get_payment_timestamps(
@@ -671,10 +727,10 @@ impl BountiesContract {
     &self,
     id: BountyIndex,
   ) -> (ClaimIndex, BountyClaim) {
-    let claims = self.get_claims_by_bounty_id(id);
+    let claim_ids = self.bounty_claims.get(&id).unwrap_or_default();
 
-    for claim in claims {
-      let (claim_id, bounty_claim) = claim;
+    for claim_id in claim_ids {
+      let bounty_claim = self.get_bounty_claim(claim_id);
       if Self::is_claim_active(&bounty_claim) {
         return (claim_id, bounty_claim);
       }
@@ -1255,6 +1311,7 @@ impl BountiesContract {
     statuses: Vec<ClaimStatus>,
     except: Option<(AccountId, Option<u8>)>,
   ) -> Vec<(ClaimIndex, BountyClaim)> {
+    // TODO: optimize
     self.get_claims_by_bounty_id(id)
       .into_iter()
       .filter(
@@ -1471,6 +1528,7 @@ impl BountiesContract {
               claim.status = approved_status;
 
             } else {
+              // TODO: optimize
               let claims = self.get_claims_with_statuses(
                 id,
                 vec![ClaimStatus::ReadyToStart],
@@ -1480,6 +1538,7 @@ impl BountiesContract {
               if claims.len() as u16 == min_slots_to_start.unwrap() - 1 {
                 bounty.status = BountyStatus::ManyClaimed;
                 claim.status = approved_status;
+                // TODO: optimize
                 self.internal_update_status_of_many_claims(
                   bounty,
                   claims,
@@ -1514,11 +1573,13 @@ impl BountiesContract {
               bounty.status = BountyStatus::ManyClaimed;
               claim.status = approved_status;
 
+              // TODO: optimize
               let claims = self.get_claims_with_statuses(
                 id,
                 vec![ClaimStatus::ReadyToStart],
                 Some((claimer.clone(), claim.claim_number))
               );
+              // TODO: optimize
               self.internal_update_status_of_many_claims(
                 bounty,
                 claims,
@@ -1709,8 +1770,8 @@ impl BountiesContract {
       self.internal_claimer_approval(id, &mut bounty, &mut bounty_claim, &claimer, None);
     }
 
-    let claims = self.get_bounty_claims(claimer.clone());
-    let claim = claims.into_iter().find(|c| c.1.bounty_id == id && c.1.claim_number == claim_number);
+    let claims = self.internal_get_claims_by_account_id_an_bounty_id(&id, &claimer, true);
+    let claim = self.internal_find_claim(&claims, id, claimer.clone(), claim_number);
     if claim.is_none() {
       self.internal_add_claim(&bounty_claim);
     } else {
@@ -1726,18 +1787,6 @@ impl BountiesContract {
     );
 
     log!("Created new claim for bounty {} by applicant {} #{:?}", id, claimer, claim_number);
-  }
-
-  pub(crate) fn internal_find_claims_by_bounty_id(
-    &self,
-    id: BountyIndex,
-    claimer: AccountId
-  ) -> Vec<BountyClaim> {
-    self.get_bounty_claims(claimer)
-      .into_iter()
-      .filter(|c| c.1.bounty_id == id)
-      .map(|c| c.1)
-      .collect()
   }
 
   pub(crate) fn check_if_allowed_to_create_claim_by_status(
@@ -1817,7 +1866,7 @@ impl BountiesContract {
       }
     }
 
-    self.internal_get_and_check_bounty_and_claim(
+    let (_, _, claims) = self.internal_get_and_check_bounty_and_claim(
       id.clone(),
       claimer.clone(),
       None,
@@ -1834,7 +1883,7 @@ impl BountiesContract {
         "It is no longer possible to create new claims"
       );
       if bounty.allow_creating_many_claims {
-        let claims_amount = self.internal_find_claims_by_bounty_id(id, claimer).len();
+        let claims_amount = claims.len();
         assert!(claims_amount < 255, "One account can create no more than 255 claims");
         claim_number = Some(claims_amount as u8);
       }
@@ -1879,7 +1928,7 @@ impl BountiesContract {
       }
     }
 
-    let (_, claim) = self.internal_get_and_check_bounty_and_claim(
+    let (_, claim, _) = self.internal_get_and_check_bounty_and_claim(
       id.clone(),
       claimer.clone(),
       claim_number,
@@ -2026,7 +2075,7 @@ impl BountiesContract {
     claim_number: Option<u8>,
     proposal_id: Option<U64>
   ) {
-    let (mut bounty, claim) = self.internal_get_and_check_bounty_and_claim(
+    let (mut bounty, claim, _) = self.internal_get_and_check_bounty_and_claim(
       id.clone(),
       claimer.clone(),
       claim_number,
@@ -2077,7 +2126,7 @@ impl BountiesContract {
 
     } else {
       assert!(claimer.is_some(), "The claimant must be established");
-      let (_, claim) = self.internal_get_and_check_bounty_and_claim(
+      let (_, claim, _) = self.internal_get_and_check_bounty_and_claim(
         id.clone(),
         claimer.clone().unwrap(),
         claim_number,
@@ -2158,16 +2207,16 @@ impl BountiesContract {
     no_claim_found: bool,
     bounty_message: &str,
     claim_message: &str,
-  ) -> (Bounty, Option<(ClaimIndex, BountyClaim)>) {
+  ) -> (Bounty, Option<(ClaimIndex, BountyClaim)>, Vec<ClaimIndex>) {
     let bounty = self.get_bounty(id.clone());
     if !bounty_statuses.contains(&bounty.status) {
       env::panic_str(bounty_message);
     }
 
-    if !bounty.allow_creating_many_claims || !no_claim_found {
-      let claims = self.get_bounty_claims(claimer.clone());
-      let claim = Self::internal_find_claim(claims, id, claimer, claim_number);
+    let claims = self.internal_get_claims_by_account_id_an_bounty_id(&id, &claimer, true);
+    let claim = self.internal_find_claim(&claims, id, claimer, claim_number);
 
+    if !bounty.allow_creating_many_claims || !no_claim_found {
       assert!(no_claim_found || claim.is_some(), "No bounty claim found");
 
       let claim_found = claim.is_some() &&
@@ -2179,10 +2228,10 @@ impl BountiesContract {
         env::panic_str(claim_message);
       }
 
-      (bounty, claim)
+      (bounty, claim, claims)
 
     } else {
-      (bounty, None)
+      (bounty, None, claims)
     }
   }
 
