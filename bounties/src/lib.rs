@@ -338,7 +338,7 @@ impl BountiesContract {
     );
 
     let sender_id = env::predecessor_account_id();
-    let (bounty, _) = self.check_if_allowed_to_create_claim_by_status(
+    let (bounty, _, _) = self.check_if_allowed_to_create_claim_by_status(
       id,
       sender_id.clone(),
       slot.clone()

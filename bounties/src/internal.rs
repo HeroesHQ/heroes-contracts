@@ -1746,7 +1746,7 @@ impl BountiesContract {
     proposal_id: Option<U64>,
     slot: Option<usize>,
   ) {
-    let (mut bounty, claim_number) = self.check_if_allowed_to_create_claim_by_status(
+    let (mut bounty, claim, claim_number) = self.check_if_allowed_to_create_claim_by_status(
       id,
       claimer.clone(),
       slot.clone(),
@@ -1783,8 +1783,6 @@ impl BountiesContract {
       self.internal_claimer_approval(id, &mut bounty, &mut bounty_claim, &claimer, None);
     }
 
-    let claims = self.internal_get_claims_by_account_id_an_bounty_id(&id, &claimer, true);
-    let claim = self.internal_find_claim(&claims, id, claimer.clone(), claim_number);
     if claim.is_none() {
       self.internal_add_claim(&bounty_claim);
     } else {
@@ -1807,7 +1805,7 @@ impl BountiesContract {
     id: BountyIndex,
     claimer: AccountId,
     slot: Option<usize>,
-  ) -> (Bounty, Option<u8>) {
+  ) -> (Bounty, Option<(ClaimIndex, BountyClaim)>, Option<u8>) {
     let bounty = self.get_bounty(id.clone());
     let bounty_statuses: Vec<BountyStatus>;
     let claim_statuses: Vec<ClaimStatus>;
@@ -1879,7 +1877,7 @@ impl BountiesContract {
       }
     }
 
-    let (_, _, claims) = self.internal_get_and_check_bounty_and_claim(
+    let (_, claim, claims) = self.internal_get_and_check_bounty_and_claim(
       id.clone(),
       claimer.clone(),
       None,
@@ -1902,7 +1900,7 @@ impl BountiesContract {
       }
     }
 
-    (bounty, claim_number)
+    (bounty, claim, claim_number)
   }
 
   pub(crate) fn check_if_allowed_to_approve_claim_by_status(
