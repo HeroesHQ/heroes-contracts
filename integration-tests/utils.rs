@@ -7,9 +7,9 @@ use workspaces::{Account, AccountId, Contract, Worker};
 use workspaces::network::Sandbox;
 use workspaces::result::ExecutionFinalResult;
 use bounties::{Bounty, BountyAction, BountyClaim, BountyFlow, BountyStatus, BountyUpdate,
-               ClaimStatus, ConfigCreate, DaoFeeStats, DefermentOfKYC, FeeStats, KycConfig,
-               Multitasking, Postpaid, ReferenceType, Reviewers, ReviewersParams, TokenDetails,
-               ValidatorsDaoParams, WhitelistType};
+               ClaimIndex, ClaimStatus, ConfigCreate, DaoFeeStats, DefermentOfKYC, FeeStats,
+               KycConfig, Multitasking, Postpaid, ReferenceType, Reviewers, ReviewersParams,
+               TokenDetails, ValidatorsDaoParams, WhitelistType};
 use disputes::{Dispute, Proposal};
 use kyc_whitelist::{ActivationType, Config, VerificationType};
 use reputation::{ClaimerMetrics, BountyOwnerMetrics};
@@ -450,13 +450,13 @@ impl Env {
     claim_status: ClaimStatus,
     bounty_status: BountyStatus,
   ) -> anyhow::Result<(BountyClaim, Bounty)> {
-    let bounty_claims = Self::get_bounty_claims_by_id(bounties, bounty_id).await?;
+    let bounty_claims = Self::get_claims_by_bounty_id(bounties, bounty_id).await?;
     let freelancer = claimer_id.unwrap_or(self.freelancer.id());
     let claim_idx = bounty_claims
       .iter()
       .position(
         |c|
-          c.0.to_string() == freelancer.to_string() && c.1.claim_number == claim_number
+          c.1.owner.to_string() == freelancer.to_string() && c.1.claim_number == claim_number
       );
     let bounty_claim = bounty_claims[claim_idx.expect("No claim found")].clone().1;
     assert_eq!(bounty_claim.status, claim_status);
@@ -480,7 +480,7 @@ impl Env {
     claim_index: usize,
     for_payout_proposal: bool,
   ) -> anyhow::Result<U64> {
-    let bounty_claims = Self::get_bounty_claims_by_id(bounties, bounty_id).await?;
+    let bounty_claims = Self::get_claims_by_bounty_id(bounties, bounty_id).await?;
     assert!(bounty_claims.len() > claim_index);
     let bounty_claim = bounty_claims[claim_index].clone().1;
     let proposal_id = if for_payout_proposal {
@@ -491,13 +491,13 @@ impl Env {
     Ok(proposal_id)
   }
 
-  pub async fn get_bounty_claims_by_id(
+  pub async fn get_claims_by_bounty_id(
     bounties: &Contract,
     bounty_id: u64,
-  ) -> anyhow::Result<Vec<(near_sdk::AccountId, BountyClaim)>> {
+  ) -> anyhow::Result<Vec<(ClaimIndex, BountyClaim)>> {
     let bounty_claims = bounties
-      .call("get_bounty_claims_by_id")
-      .args_json((bounty_id,))
+      .call("get_claims_by_bounty_id")
+      .args_json((bounty_id, Some(0usize), Some(100usize)))
       .view()
       .await?
       .json()?;
@@ -517,13 +517,13 @@ impl Env {
     Ok(token_balance.0)
   }
 
-  pub async fn get_bounty_claims(
+  pub async fn get_account_claims(
     &self,
     bounties: &Contract,
-  ) -> anyhow::Result<Vec<BountyClaim>> {
+  ) -> anyhow::Result<Vec<(ClaimIndex, BountyClaim)>> {
     let bounty_claims = bounties
-      .call("get_bounty_claims")
-      .args_json((self.freelancer.id(),))
+      .call("get_account_claims")
+      .args_json((self.freelancer.id(), Some(0usize), Some(100usize)))
       .view()
       .await?
       .json()?;

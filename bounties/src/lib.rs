@@ -8,6 +8,7 @@ use near_sdk::{assert_one_yocto, env, is_promise_success, log, near_bindgen, ser
                Balance, Gas, ONE_YOCTO, PanicOnDefault, Promise, PromiseError, PromiseOrValue};
 
 pub use crate::types::*;
+use crate::upgrade::OldVersionedBountyClaim;
 
 pub mod callbacks;
 pub mod internal;
@@ -31,11 +32,11 @@ pub struct BountiesContract {
   /// Bounty indexes map per owner account.
   pub account_bounties: LookupMap<AccountId, Vec<BountyIndex>>,
 
-  /// Bounty claimers map per user. Allows quickly to query for each users their claims.
-  pub bounty_claimers: LookupMap<AccountId, Vec<VersionedBountyClaim>>,
+  /// [Deprecated] Bounty claimers map per user. Allows quickly to query for each users their claims.
+  pub old_bounty_claimers: LookupMap<AccountId, Vec<OldVersionedBountyClaim>>,
 
-  /// Bounty claimer accounts map per bounty ID.
-  pub bounty_claimer_accounts: LookupMap<BountyIndex, Vec<AccountId>>,
+  /// [Deprecated] Bounty claimer accounts map per bounty ID.
+  pub old_bounty_claimer_accounts: LookupMap<BountyIndex, Vec<AccountId>>,
 
   /// Amount of $NEAR locked for bonds.
   pub locked_amount: Balance,
@@ -79,6 +80,18 @@ pub struct BountiesContract {
 
   /// Contract status
   pub status: ContractStatus,
+
+  /// Last available id for the claim.
+  pub last_claim_id: ClaimIndex,
+
+  /// Claims map from ID to claim information.
+  pub claims: LookupMap<ClaimIndex, VersionedBountyClaim>,
+
+  /// Bounty claim IDs are matched with the accounts of their owners.
+  pub bounty_claimers: LookupMap<AccountId, Vec<ClaimIndex>>,
+
+  /// Bounty claim IDs map per bounty ID.
+  pub bounty_claims: LookupMap<BountyIndex, Vec<ClaimIndex>>,
 }
 
 #[near_bindgen]
@@ -109,8 +122,8 @@ impl BountiesContract {
       last_bounty_id: 0,
       bounties: LookupMap::new(StorageKey::Bounties),
       account_bounties: LookupMap::new(StorageKey::AccountBounties),
-      bounty_claimers: LookupMap::new(StorageKey::BountyClaimers),
-      bounty_claimer_accounts: LookupMap::new(StorageKey::BountyClaimerAccounts),
+      old_bounty_claimers: LookupMap::new(StorageKey::OldBountyClaimers),
+      old_bounty_claimer_accounts: LookupMap::new(StorageKey::BountyClaimerAccounts),
       locked_amount: 0,
       unlocked_amount: 0,
       admins_whitelist: admins_whitelist_set,
@@ -124,6 +137,10 @@ impl BountiesContract {
       total_validators_dao_fees: LookupMap::new(StorageKey::TotalValidatorsDaoFees),
       recipient_of_platform_fee,
       status: ContractStatus::Genesis,
+      last_claim_id: 0,
+      claims: LookupMap::new(StorageKey::Claims),
+      bounty_claimers: LookupMap::new(StorageKey::BountyClaimers),
+      bounty_claims: LookupMap::new(StorageKey::BountyClaims),
     }
   }
 
@@ -358,12 +375,11 @@ impl BountiesContract {
   ) -> PromiseOrValue<()> {
     self.assert_live();
     assert_one_yocto();
-    let (
-      bounty,
-      claims,
-      claim_idx
-    ) = self.check_if_allowed_to_approve_claim_by_status(id, claimer.clone(), claim_number);
-    let claim = claims[claim_idx].clone();
+    let (bounty, _, claim) = self.check_if_allowed_to_approve_claim_by_status(
+      id,
+      claimer.clone(),
+      claim_number
+    );
 
     bounty.check_access_rights();
     assert!(
@@ -418,28 +434,30 @@ impl BountiesContract {
     );
 
     let sender_id = env::predecessor_account_id();
-    let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id, claim_number);
+    let (claim_id, mut bounty_claim) = self.internal_get_claim(
+      id,
+      sender_id.clone(),
+      claim_number
+    );
     assert!(
-      claims[claim_idx].status == ClaimStatus::InProgress ||
-        claims[claim_idx].status == ClaimStatus::Competes,
+      bounty_claim.status == ClaimStatus::InProgress ||
+        bounty_claim.status == ClaimStatus::Competes,
       "The claim status does not allow to complete the bounty"
     );
 
-    if claims[claim_idx].is_claim_expired(&bounty) {
-      return self.internal_set_claim_expiry_status(id, &sender_id, &mut bounty, claim_idx, &mut claims);
+    if bounty_claim.is_claim_expired(&bounty) {
+      return self.internal_set_claim_expiry_status(id, &sender_id, &mut bounty, claim_id, &mut bounty_claim);
     }
 
-    if bounty.status == BountyStatus::Completed &&
-      claims[claim_idx].status == ClaimStatus::Competes
-    {
+    if bounty.status == BountyStatus::Completed && bounty_claim.status == ClaimStatus::Competes {
       self.internal_participants_decrement(&mut bounty);
       self.internal_update_bounty(&id, bounty.clone());
       return self.internal_claim_closure(
         &sender_id,
         bounty.owner,
         bounty.status,
-        claim_idx,
-        &mut claims,
+        claim_id,
+        &mut bounty_claim,
         None,
         true
       );
@@ -448,7 +466,7 @@ impl BountiesContract {
     let place_of_check = PlaceOfCheckKYC::ClaimDone { description };
     if self.is_kyc_check_required(
       bounty,
-      Some(&claims[claim_idx]),
+      Some(&bounty_claim),
       Some(sender_id.clone()),
       place_of_check.clone()
     ) {
@@ -479,45 +497,49 @@ impl BountiesContract {
       "Invalid claim_number value"
     );
 
-    let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id, claim_number);
+    let (claim_id, mut bounty_claim) = self.internal_get_claim(
+      id,
+      sender_id.clone(),
+      claim_number
+    );
     assert!(
-      (claims[claim_idx].status == ClaimStatus::New ||
-        claims[claim_idx].status == ClaimStatus::InProgress ||
-        claims[claim_idx].status == ClaimStatus::Competes ||
-        claims[claim_idx].status == ClaimStatus::ReadyToStart ||
-        claims[claim_idx].status == ClaimStatus::Completed &&
+      bounty_claim.status == ClaimStatus::New ||
+        bounty_claim.status == ClaimStatus::InProgress ||
+        bounty_claim.status == ClaimStatus::Competes ||
+        bounty_claim.status == ClaimStatus::ReadyToStart ||
+        bounty_claim.status == ClaimStatus::Completed &&
           bounty.is_contest_or_hackathon() &&
-          (bounty.status == BountyStatus::New || bounty.status == BountyStatus::Canceled)),
+          (bounty.status == BountyStatus::New || bounty.status == BountyStatus::Canceled),
       "The claim status does not allow to give up the bounty"
     );
 
-    if claims[claim_idx].status == ClaimStatus::InProgress ||
-      claims[claim_idx].status == ClaimStatus::Competes &&
+    if bounty_claim.status == ClaimStatus::InProgress ||
+      bounty_claim.status == ClaimStatus::Competes &&
         bounty.status == BountyStatus::ManyClaimed
     {
-      let return_bond = env::block_timestamp() - claims[claim_idx].get_start_time(&bounty).0 <=
+      let return_bond = env::block_timestamp() - bounty_claim.get_start_time(&bounty).0 <=
         self.config.clone().to_config().bounty_forgiveness_period.0;
 
       self.internal_reset_bounty_to_initial_state(
         id,
         &sender_id,
         &mut bounty,
-        claim_idx,
-        &mut claims,
+        claim_id,
+        &mut bounty_claim,
         Some(ClaimStatus::Canceled),
         return_bond
       )
 
     } else {
-      if claims[claim_idx].status == ClaimStatus::Competes ||
-        claims[claim_idx].status == ClaimStatus::Completed
+      if bounty_claim.status == ClaimStatus::Competes ||
+        bounty_claim.status == ClaimStatus::Completed
       {
         self.internal_participants_decrement(&mut bounty);
-      } else if claims[claim_idx].status == ClaimStatus::ReadyToStart {
+      } else if bounty_claim.status == ClaimStatus::ReadyToStart {
         if bounty.is_one_bounty_for_many_claimants() {
           self.internal_occupied_slots_decrement(&mut bounty);
         } else {
-          let slot = claims[claim_idx].slot.clone().unwrap();
+          let slot = bounty_claim.slot.clone().unwrap();
           self.internal_reset_slot(&mut bounty, slot);
         }
       }
@@ -526,8 +548,8 @@ impl BountiesContract {
         &sender_id,
         bounty.owner,
         bounty.status,
-        claim_idx,
-        &mut claims,
+        claim_id,
+        &mut bounty_claim,
         Some(ClaimStatus::Canceled),
         true
       )
@@ -581,24 +603,24 @@ impl BountiesContract {
             "Invalid claim_number value"
           );
 
-          let (mut claims, claim_idx) = self.internal_get_claims(
-            id.clone(),
-            &receiver_id,
+          let (claim_id, mut bounty_claim) = self.internal_get_claim(
+            id,
+            receiver_id.clone(),
             claim_number
           );
           assert!(
-            matches!(claims[claim_idx].status, ClaimStatus::Completed),
+            matches!(bounty_claim.status, ClaimStatus::Completed),
             "The claim status does not allow approval of the execution result"
           );
 
           let approve = matches!(action, BountyAction::ClaimApproved { .. });
-          Self::assert_postpaid_is_ready(&bounty, &claims[claim_idx], approve);
+          Self::assert_postpaid_is_ready(&bounty, &bounty_claim, approve);
           self.assert_multitasking_requirements(id, &bounty, approve, &receiver_id, claim_number);
 
           let result = if approve {
             self.internal_bounty_payout(id, Some(receiver_id), claim_number)
           } else {
-            self.internal_reject_claim(id, receiver_id, &mut bounty, claim_idx, &mut claims)
+            self.internal_reject_claim(id, receiver_id, &mut bounty, claim_id, &mut bounty_claim)
           };
 
           result
@@ -668,7 +690,7 @@ impl BountiesContract {
     let sender_id = env::predecessor_account_id();
     assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
 
-    let claims = self.get_bounty_claims_by_id(id.clone());
+    let claims = self.internal_get_claims_by_bounty_id(id.clone());
     let found_claim = claims
       .clone()
       .into_iter()
@@ -715,7 +737,7 @@ impl BountiesContract {
               .into_iter()
               .find(
                 |c|
-                  !claimers_whitelist.contains(&c.0) &&
+                  !claimers_whitelist.contains(&c.1.owner) &&
                     (
                       c.1.status == ClaimStatus::InProgress ||
                         c.1.status == ClaimStatus::Competes ||
@@ -845,8 +867,11 @@ impl BountiesContract {
     let sender_id = env::predecessor_account_id();
     assert_eq!(bounty.owner, sender_id, "Only the owner of the bounty can call this method");
 
-    let (mut claims, claim_idx) = self.internal_get_claims(id, &claimer, claim_number);
-    let mut bounty_claim = claims[claim_idx].clone();
+    let (claim_id, mut bounty_claim) = self.internal_get_claim(
+      id,
+      claimer,
+      claim_number
+    );
     assert!(
       bounty_claim.status == ClaimStatus::InProgress ||
         bounty_claim.status == ClaimStatus::Competes,
@@ -863,8 +888,7 @@ impl BountiesContract {
     );
 
     bounty_claim.deadline = Some(deadline);
-    claims[claim_idx] = bounty_claim;
-    self.internal_save_claims(&claimer, &claims);
+    self.claims.insert(&claim_id, &bounty_claim.into());
   }
 
   #[payable]
@@ -918,16 +942,14 @@ impl BountiesContract {
       "Invalid claim_number value"
     );
 
-    let (mut claims, claim_idx) = if bounty.multitasking.is_some() {
+    let (claim_id, mut bounty_claim) = if bounty.multitasking.is_some() {
       assert!(claimer.is_some(), "The claimer parameter is mandatory for multitasking bounties");
-      self.internal_get_claims(id.clone(), &claimer.clone().unwrap(), claim_number)
+      self.internal_get_claim(id, claimer.clone().unwrap(), claim_number)
     } else {
       assert!(claimer.is_none(), "The claimer parameter is required only for multitasking bounties");
-      let result = self.internal_find_active_claim(id.clone());
-      (result.1, result.2)
+      self.internal_find_active_claim(id.clone())
     };
 
-    let mut bounty_claim = claims[claim_idx].clone();
     assert!(
       bounty_claim.status == ClaimStatus::Completed ||
         bounty_claim.status == ClaimStatus::CompletedWithDispute,
@@ -942,8 +964,7 @@ impl BountiesContract {
 
     if bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks() {
       bounty_claim.set_payment_at(Some(U64::from(env::block_timestamp())));
-      claims[claim_idx] = bounty_claim;
-      self.internal_save_claims(&claimer.clone().unwrap(), &claims);
+      self.claims.insert(&claim_id, &bounty_claim.into());
 
     } else {
       if bounty.is_contest_or_hackathon() {
@@ -987,15 +1008,14 @@ impl BountiesContract {
       "Invalid claim_number value"
     );
 
-    let (mut claims, claim_idx) = if bounty.multitasking.is_some() {
-      self.internal_get_claims(id.clone(), &sender_id, claim_number)
+    let (claim_id, mut bounty_claim) = if bounty.multitasking.is_some() {
+      self.internal_get_claim(id, sender_id.clone(), claim_number)
     } else {
-      let result = self.internal_find_active_claim(id);
-      assert_eq!(result.0, sender_id, "Only the owner of the claim is allowed this action");
-      (result.1, result.2)
+      let result = self.internal_find_active_claim(id.clone());
+      assert_eq!(result.1.owner, sender_id, "Only the owner of the claim is allowed this action");
+      (result.0, result.1)
     };
 
-    let mut bounty_claim = claims[claim_idx].clone();
     assert!(
       bounty_claim.status == ClaimStatus::Completed ||
         bounty_claim.status == ClaimStatus::CompletedWithDispute,
@@ -1014,8 +1034,7 @@ impl BountiesContract {
 
     if bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks() {
       bounty_claim.set_payment_confirmed_at(Some(U64::from(env::block_timestamp())));
-      claims[claim_idx] = bounty_claim.clone();
-      self.internal_save_claims(&sender_id, &claims);
+      self.claims.insert(&claim_id, &bounty_claim.clone().into());
 
       if bounty.is_different_tasks() {
         self.internal_confirm_slot(&mut bounty, bounty_claim.slot.clone().unwrap());
@@ -1158,14 +1177,14 @@ impl BountiesContract {
       "Invalid claim_number value"
     );
 
-    let (claims, claim_idx) = self.internal_get_claims(id.clone(), &receiver_id, claim_number);
+    let (_, bounty_claim) = self.internal_get_claim(id, receiver_id.clone(), claim_number);
     assert!(
-      claims[claim_idx].status == ClaimStatus::Completed ||
-        claims[claim_idx].status == ClaimStatus::CompletedWithDispute,
+      bounty_claim.status == ClaimStatus::Completed ||
+        bounty_claim.status == ClaimStatus::CompletedWithDispute,
       "The claim status does not allow this action"
     );
 
-    let slot = claims[claim_idx].slot.clone().unwrap();
+    let slot = bounty_claim.slot.clone().unwrap();
     let slot_env = bounty.multitasking.clone().unwrap().get_slot_env(slot);
     assert_eq!(
       slot_env.expect("The slot is not occupied").participant,
@@ -1224,14 +1243,14 @@ impl BountiesContract {
     );
 
     let sender_id = env::predecessor_account_id();
-    let (claims, claim_idx) = self.internal_get_claims(id.clone(), &sender_id, claim_number);
+    let (_, bounty_claim) = self.internal_get_claim(id, sender_id.clone(), claim_number);
     assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::Rejected),
+      matches!(bounty_claim.status, ClaimStatus::Rejected),
       "The claim status does not allow opening a dispute"
     );
 
     assert!(
-      !self.is_deadline_for_opening_dispute_expired(&claims[claim_idx]),
+      !self.is_deadline_for_opening_dispute_expired(&bounty_claim),
       "The period for opening a dispute has expired"
     );
 
@@ -1271,15 +1290,15 @@ impl BountiesContract {
       "Invalid claim_number value"
     );
 
-    let (mut claims, claim_idx) = self.internal_get_claims(id.clone(), &claimer, claim_number);
+    let (claim_id, mut bounty_claim) = self.internal_get_claim(id, claimer.clone(), claim_number);
     assert!(
-      matches!(claims[claim_idx].status, ClaimStatus::Disputed),
+      matches!(bounty_claim.status, ClaimStatus::Disputed),
       "The claim status does not allow opening a dispute"
     );
 
     if success {
       if bounty.is_different_tasks() {
-        self.internal_claim_return_after_dispute(claimer, &mut claims, claim_idx)
+        self.internal_claim_return_after_dispute(claim_id, &mut bounty_claim)
       } else {
         self.internal_bounty_payout(id, Some(claimer), claim_number)
       }
@@ -1288,8 +1307,8 @@ impl BountiesContract {
         id,
         &claimer,
         &mut bounty,
-        claim_idx,
-        &mut claims,
+        claim_id,
+        &mut bounty_claim,
         None,
         true
       )
@@ -1481,6 +1500,30 @@ mod tests {
       .attached_deposit(1)
       .build());
     contract.bounty_action(id, action, None);
+  }
+
+  fn get_claim_by_claimer_account_id(
+    contract: &BountiesContract,
+    account_id: &AccountId
+  ) -> BountyClaim {
+    contract.claims
+      .get(
+        &contract.bounty_claimers.get(account_id).unwrap()[0]
+      )
+      .unwrap()
+      .to_bounty_claim()
+  }
+
+  fn get_claim_by_bounty_id(
+    contract: &BountiesContract,
+    bounty_id: &BountyIndex
+  ) -> BountyClaim {
+    contract.claims
+      .get(
+        &contract.bounty_claims.get(bounty_id).unwrap()[0]
+      )
+      .unwrap()
+      .to_bounty_claim()
   }
 
   #[test]
@@ -1812,8 +1855,9 @@ mod tests {
     let claimer = accounts(2);
     bounty_claim(&mut context, &mut contract, id.clone(), &claimer);
     assert_eq!(
-      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim(),
+      get_claim_by_claimer_account_id(&contract, &claimer),
       BountyClaim {
+        owner: claimer.clone(),
         bounty_id: id.clone(),
         created_at: U64(0),
         start_time: Some(U64(0)),
@@ -1831,7 +1875,7 @@ mod tests {
         claim_number: None,
       }
     );
-    assert_eq!(contract.bounty_claimer_accounts.get(&id).unwrap()[0], claimer);
+    assert_eq!(get_claim_by_bounty_id(&contract, &id).owner, claimer);
     assert_eq!(contract.locked_amount, Config::default().bounty_claim_bond.0);
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::Claimed);
   }
@@ -1990,7 +2034,7 @@ mod tests {
 
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
     assert_eq!(
-      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      get_claim_by_claimer_account_id(&contract, &claimer).status,
       ClaimStatus::Completed
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::Claimed);
@@ -2025,7 +2069,7 @@ mod tests {
 
     bounty_done(&mut context, &mut contract, id.clone(), &claimer);
     assert_eq!(
-      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      get_claim_by_claimer_account_id(&contract, &claimer).status,
       ClaimStatus::Completed
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::Claimed);
@@ -2099,7 +2143,7 @@ mod tests {
       .build());
     contract.bounty_done(id, "test description".to_string(), None);
     assert_eq!(
-      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      get_claim_by_claimer_account_id(&contract, &claimer).status,
       ClaimStatus::Expired
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::New);
@@ -2141,7 +2185,7 @@ mod tests {
       .build());
     contract.bounty_done(id, "test description".to_string(), None);
     assert_eq!(
-      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      get_claim_by_claimer_account_id(&contract, &claimer).status,
       ClaimStatus::Expired
     );
   }
@@ -2198,7 +2242,7 @@ mod tests {
       .build());
     contract.bounty_done(id, "test description".to_string(), None);
     assert_eq!(
-      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      get_claim_by_claimer_account_id(&contract, &claimer).status,
       ClaimStatus::Completed
     );
   }
@@ -2303,7 +2347,7 @@ mod tests {
       bounty_forgiveness_period.clone() - 1
     );
     assert_eq!(
-      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      get_claim_by_claimer_account_id(&contract, &claimer).status,
       ClaimStatus::Canceled
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::New);
@@ -2322,7 +2366,7 @@ mod tests {
       bounty_forgiveness_period.clone() + 1
     );
     assert_eq!(
-      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      get_claim_by_claimer_account_id(&contract, &claimer).status,
       ClaimStatus::Canceled
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::New);
@@ -2411,7 +2455,7 @@ mod tests {
       BountyAction::ClaimRejected { receiver_id: claimer.clone() },
     );
     assert_eq!(
-      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      get_claim_by_claimer_account_id(&contract, &claimer).status,
       ClaimStatus::NotCompleted
     );
     assert_eq!(contract.bounties.get(&id).unwrap().to_bounty().status, BountyStatus::New);
@@ -2630,7 +2674,7 @@ mod tests {
       BountyAction::ClaimRejected { receiver_id: claimer.clone() },
     );
     assert_eq!(
-      contract.bounty_claimers.get(&claimer).unwrap()[0].clone().to_bounty_claim().status,
+      get_claim_by_claimer_account_id(&contract, &claimer).status,
       ClaimStatus::Rejected
     );
 
