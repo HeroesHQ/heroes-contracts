@@ -10,7 +10,7 @@ pub struct BountyClaimV1 {
   pub description: String,
   pub status: ClaimStatus,
   pub bounty_payout_proposal_id: Option<U64>,
-  pub approve_claimer_proposal_id: Option<U64>,
+  pub approve_claimant_proposal_id: Option<U64>,
   pub rejected_timestamp: Option<U64>,
   pub dispute_id: Option<U64>,
 }
@@ -24,7 +24,7 @@ pub struct BountyClaimV2 {
   pub description: String,
   pub status: ClaimStatus,
   pub bounty_payout_proposal_id: Option<U64>,
-  pub approve_claimer_proposal_id: Option<U64>,
+  pub approve_claimant_proposal_id: Option<U64>,
   pub rejected_timestamp: Option<U64>,
   pub dispute_id: Option<U64>,
   pub is_kyc_delayed: Option<DefermentOfKYC>,
@@ -39,7 +39,7 @@ pub struct BountyClaimV3 {
   pub description: String,
   pub status: ClaimStatus,
   pub bounty_payout_proposal_id: Option<U64>,
-  pub approve_claimer_proposal_id: Option<U64>,
+  pub approve_claimant_proposal_id: Option<U64>,
   pub rejected_timestamp: Option<U64>,
   pub dispute_id: Option<U64>,
   pub is_kyc_delayed: Option<DefermentOfKYC>,
@@ -56,7 +56,7 @@ pub struct BountyClaimV4 {
   pub description: String,
   pub status: ClaimStatus,
   pub bounty_payout_proposal_id: Option<U64>,
-  pub approve_claimer_proposal_id: Option<U64>,
+  pub approve_claimant_proposal_id: Option<U64>,
   pub rejected_timestamp: Option<U64>,
   pub dispute_id: Option<U64>,
   pub is_kyc_delayed: Option<DefermentOfKYC>,
@@ -74,7 +74,7 @@ pub struct BountyClaimV5 {
   pub description: String,
   pub status: ClaimStatus,
   pub bounty_payout_proposal_id: Option<U64>,
-  pub approve_claimer_proposal_id: Option<U64>,
+  pub approve_claimant_proposal_id: Option<U64>,
   pub rejected_timestamp: Option<U64>,
   pub dispute_id: Option<U64>,
   pub is_kyc_delayed: Option<DefermentOfKYC>,
@@ -92,7 +92,7 @@ pub struct BountyClaimV6 {
   pub description: String,
   pub status: ClaimStatus,
   pub bounty_payout_proposal_id: Option<U64>,
-  pub approve_claimer_proposal_id: Option<U64>,
+  pub approve_claimant_proposal_id: Option<U64>,
   pub rejected_timestamp: Option<U64>,
   pub dispute_id: Option<U64>,
   pub is_kyc_delayed: Option<DefermentOfKYC>,
@@ -118,8 +118,8 @@ pub struct OldState {
   pub last_bounty_id: BountyIndex,
   pub bounties: LookupMap<BountyIndex, VersionedBounty>,
   pub account_bounties: LookupMap<AccountId, Vec<BountyIndex>>,
-  pub bounty_claimers: LookupMap<AccountId, Vec<OldVersionedBountyClaim>>,
-  pub bounty_claimer_accounts: LookupMap<BountyIndex, Vec<AccountId>>,
+  pub bounty_claimants: LookupMap<AccountId, Vec<OldVersionedBountyClaim>>,
+  pub bounty_claimant_accounts: LookupMap<BountyIndex, Vec<AccountId>>,
   pub locked_amount: Balance,
   pub unlocked_amount: Balance,
   pub admins_whitelist: UnorderedSet<AccountId>,
@@ -146,8 +146,8 @@ impl BountiesContract {
       last_bounty_id: old_state.last_bounty_id,
       bounties: old_state.bounties,
       account_bounties: old_state.account_bounties,
-      old_bounty_claimers: old_state.bounty_claimers,
-      old_bounty_claimer_accounts: old_state.bounty_claimer_accounts,
+      old_bounty_claimants: old_state.bounty_claimants,
+      old_bounty_claimant_accounts: old_state.bounty_claimant_accounts,
       locked_amount: old_state.locked_amount,
       unlocked_amount: old_state.unlocked_amount,
       admins_whitelist: old_state.admins_whitelist,
@@ -163,7 +163,7 @@ impl BountiesContract {
       status: ContractStatus::Genesis,
       last_claim_id: 0,
       claims: LookupMap::new(StorageKey::Claims),
-      bounty_claimers: LookupMap::new(StorageKey::BountyClaimers),
+      bounty_claimants: LookupMap::new(StorageKey::BountyClaimants),
       bounty_claims: LookupMap::new(StorageKey::BountyClaims),
     }
   }
@@ -205,26 +205,26 @@ impl BountiesContract {
   }
 
   #[private]
-  pub fn clean_bounty_claimers(&mut self, claimers: Vec<AccountId>) {
+  pub fn clean_bounty_claimants(&mut self, claimants: Vec<AccountId>) {
     assert!(
       matches!(self.status, ContractStatus::Genesis),
       "This action is only possible if the contract status is Genesis"
     );
 
-    for (_, account_id) in claimers.iter().enumerate() {
-      self.old_bounty_claimers.remove(account_id);
+    for (_, account_id) in claimants.iter().enumerate() {
+      self.old_bounty_claimants.remove(account_id);
     }
   }
 
   #[private]
-  pub fn clean_bounty_claimer_accounts(&mut self, bounties: Vec<BountyIndex>) {
+  pub fn clean_bounty_claimant_accounts(&mut self, bounties: Vec<BountyIndex>) {
     assert!(
       matches!(self.status, ContractStatus::Genesis),
       "This action is only possible if the contract status is Genesis"
     );
 
     for (_, bounty_id) in bounties.iter().enumerate() {
-      self.old_bounty_claimer_accounts.remove(bounty_id);
+      self.old_bounty_claimant_accounts.remove(bounty_id);
     }
   }
 }

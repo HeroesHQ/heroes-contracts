@@ -13,27 +13,27 @@ const Gas = Big(10).pow(12).mul(300).toFixed(0);
 // Deleting data from previous claims collections
 async function clearingPreviousCollections(near, db) {
   let skip = 0;
-  let bountyClaimers = await db
-    .collection("bounty_claimers")
+  let bountyClaimants = await db
+    .collection("bounty_claimants")
     .find()
     .sort({ "_id": 1 })
     .skip(skip)
     .limit(limit)
     .toArray();
-  while (bountyClaimers.length > 0) {
-    const entries = bountyClaimers.map(c => c.ownerId);
+  while (bountyClaimants.length > 0) {
+    const entries = bountyClaimants.map(c => c.ownerId);
     console.log(JSON.stringify(entries));
 
     await near.account.functionCall({
       contractId: bountyContractId,
-      methodName: "clean_bounty_claimers",
-      args: { claimers: entries },
+      methodName: "clean_bounty_claimants",
+      args: { claimants: entries },
       gas: Gas,
     });
 
-    skip += bountyClaimers.length;
-    bountyClaimers = await db
-      .collection("bounty_claimers")
+    skip += bountyClaimants.length;
+    bountyClaimants = await db
+      .collection("bounty_claimants")
       .find()
       .sort({ "_id": 1 })
       .skip(skip)
@@ -42,26 +42,26 @@ async function clearingPreviousCollections(near, db) {
   }
 
   skip = 0;
-  let bountyClaimerAccounts = await db
+  let bountyClaimantAccounts = await db
     .collection("bounty_claims")
     .find()
     .sort({ "_id": 1 })
     .skip(skip)
     .limit(limit)
     .toArray();
-  while (bountyClaimerAccounts.length > 0) {
-    const entries = bountyClaimerAccounts.map(c => c.id);
+  while (bountyClaimantAccounts.length > 0) {
+    const entries = bountyClaimantAccounts.map(c => c.id);
     console.log(JSON.stringify(entries));
 
     await near.account.functionCall({
       contractId: bountyContractId,
-      methodName: "clean_bounty_claimer_accounts",
+      methodName: "clean_bounty_claimant_accounts",
       args: { bounties: entries },
       gas: Gas,
     });
 
-    skip += bountyClaimerAccounts.length;
-    bountyClaimerAccounts = await db
+    skip += bountyClaimantAccounts.length;
+    bountyClaimantAccounts = await db
       .collection("bounty_claims")
       .find()
       .sort({ "_id": 1 })
@@ -92,7 +92,7 @@ async function fillingNewCollections(near, db) {
       description: c.description || null,
       status: c.status || null,
       bounty_payout_proposal_id: c.bounty_payout_proposal_id || null,
-      approve_claimer_proposal_id: c.approve_claimer_proposal_id || null,
+      approve_claimant_proposal_id: c.approve_claimant_proposal_id || null,
       rejected_timestamp: c.rejected_timestamp || null,
       dispute_id: c.dispute_id || null,
       is_kyc_delayed: c.is_kyc_delayed || null,

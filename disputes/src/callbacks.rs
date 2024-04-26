@@ -46,11 +46,11 @@ impl DisputesContract {
         if canceled {
           DisputeStatus::CanceledByProjectOwner
         } else {
-          DisputeStatus::InFavorOfClaimer
+          DisputeStatus::InFavorOfClaimant
         }
       } else {
         if canceled {
-          DisputeStatus::CanceledByClaimer
+          DisputeStatus::CanceledByClaimant
         } else {
           DisputeStatus::InFavorOfProjectOwner
         }
@@ -88,7 +88,7 @@ impl DisputesContract {
       self.internal_send_result_of_dispute(
         id,
         dispute.bounty_id,
-        dispute.claimer,
+        dispute.receiver_id,
         dispute.claim_number,
         success,
         false

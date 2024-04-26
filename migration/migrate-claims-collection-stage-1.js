@@ -90,17 +90,17 @@ async function setClaimIDs(db) {
 
 async function buildNewCollections(db) {
   // bounty_claims: LookupMap<BountyIndex, Vec<AccountId>>,
-  if ((await db.listCollections({ name: "bounty_claimers" }).toArray())?.length > 0) {
-    await db.collection("bounty_claimers").deleteMany({});
+  if ((await db.listCollections({ name: "bounty_claimants" }).toArray())?.length > 0) {
+    await db.collection("bounty_claimants").deleteMany({});
   }
   if ((await db.listCollections({ name: "bounty_claims" }).toArray())?.length > 0) {
     await db.collection("bounty_claims").deleteMany({});
   }
   if (
-    (await db.listCollections({ name: "bounty_claimers" }).toArray())?.length > 0 &&
-    !(await db.collection("bounty_claimers").indexes())?.find(i => i.name === "ownerId_1")
+    (await db.listCollections({ name: "bounty_claimants" }).toArray())?.length > 0 &&
+    !(await db.collection("bounty_claimants").indexes())?.find(i => i.name === "ownerId_1")
   ) {
-    await db.collection("bounty_claimers").createIndex({ "ownerId": 1 });
+    await db.collection("bounty_claimants").createIndex({ "ownerId": 1 });
   }
   if (
     (await db.listCollections({ name: "bounty_claims" }).toArray())?.length > 0 &&
@@ -112,15 +112,15 @@ async function buildNewCollections(db) {
   const claims = await db.collection("claims").find().sort({ "id": 1 }).toArray();
 
   for (const claim of claims) {
-    const bountyClaimer = await db.collection("bounty_claimers").findOne({ ownerId: claim.owner });
+    const bountyClaimant = await db.collection("bounty_claimants").findOne({ ownerId: claim.owner });
 
-    if (bountyClaimer) {
-      await db.collection("bounty_claimers").updateOne(
+    if (bountyClaimant) {
+      await db.collection("bounty_claimants").updateOne(
         { ownerId: claim.owner },
         { $push: { claims: claim.id } }
       );
     } else {
-      await db.collection("bounty_claimers").insertOne({
+      await db.collection("bounty_claimants").insertOne({
         ownerId: claim.owner,
         claims: [claim.id],
       });
