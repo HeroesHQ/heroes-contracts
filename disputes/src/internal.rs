@@ -38,15 +38,15 @@ impl DisputesContract {
     &self,
     id: DisputeIndex,
     bounty_id: U64,
-    claimer: AccountId,
+    receiver_id: AccountId,
     claim_number: Option<u8>,
     success: bool,
     canceled: bool,
   ) -> PromiseOrValue<()> {
     ext_bounty_contract::ext(self.bounties_contract.clone())
       .with_static_gas(GAS_FOR_SEND_RESULT_OF_DISPUTE)
-      .with_attached_deposit(1)
-      .dispute_result(bounty_id.0, claimer, claim_number, success)
+      .with_attached_deposit(NO_DEPOSIT)
+      .dispute_result(bounty_id.0, receiver_id, claim_number, success)
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_CLAIM_APPROVAL)
@@ -89,7 +89,7 @@ impl DisputesContract {
                       .to_string()
                       .into_bytes()
                       .to_vec()),
-                    "deposit": "1",
+                    "deposit": NO_DEPOSIT.to_string(),
                     "gas": U64(GAS_FOR_CLAIM_APPROVAL.0),
                   }
                 ],
@@ -150,7 +150,7 @@ impl DisputesContract {
     let mut full_description = Self::chunk_of_description(
       dispute,
       &Reason {
-        side: Side::Claimer,
+        side: Side::Claimant,
         argument_timestamp: dispute.start_time,
         description: dispute.clone().description,
       }

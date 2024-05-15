@@ -132,7 +132,7 @@ impl BountiesContract {
     let from_index = from_index.unwrap_or(0);
     let limit = limit.unwrap_or(100);
 
-    let claims = self.bounty_claimers
+    let claims = self.bounty_claimants
       .get(&account_id)
       .unwrap_or_default();
 
@@ -171,6 +171,6 @@ impl BountiesContract {
   }
 
   pub fn get_version() -> String {
-    "2.0.15".to_string()
+    "2.0.16".to_string()
   }
 }

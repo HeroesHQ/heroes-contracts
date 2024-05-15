@@ -28,7 +28,7 @@ trait ExtBountyContract {
   fn dispute_result(
     &self,
     id: u64,
-    claimer: AccountId,
+    receiver_id: AccountId,
     claim_number: Option<u8>,
     success: bool
   ) -> PromiseOrValue<()>;
@@ -58,9 +58,9 @@ pub enum ContractStatus {
 pub enum DisputeStatus {
   New,
   DecisionPending,
-  InFavorOfClaimer,
+  InFavorOfClaimant,
   InFavorOfProjectOwner,
-  CanceledByClaimer,
+  CanceledByClaimant,
   CanceledByProjectOwner,
 }
 
@@ -68,7 +68,7 @@ pub enum DisputeStatus {
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub enum Side {
-  Claimer,
+  Claimant,
   ProjectOwner,
 }
 
@@ -114,7 +114,7 @@ impl From<Reason> for VersionedReason {
 pub struct DisputeCreate {
   pub bounty_id: u64,
   pub description: String,
-  pub claimer: AccountId,
+  pub receiver_id: AccountId,
   pub project_owner_delegate: AccountId,
   pub claim_number: Option<u8>,
 }
@@ -125,7 +125,7 @@ impl DisputeCreate {
       start_time: U64::from(env::block_timestamp()),
       description: self.description.clone(),
       bounty_id: self.bounty_id.into(),
-      claimer: self.claimer.clone(),
+      receiver_id: self.receiver_id.clone(),
       claim_number: self.claim_number.clone(),
       project_owner_delegate: self.project_owner_delegate.clone(),
       status: DisputeStatus::New,
@@ -145,8 +145,8 @@ pub struct DisputeV1 {
   pub description: String,
   /// ID bounty which became the cause of the dispute
   pub bounty_id: U64,
-  /// Claimer account
-  pub claimer: AccountId,
+  /// Claimant account
+  pub receiver_id: AccountId,
   /// Account of the project owner or validators DAO
   pub project_owner_delegate: AccountId,
   /// Dispute status
@@ -167,8 +167,8 @@ pub struct Dispute {
   pub description: String,
   /// ID bounty which became the cause of the dispute
   pub bounty_id: U64,
-  /// Claimer account
-  pub claimer: AccountId,
+  /// Claimant account
+  pub receiver_id: AccountId,
   /// Claim number within one account
   pub claim_number: Option<u8>,
   /// Account of the project owner or validators DAO
@@ -185,7 +185,7 @@ pub struct Dispute {
 impl Dispute {
   pub fn get_side_of_dispute(&self) -> Side {
     let sender = env::predecessor_account_id();
-    if sender == self.claimer { Side::Claimer }
+    if sender == self.receiver_id { Side::Claimant }
     else if sender == self.project_owner_delegate { Side::ProjectOwner }
     else {
       env::panic_str("You do not have access rights to perform this action");
@@ -206,7 +206,7 @@ impl VersionedDispute {
       start_time: dispute.start_time,
       description: dispute.description,
       bounty_id: dispute.bounty_id,
-      claimer: dispute.claimer,
+      receiver_id: dispute.receiver_id,
       claim_number: None,
       project_owner_delegate: dispute.project_owner_delegate,
       status: dispute.status,

@@ -68,6 +68,6 @@ impl DisputesContract {
   }
 
   pub fn get_version() -> String {
-    "2.0.2".to_string()
+    "2.0.3".to_string()
   }
 }
