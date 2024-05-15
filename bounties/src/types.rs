@@ -4,18 +4,19 @@ use near_sdk::serde::{Deserialize, Serialize};
 use near_sdk::{env, ext_contract, AccountId, Balance, BorshStorageKey, Gas, ONE_NEAR};
 
 pub type BountyIndex = u64;
+pub type ClaimIndex = u64;
 
 pub const GAS_FOR_ADD_PROPOSAL: Gas = Gas(25_000_000_000_000);
 pub const GAS_FOR_ON_ADDED_PROPOSAL_CALLBACK: Gas = Gas(10_000_000_000_000);
 pub const GAS_FOR_AFTER_ADD_PROPOSAL: Gas = Gas(45_000_000_000_000);
 pub const GAS_FOR_CLAIM_APPROVAL: Gas = Gas(70_000_000_000_000);
-pub const GAS_FOR_CLAIMER_APPROVAL: Gas = Gas(120_000_000_000_000);
+pub const GAS_FOR_CLAIMANT_APPROVAL: Gas = Gas(120_000_000_000_000);
 pub const GAS_FOR_FT_TRANSFER: Gas = Gas(5_000_000_000_000);
 pub const GAS_FOR_AFTER_FT_TRANSFER: Gas = Gas(40_000_000_000_000);
 pub const GAS_FOR_AFTER_FT_TRANSACT: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_CHECK_PROPOSAL: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_AFTER_CHECK_BOUNTY_PAYOUT_PROPOSAL: Gas = Gas(70_000_000_000_000);
-pub const GAS_FOR_AFTER_CHECK_APPROVE_CLAIMER_PROPOSAL: Gas = Gas(30_000_000_000_000);
+pub const GAS_FOR_AFTER_CHECK_APPROVE_CLAIMANT_PROPOSAL: Gas = Gas(30_000_000_000_000);
 pub const GAS_FOR_CREATE_DISPUTE: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_AFTER_CREATE_DISPUTE: Gas = Gas(15_000_000_000_000);
 pub const GAS_FOR_CHECK_DISPUTE: Gas = Gas(15_000_000_000_000);
@@ -33,7 +34,7 @@ pub const DEFAULT_PLATFORM_FEE_PERCENTAGE: u32 = 10_000;
 pub const DEFAULT_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 10_000;
 pub const DEFAULT_PENALTY_PLATFORM_FEE_PERCENTAGE: u32 = 0;
 pub const DEFAULT_PENALTY_VALIDATORS_DAO_FEE_PERCENTAGE: u32 = 0;
-pub const MAX_SLOTS: u16 = 300;
+pub const MAX_SLOTS: u16 = 32;
 pub const MIN_DEVIATION_FOR_TOTAL_BOUNTY_AMOUNT: u128 = 20;
 pub const MAX_DUE_DATE: U64 = U64(1_000_000_000 * 60 * 60 * 24 * 90); // 90 days
 
@@ -80,7 +81,7 @@ pub struct Proposal {
 pub struct DisputeCreate {
   pub bounty_id: u64,
   pub description: String,
-  pub claimer: AccountId,
+  pub receiver_id: AccountId,
   pub project_owner_delegate: AccountId,
   pub claim_number: Option<u8>,
 }
@@ -98,7 +99,7 @@ pub enum ReputationActionKind {
   BountyCancelled,
   ClaimCreated,
   ClaimCancelled,
-  ClaimerApproved,
+  ClaimantApproved,
   ClaimExpired,
   SuccessfulBountyAndClaim { with_dispute: bool },
   UnsuccessfulClaim { with_dispute: bool },
@@ -203,21 +204,21 @@ pub struct ContactDetails {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub enum ClaimerApproval {
+pub enum ClaimantApproval {
   ApprovalWithWhitelist, /// [deprecated]
   MultipleClaims,
   WithoutApproval,
-  ApprovalByWhitelist { claimers_whitelist: Vec<AccountId> },
-  WhitelistWithApprovals { claimers_whitelist: Vec<AccountId> },
+  ApprovalByWhitelist { claimants_whitelist: Vec<AccountId> },
+  WhitelistWithApprovals { claimants_whitelist: Vec<AccountId> },
 }
 
-impl ClaimerApproval {
+impl ClaimantApproval {
   pub fn not_allowed_to_create_claim(&self, account_id: &AccountId) -> bool {
     match self.clone() {
-      Self::ApprovalByWhitelist { claimers_whitelist } =>
-        !claimers_whitelist.contains(account_id),
-      Self::WhitelistWithApprovals { claimers_whitelist } =>
-        !claimers_whitelist.contains(account_id),
+      Self::ApprovalByWhitelist { claimants_whitelist } =>
+        !claimants_whitelist.contains(account_id),
+      Self::WhitelistWithApprovals { claimants_whitelist } =>
+        !claimants_whitelist.contains(account_id),
       Self::ApprovalWithWhitelist =>
         env::panic_str("ApprovalWithWhitelist is not supported"),
       _ => false
@@ -246,7 +247,7 @@ pub struct ValidatorsDaoParams {
   pub add_proposal_bond: U128,
   pub gas_for_add_proposal: Option<U64>,
   pub gas_for_claim_approval: Option<U64>,
-  pub gas_for_claimer_approval: Option<U64>,
+  pub gas_for_claimant_approval: Option<U64>,
 }
 
 impl ValidatorsDaoParams {
@@ -259,16 +260,16 @@ impl ValidatorsDaoParams {
     if self.gas_for_claim_approval.is_some() {
       gas_for_claim_approval = self.gas_for_claim_approval.unwrap();
     }
-    let mut gas_for_claimer_approval = GAS_FOR_CLAIMER_APPROVAL.0.into();
-    if self.gas_for_claimer_approval.is_some() {
-      gas_for_claimer_approval = self.gas_for_claimer_approval.unwrap();
+    let mut gas_for_claimant_approval = GAS_FOR_CLAIMANT_APPROVAL.0.into();
+    if self.gas_for_claimant_approval.is_some() {
+      gas_for_claimant_approval = self.gas_for_claimant_approval.unwrap();
     }
     ValidatorsDao {
       account_id: self.account_id.clone(),
       add_proposal_bond: self.add_proposal_bond.clone(),
       gas_for_add_proposal,
       gas_for_claim_approval,
-      gas_for_claimer_approval,
+      gas_for_claimant_approval,
     }
   }
 }
@@ -324,7 +325,7 @@ impl Default for KycConfig {
 #[serde(crate = "near_sdk::serde")]
 pub enum PlaceOfCheckKYC {
   CreatingClaim { deadline: Option<U64>, description: String },
-  DecisionOnClaim { approve: bool, is_kyc_delayed: Option<DefermentOfKYC> },
+  DecisionOnClaim { is_kyc_delayed: Option<DefermentOfKYC> },
   ClaimDone { description: String },
 }
 
@@ -948,7 +949,7 @@ impl Default for BountyFlow {
 pub struct BountyCreate {
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
-  pub claimer_approval: ClaimerApproval,
+  pub claimant_approval: ClaimantApproval,
   pub reviewers: Option<ReviewersParams>,
   pub kyc_config: Option<KycConfig>,
   pub postpaid: Option<Postpaid>,
@@ -998,7 +999,7 @@ impl BountyCreate {
       dao_fee: U128(dao_fee),
       metadata: self.metadata.clone(),
       deadline: self.deadline.clone(),
-      claimer_approval: self.claimer_approval.clone(),
+      claimant_approval: self.claimant_approval.clone(),
       reviewers: if self.reviewers.is_some() {
         Some(self.reviewers.clone().unwrap().to_reviewers())
       } else {
@@ -1030,7 +1031,7 @@ impl BountyCreate {
 pub struct BountyUpdate {
   pub metadata: Option<BountyMetadata>,
   pub deadline: Option<Deadline>,
-  pub claimer_approval: Option<ClaimerApproval>,
+  pub claimant_approval: Option<ClaimantApproval>,
   pub reviewers: Option<ReviewersParams>,
   pub amount: Option<U128>,
 }
@@ -1043,7 +1044,7 @@ pub struct ValidatorsDao {
   pub add_proposal_bond: U128,
   pub gas_for_add_proposal: U64,
   pub gas_for_claim_approval: U64,
-  pub gas_for_claimer_approval: U64,
+  pub gas_for_claimant_approval: U64,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
@@ -1056,7 +1057,7 @@ pub struct BountyV1 {
   pub dao_fee: U128,
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
-  pub claimer_approval: ClaimerApproval,
+  pub claimant_approval: ClaimantApproval,
   pub reviewers: Option<Reviewers>,
   pub owner: AccountId,
   pub status: BountyStatus,
@@ -1073,7 +1074,7 @@ pub struct BountyV2 {
   pub dao_fee: U128,
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
-  pub claimer_approval: ClaimerApproval,
+  pub claimant_approval: ClaimantApproval,
   pub reviewers: Option<Reviewers>,
   pub owner: AccountId,
   pub status: BountyStatus,
@@ -1091,7 +1092,7 @@ pub struct BountyV3 {
   pub dao_fee: U128,
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
-  pub claimer_approval: ClaimerApproval,
+  pub claimant_approval: ClaimantApproval,
   pub reviewers: Option<Reviewers>,
   pub owner: AccountId,
   pub status: BountyStatus,
@@ -1112,7 +1113,7 @@ pub struct BountyV4 {
   pub dao_fee: U128,
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
-  pub claimer_approval: ClaimerApproval,
+  pub claimant_approval: ClaimantApproval,
   pub reviewers: Option<Reviewers>,
   pub owner: AccountId,
   pub status: BountyStatus,
@@ -1132,7 +1133,7 @@ pub struct BountyV5 {
   pub dao_fee: U128,
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
-  pub claimer_approval: ClaimerApproval,
+  pub claimant_approval: ClaimantApproval,
   pub reviewers: Option<Reviewers>,
   pub owner: AccountId,
   pub status: BountyStatus,
@@ -1153,7 +1154,7 @@ pub struct Bounty {
   pub dao_fee: U128,
   pub metadata: BountyMetadata,
   pub deadline: Deadline,
-  pub claimer_approval: ClaimerApproval,
+  pub claimant_approval: ClaimantApproval,
   pub reviewers: Option<Reviewers>,
   pub owner: AccountId,
   pub status: BountyStatus,
@@ -1249,8 +1250,9 @@ impl Bounty {
             }
           }
           if successful_claims_for_result.is_some() {
+            let successful_claims_for_result = successful_claims_for_result.unwrap();
             assert!(
-              successful_claims_for_result.unwrap() > 1,
+              successful_claims_for_result > 1 && successful_claims_for_result <= MAX_SLOTS,
               "Incorrect number of successful claims to obtain a result"
             );
           }
@@ -1316,9 +1318,9 @@ impl Bounty {
     }
     if self.bounty_flow == BountyFlow::SimpleBounty {
       assert!(
-        matches!(self.claimer_approval, ClaimerApproval::WithoutApproval) ||
-          matches!(self.claimer_approval, ClaimerApproval::ApprovalByWhitelist { .. }),
-        "claimer_approval and bounty_flow values are incompatible"
+        matches!(self.claimant_approval, ClaimantApproval::WithoutApproval) ||
+          matches!(self.claimant_approval, ClaimantApproval::ApprovalByWhitelist { .. }),
+        "claimant_approval and bounty_flow values are incompatible"
       );
       assert!(
         !matches!(
@@ -1502,7 +1504,7 @@ impl VersionedBounty {
       dao_fee: bounty.dao_fee,
       metadata: bounty.metadata,
       deadline: bounty.deadline,
-      claimer_approval: bounty.claimer_approval,
+      claimant_approval: bounty.claimant_approval,
       reviewers: bounty.reviewers,
       owner: bounty.owner,
       status: bounty.status,
@@ -1519,7 +1521,7 @@ impl VersionedBounty {
       dao_fee: bounty.dao_fee,
       metadata: bounty.metadata,
       deadline: bounty.deadline,
-      claimer_approval: bounty.claimer_approval,
+      claimant_approval: bounty.claimant_approval,
       reviewers: bounty.reviewers,
       owner: bounty.owner,
       status: bounty.status,
@@ -1554,7 +1556,7 @@ impl VersionedBounty {
       dao_fee: bounty.dao_fee,
       metadata: bounty.metadata,
       deadline: bounty.deadline,
-      claimer_approval: bounty.claimer_approval,
+      claimant_approval: bounty.claimant_approval,
       reviewers: bounty.reviewers,
       owner: bounty.owner,
       status: bounty.status,
@@ -1573,7 +1575,7 @@ impl VersionedBounty {
       dao_fee: bounty.dao_fee,
       metadata: bounty.metadata,
       deadline: bounty.deadline,
-      claimer_approval: bounty.claimer_approval,
+      claimant_approval: bounty.claimant_approval,
       reviewers: bounty.reviewers,
       owner: bounty.owner,
       status: bounty.status,
@@ -1638,7 +1640,7 @@ impl VersionedBounty {
       dao_fee: bounty.dao_fee,
       metadata: bounty.metadata,
       deadline: bounty.deadline,
-      claimer_approval: bounty.claimer_approval,
+      claimant_approval: bounty.claimant_approval,
       reviewers: bounty.reviewers,
       owner: bounty.owner,
       status: bounty.status,
@@ -1769,168 +1771,16 @@ pub enum DefermentOfKYC {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct BountyClaimV1 {
-  /// Bounty id that was claimed.
-  pub bounty_id: BountyIndex,
-  /// When a claim is created.
-  pub created_at: U64,
-  /// Start time of the claim.
-  pub start_time: Option<U64>,
-  /// Deadline specified by claimer.
-  pub deadline: U64,
-  /// Description
-  pub description: String,
-  /// status
-  pub status: ClaimStatus,
-  /// Bounty payout proposal ID
-  pub bounty_payout_proposal_id: Option<U64>,
-  /// Proposal ID for applicant approval
-  pub approve_claimer_proposal_id: Option<U64>,
-  /// Timestamp when the status is set to rejected
-  pub rejected_timestamp: Option<U64>,
-  /// Dispute ID
-  pub dispute_id: Option<U64>,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct BountyClaimV2 {
-  /// Bounty id that was claimed.
-  pub bounty_id: BountyIndex,
-  /// When a claim is created.
-  pub created_at: U64,
-  /// Start time of the claim.
-  pub start_time: Option<U64>,
-  /// Deadline specified by claimer.
-  pub deadline: U64,
-  /// Description
-  pub description: String,
-  /// status
-  pub status: ClaimStatus,
-  /// Bounty payout proposal ID
-  pub bounty_payout_proposal_id: Option<U64>,
-  /// Proposal ID for applicant approval
-  pub approve_claimer_proposal_id: Option<U64>,
-  /// Timestamp when the status is set to rejected
-  pub rejected_timestamp: Option<U64>,
-  /// Dispute ID
-  pub dispute_id: Option<U64>,
-  /// Bounty owner deferred KYC verification or verification status will be tracked manually
-  pub is_kyc_delayed: Option<DefermentOfKYC>,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct BountyClaimV3 {
-  /// Bounty id that was claimed.
-  pub bounty_id: BountyIndex,
-  /// When a claim is created.
-  pub created_at: U64,
-  /// Start time of the claim.
-  pub start_time: Option<U64>,
-  /// Deadline specified by claimer.
-  pub deadline: U64,
-  /// Description
-  pub description: String,
-  /// status
-  pub status: ClaimStatus,
-  /// Bounty payout proposal ID
-  pub bounty_payout_proposal_id: Option<U64>,
-  /// Proposal ID for applicant approval
-  pub approve_claimer_proposal_id: Option<U64>,
-  /// Timestamp when the status is set to rejected
-  pub rejected_timestamp: Option<U64>,
-  /// Dispute ID
-  pub dispute_id: Option<U64>,
-  /// Bounty owner deferred KYC verification or verification status will be tracked manually
-  pub is_kyc_delayed: Option<DefermentOfKYC>,
-  /// Payment data for PaymentOutsideContract mode
-  pub payment_timestamps: Option<PaymentTimestamps>,
-  /// Bounty slot number for different tasks
-  pub slot: Option<usize>,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct BountyClaimV4 {
-  /// Bounty id that was claimed.
-  pub bounty_id: BountyIndex,
-  /// When a claim is created.
-  pub created_at: U64,
-  /// Start time of the claim.
-  pub start_time: Option<U64>,
-  /// Deadline specified by claimer.
-  pub deadline: U64,
-  /// Description
-  pub description: String,
-  /// status
-  pub status: ClaimStatus,
-  /// Bounty payout proposal ID
-  pub bounty_payout_proposal_id: Option<U64>,
-  /// Proposal ID for applicant approval
-  pub approve_claimer_proposal_id: Option<U64>,
-  /// Timestamp when the status is set to rejected
-  pub rejected_timestamp: Option<U64>,
-  /// Dispute ID
-  pub dispute_id: Option<U64>,
-  /// Bounty owner deferred KYC verification or verification status will be tracked manually
-  pub is_kyc_delayed: Option<DefermentOfKYC>,
-  /// Payment data for PaymentOutsideContract mode
-  pub payment_timestamps: Option<PaymentTimestamps>,
-  /// Bounty slot number for different tasks
-  pub slot: Option<usize>,
-  /// Bond that was at the time of making the claim
-  pub bond: Option<U128>,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct BountyClaimV5 {
-  /// Bounty id that was claimed.
-  pub bounty_id: BountyIndex,
-  /// When a claim is created.
-  pub created_at: U64,
-  /// Start time of the claim.
-  pub start_time: Option<U64>,
-  /// Deadline specified by claimer.
-  pub deadline: Option<U64>,
-  /// Description
-  pub description: String,
-  /// status
-  pub status: ClaimStatus,
-  /// Bounty payout proposal ID
-  pub bounty_payout_proposal_id: Option<U64>,
-  /// Proposal ID for applicant approval
-  pub approve_claimer_proposal_id: Option<U64>,
-  /// Timestamp when the status is set to rejected
-  pub rejected_timestamp: Option<U64>,
-  /// Dispute ID
-  pub dispute_id: Option<U64>,
-  /// Bounty owner deferred KYC verification or verification status will be tracked manually
-  pub is_kyc_delayed: Option<DefermentOfKYC>,
-  /// Payment data for PaymentOutsideContract mode
-  pub payment_timestamps: Option<PaymentTimestamps>,
-  /// Bounty slot number for different tasks
-  pub slot: Option<usize>,
-  /// Bond that was at the time of making the claim
-  pub bond: Option<U128>,
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct BountyClaim {
+  /// The claim owner's account.
+  pub owner: AccountId,
   /// Bounty id that was claimed.
   pub bounty_id: BountyIndex,
   /// When a claim is created.
   pub created_at: U64,
   /// Start time of the claim.
   pub start_time: Option<U64>,
-  /// Deadline specified by claimer.
+  /// Deadline specified by claimant.
   pub deadline: Option<U64>,
   /// Description
   pub description: String,
@@ -1939,7 +1789,7 @@ pub struct BountyClaim {
   /// Bounty payout proposal ID
   pub bounty_payout_proposal_id: Option<U64>,
   /// Proposal ID for applicant approval
-  pub approve_claimer_proposal_id: Option<U64>,
+  pub approve_claimant_proposal_id: Option<U64>,
   /// Timestamp when the status is set to rejected
   pub rejected_timestamp: Option<U64>,
   /// Dispute ID
@@ -1994,140 +1844,13 @@ impl BountyClaim {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 pub enum VersionedBountyClaim {
-  V1(BountyClaimV1),
-  V2(BountyClaimV2),
-  V3(BountyClaimV3),
-  V4(BountyClaimV4),
-  V5(BountyClaimV5),
   Current(BountyClaim),
 }
 
 impl VersionedBountyClaim {
-  fn upgrade_v1_to_v2(bounty_claim: BountyClaimV1) -> BountyClaimV2 {
-    BountyClaimV2 {
-      bounty_id: bounty_claim.bounty_id,
-      created_at: bounty_claim.created_at,
-      start_time: bounty_claim.start_time,
-      deadline: bounty_claim.deadline,
-      description: bounty_claim.description,
-      status: bounty_claim.status,
-      bounty_payout_proposal_id: bounty_claim.bounty_payout_proposal_id,
-      approve_claimer_proposal_id: bounty_claim.approve_claimer_proposal_id,
-      rejected_timestamp: bounty_claim.rejected_timestamp,
-      dispute_id: bounty_claim.dispute_id,
-      is_kyc_delayed: None,
-    }
-  }
-
-  fn upgrade_v2_to_v3(bounty_claim: BountyClaimV2) -> BountyClaimV3 {
-    BountyClaimV3 {
-      bounty_id: bounty_claim.bounty_id,
-      created_at: bounty_claim.created_at,
-      start_time: bounty_claim.start_time,
-      deadline: bounty_claim.deadline,
-      description: bounty_claim.description,
-      status: bounty_claim.status,
-      bounty_payout_proposal_id: bounty_claim.bounty_payout_proposal_id,
-      approve_claimer_proposal_id: bounty_claim.approve_claimer_proposal_id,
-      rejected_timestamp: bounty_claim.rejected_timestamp,
-      dispute_id: bounty_claim.dispute_id,
-      is_kyc_delayed: bounty_claim.is_kyc_delayed,
-      payment_timestamps: None,
-      slot: None,
-    }
-  }
-
-  fn upgrade_v3_to_v4(bounty_claim: BountyClaimV3) -> BountyClaimV4 {
-    BountyClaimV4 {
-      bounty_id: bounty_claim.bounty_id,
-      created_at: bounty_claim.created_at,
-      start_time: bounty_claim.start_time,
-      deadline: bounty_claim.deadline,
-      description: bounty_claim.description,
-      status: bounty_claim.status,
-      bounty_payout_proposal_id: bounty_claim.bounty_payout_proposal_id,
-      approve_claimer_proposal_id: bounty_claim.approve_claimer_proposal_id,
-      rejected_timestamp: bounty_claim.rejected_timestamp,
-      dispute_id: bounty_claim.dispute_id,
-      is_kyc_delayed: bounty_claim.is_kyc_delayed,
-      payment_timestamps: bounty_claim.payment_timestamps,
-      slot: bounty_claim.slot,
-      bond: None,
-    }
-  }
-
-  fn upgrade_v4_to_v5(bounty_claim: BountyClaimV4) -> BountyClaimV5 {
-    BountyClaimV5 {
-      bounty_id: bounty_claim.bounty_id,
-      created_at: bounty_claim.created_at,
-      start_time: bounty_claim.start_time,
-      deadline: Some(bounty_claim.deadline),
-      description: bounty_claim.description,
-      status: bounty_claim.status,
-      bounty_payout_proposal_id: bounty_claim.bounty_payout_proposal_id,
-      approve_claimer_proposal_id: bounty_claim.approve_claimer_proposal_id,
-      rejected_timestamp: bounty_claim.rejected_timestamp,
-      dispute_id: bounty_claim.dispute_id,
-      is_kyc_delayed: bounty_claim.is_kyc_delayed,
-      payment_timestamps: bounty_claim.payment_timestamps,
-      slot: bounty_claim.slot,
-      bond: bounty_claim.bond,
-    }
-  }
-
-  fn upgrade_v5_to_v6(bounty_claim: BountyClaimV5) -> BountyClaim {
-    BountyClaim {
-      bounty_id: bounty_claim.bounty_id,
-      created_at: bounty_claim.created_at,
-      start_time: bounty_claim.start_time,
-      deadline: bounty_claim.deadline,
-      description: bounty_claim.description,
-      status: bounty_claim.status,
-      bounty_payout_proposal_id: bounty_claim.bounty_payout_proposal_id,
-      approve_claimer_proposal_id: bounty_claim.approve_claimer_proposal_id,
-      rejected_timestamp: bounty_claim.rejected_timestamp,
-      dispute_id: bounty_claim.dispute_id,
-      is_kyc_delayed: bounty_claim.is_kyc_delayed,
-      payment_timestamps: bounty_claim.payment_timestamps,
-      slot: bounty_claim.slot,
-      bond: bounty_claim.bond,
-      claim_number: None,
-    }
-  }
-
   pub fn to_bounty_claim(self) -> BountyClaim {
     match self {
       VersionedBountyClaim::Current(bounty_claim) => bounty_claim,
-      VersionedBountyClaim::V1(bounty_claim_v1) =>
-        VersionedBountyClaim::upgrade_v5_to_v6(
-          VersionedBountyClaim::upgrade_v4_to_v5(
-            VersionedBountyClaim::upgrade_v3_to_v4(
-              VersionedBountyClaim::upgrade_v2_to_v3(
-                VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
-              )
-            )
-          )
-        ),
-      VersionedBountyClaim::V2(bounty_claim_v2) =>
-        VersionedBountyClaim::upgrade_v5_to_v6(
-          VersionedBountyClaim::upgrade_v4_to_v5(
-            VersionedBountyClaim::upgrade_v3_to_v4(
-              VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2)
-            )
-          )
-        ),
-      VersionedBountyClaim::V3(bounty_claim_v3) =>
-        VersionedBountyClaim::upgrade_v5_to_v6(
-          VersionedBountyClaim::upgrade_v4_to_v5(
-            VersionedBountyClaim::upgrade_v3_to_v4(bounty_claim_v3)
-          )
-        ),
-      VersionedBountyClaim::V4(bounty_claim_v4) =>
-        VersionedBountyClaim::upgrade_v5_to_v6(
-          VersionedBountyClaim::upgrade_v4_to_v5(bounty_claim_v4)
-        ),
-      VersionedBountyClaim::V5(bounty_claim_v5) =>
-        VersionedBountyClaim::upgrade_v5_to_v6(bounty_claim_v5)
     }
   }
 }
@@ -2136,36 +1859,6 @@ impl From<VersionedBountyClaim> for BountyClaim {
   fn from(value: VersionedBountyClaim) -> Self {
     match value {
       VersionedBountyClaim::Current(bounty_claim) => bounty_claim,
-      VersionedBountyClaim::V1(bounty_claim_v1) =>
-        VersionedBountyClaim::upgrade_v5_to_v6(
-          VersionedBountyClaim::upgrade_v4_to_v5(
-            VersionedBountyClaim::upgrade_v3_to_v4(
-              VersionedBountyClaim::upgrade_v2_to_v3(
-                VersionedBountyClaim::upgrade_v1_to_v2(bounty_claim_v1)
-              )
-            )
-          )
-        ),
-      VersionedBountyClaim::V2(bounty_claim_v2) =>
-        VersionedBountyClaim::upgrade_v5_to_v6(
-          VersionedBountyClaim::upgrade_v4_to_v5(
-            VersionedBountyClaim::upgrade_v3_to_v4(
-              VersionedBountyClaim::upgrade_v2_to_v3(bounty_claim_v2)
-            )
-          )
-        ),
-      VersionedBountyClaim::V3(bounty_claim_v3) =>
-        VersionedBountyClaim::upgrade_v5_to_v6(
-          VersionedBountyClaim::upgrade_v4_to_v5(
-            VersionedBountyClaim::upgrade_v3_to_v4(bounty_claim_v3)
-          )
-        ),
-      VersionedBountyClaim::V4(bounty_claim_v4) =>
-        VersionedBountyClaim::upgrade_v5_to_v6(
-          VersionedBountyClaim::upgrade_v4_to_v5(bounty_claim_v4)
-        ),
-      VersionedBountyClaim::V5(bounty_claim_v5) =>
-        VersionedBountyClaim::upgrade_v5_to_v6(bounty_claim_v5)
     }
   }
 }
@@ -2173,31 +1866,6 @@ impl From<VersionedBountyClaim> for BountyClaim {
 impl From<BountyClaim> for VersionedBountyClaim {
   fn from(value: BountyClaim) -> Self {
     VersionedBountyClaim::Current(value)
-  }
-}
-
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
-#[serde(crate = "near_sdk::serde")]
-pub enum BountyAction {
-  ClaimApproved { receiver_id: AccountId },
-  ClaimRejected { receiver_id: AccountId },
-  SeveralClaimsApproved,
-  Finalize { receiver_id: Option<AccountId> },
-}
-
-impl BountyAction {
-  pub fn need_to_finalize_claim(&self) -> bool {
-    match self.clone() {
-      Self::Finalize { receiver_id } => receiver_id.is_some(),
-      _ => false,
-    }
-  }
-
-  pub fn get_finalize_action_receiver(&self) -> Option<AccountId> {
-    match self.clone() {
-      Self::Finalize { receiver_id } => receiver_id,
-      _ => None,
-    }
   }
 }
 
@@ -2535,13 +2203,16 @@ pub(crate) enum StorageKey {
   AccountBounties,
   AdminWhitelist,
   Bounties,
-  BountyClaimerAccounts,
-  BountyClaimers,
+  BountyClaimantAccounts,
+  OldBountyClaimants,
   OwnersWhitelist,
   Tokens,
   TotalFees,
   TotalValidatorsDaoFees,
   PostpaidSubscribersWhitelist,
+  Claims,
+  BountyClaims,
+  BountyClaimants,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]

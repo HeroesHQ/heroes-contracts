@@ -8,7 +8,7 @@ impl DisputesContract {
   pub(crate) fn chunk_of_description(dispute: &Dispute, reason: &Reason) -> String {
     let mut chunk = "".to_string().to_owned();
     let (side_str, account_id) = match reason.side {
-      Side::Claimer => ("Claimer", dispute.claimer.clone()),
+      Side::Claimant => ("Claimant", dispute.receiver_id.clone()),
       _ => ("Project owner", dispute.project_owner_delegate.clone()),
     };
     chunk.push_str("\n\n");

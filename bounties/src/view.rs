@@ -79,6 +79,10 @@ impl BountiesContract {
     self.last_bounty_id
   }
 
+  pub fn get_last_claim_id(&self) -> ClaimIndex {
+    self.last_claim_id
+  }
+
   pub fn get_bounties_by_ids(&self, ids: Vec<BountyIndex>) -> Vec<(BountyIndex, Bounty)> {
     ids
       .into_iter()
@@ -92,52 +96,64 @@ impl BountiesContract {
     limit: Option<BountyIndex>,
   ) -> Vec<(BountyIndex, Bounty)> {
     let from_index = from_index.unwrap_or(0);
-    let limit = limit.unwrap_or(self.last_bounty_id);
+    let limit = limit.unwrap_or(100);
     (from_index..std::cmp::min(from_index + limit, self.last_bounty_id))
       .filter_map(|id| self.bounties.get(&id).map(|bounty| (id, bounty.into())))
       .collect()
   }
 
-  /// Get bounty claims for given user.
-  pub fn get_bounty_claims(&self, account_id: AccountId) -> Vec<BountyClaim> {
-    let claims: Vec<BountyClaim> = self.bounty_claimers
-      .get(&account_id)
-      .unwrap_or_default()
-      .into_iter()
-      .map(|c| c.into())
-      .collect();
+  /// Get claim by id.
+  pub fn get_bounty_claim(&self, id: ClaimIndex) -> BountyClaim {
+    self.claims
+      .get(&id)
+      .expect(format!("No claim found with ID {}", id).as_str())
+      .into()
+  }
 
-    let mut index = 0;
-    claims.clone().into_iter().filter(|c| {
-      let pos = claims.iter().position(
-        |e| e.bounty_id == c.bounty_id && e.claim_number == c.claim_number
-      );
-      index += 1;
-      pos.is_some() && pos.unwrap() == index - 1
-    }).collect()
+  pub fn get_bounty_claims(
+    &self,
+    from_index: Option<ClaimIndex>,
+    limit: Option<ClaimIndex>,
+  ) -> Vec<(ClaimIndex, BountyClaim)> {
+    let from_index = from_index.unwrap_or(0);
+    let limit = limit.unwrap_or(100);
+    (from_index..std::cmp::min(from_index + limit, self.last_bounty_id))
+      .filter_map(|id| self.claims.get(&id).map(|claim| (id, claim.into())))
+      .collect()
+  }
+
+  /// Get bounty claims for given user.
+  pub fn get_account_claims(
+    &self,
+    account_id: AccountId,
+    from_index: Option<usize>,
+    limit: Option<usize>,
+  ) -> Vec<(ClaimIndex, BountyClaim)> {
+    let from_index = from_index.unwrap_or(0);
+    let limit = limit.unwrap_or(100);
+
+    let claims = self.bounty_claimants
+      .get(&account_id)
+      .unwrap_or_default();
+
+    self.internal_get_one_page_of_claims(claims, from_index, limit)
   }
 
   /// Get claims for bounty id.
-  pub fn get_bounty_claims_by_id(
+  pub fn get_claims_by_bounty_id(
     &self,
     id: BountyIndex,
-  ) -> Vec<(AccountId, BountyClaim)> {
-    let mut result = vec![];
+    from_index: Option<usize>,
+    limit: Option<usize>,
+  ) -> Vec<(ClaimIndex, BountyClaim)> {
+    let from_index = from_index.unwrap_or(0);
+    let limit = limit.unwrap_or(100);
 
-    self.bounty_claimer_accounts
+    let claims = self.bounty_claims
       .get(&id)
-      .unwrap_or_default()
-      .into_iter()
-      .for_each(|account_id| {
-        let claims = self.get_bounty_claims(account_id.clone());
-        Self::internal_find_claims_by_id(id, &claims)
-          .into_iter()
-          .for_each(|claim| {
-            result.push((account_id.clone(), claim));
-          });
-      });
+      .unwrap_or_default();
 
-    result
+    self.internal_get_one_page_of_claims(claims, from_index, limit)
   }
 
   pub fn get_total_fees(&self, token_id: AccountId) -> FeeStats {
@@ -155,6 +171,6 @@ impl BountiesContract {
   }
 
   pub fn get_version() -> String {
-    "2.0.14".to_string()
+    "2.0.16".to_string()
   }
 }

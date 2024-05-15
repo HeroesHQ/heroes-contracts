@@ -2,8 +2,8 @@ use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 use near_sdk::collections::{LookupMap, UnorderedSet};
 use near_sdk::json_types::{Base64VecU8, U64};
 use near_sdk::serde_json::json;
-use near_sdk::{assert_one_yocto, env, is_promise_success, near_bindgen, AccountId, PanicOnDefault,
-               Promise, PromiseError, PromiseOrValue, Timestamp};
+use near_sdk::{env, is_promise_success, near_bindgen, AccountId, PanicOnDefault, Promise,
+               PromiseError, PromiseOrValue, Timestamp};
 
 pub use crate::types::*;
 
@@ -69,14 +69,12 @@ impl DisputesContract {
     }
   }
 
-  #[payable]
   pub fn add_to_admin_whitelist(
     &mut self,
     account_id: Option<AccountId>,
     account_ids: Option<Vec<AccountId>>,
   ) {
     self.assert_live();
-    assert_one_yocto();
     self.assert_admin_whitelist(&env::predecessor_account_id());
     let account_ids = if let Some(account_ids) = account_ids {
       account_ids
@@ -88,14 +86,12 @@ impl DisputesContract {
     }
   }
 
-  #[payable]
   pub fn remove_from_admin_whitelist(
     &mut self,
     account_id: Option<AccountId>,
     account_ids: Option<Vec<AccountId>>,
   ) {
     self.assert_live();
-    assert_one_yocto();
     self.assert_admin_whitelist(&env::predecessor_account_id());
     let account_ids = if let Some(account_ids) = account_ids {
       account_ids
@@ -111,18 +107,14 @@ impl DisputesContract {
     );
   }
 
-  #[payable]
   pub fn change_config(&mut self, config: Config) {
     self.assert_live();
-    assert_one_yocto();
     self.assert_admin_whitelist(&env::predecessor_account_id());
     self.config = config.into();
   }
 
-  #[payable]
   pub fn create_dispute(&mut self, dispute_create: DisputeCreate) -> DisputeIndex {
     self.assert_live();
-    assert_one_yocto();
     assert_eq!(
       self.bounties_contract,
       env::predecessor_account_id(),
@@ -137,10 +129,8 @@ impl DisputesContract {
     id
   }
 
-  #[payable]
   pub fn provide_arguments(&mut self, id: DisputeIndex, description: String) -> usize {
     self.assert_live();
-    assert_one_yocto();
     let dispute = self.get_dispute(id);
     if dispute.status != DisputeStatus::New {
       env::panic_str(MESSAGE_DISPUTE_IS_NOT_NEW);
@@ -162,10 +152,8 @@ impl DisputesContract {
     reason_idx
   }
 
-  #[payable]
   pub fn cancel_dispute(&mut self, id: DisputeIndex) -> PromiseOrValue<()> {
     self.assert_live();
-    assert_one_yocto();
     let dispute = self.get_dispute(id);
     if dispute.status != DisputeStatus::New {
       env::panic_str(MESSAGE_DISPUTE_IS_NOT_NEW);
@@ -175,17 +163,15 @@ impl DisputesContract {
     self.internal_send_result_of_dispute(
       id,
       dispute.bounty_id,
-      dispute.claimer,
+      dispute.receiver_id,
       dispute.claim_number,
       success,
       true
     )
   }
 
-  #[payable]
   pub fn escalation(&mut self, id: DisputeIndex) -> PromiseOrValue<()> {
     self.assert_live();
-    assert_one_yocto();
     let dispute = self.get_dispute(id);
     if dispute.status != DisputeStatus::New {
       env::panic_str(MESSAGE_DISPUTE_IS_NOT_NEW);
@@ -198,14 +184,12 @@ impl DisputesContract {
     self.internal_add_proposal(id, dispute)
   }
 
-  #[payable]
   pub fn result_of_dispute(
     &mut self,
     id: DisputeIndex,
     success: bool,
   ) -> PromiseOrValue<()> {
     self.assert_live();
-    assert_one_yocto();
     let dispute = self.get_dispute(id);
     assert_eq!(
       self.dispute_dao,
@@ -223,20 +207,18 @@ impl DisputesContract {
     self.internal_send_result_of_dispute(
       id,
       dispute.bounty_id,
-      dispute.claimer,
+      dispute.receiver_id,
       dispute.claim_number,
       success,
       false
     )
   }
 
-  #[payable]
   pub fn finalize_dispute(
     &mut self,
     id: DisputeIndex,
   ) -> PromiseOrValue<()> {
     self.assert_live();
-    assert_one_yocto();
     let dispute = self.get_dispute(id);
     if dispute.status != DisputeStatus::DecisionPending {
       env::panic_str(MESSAGE_DISPUTE_IS_NOT_PENDING);
@@ -246,10 +228,8 @@ impl DisputesContract {
   }
 
   /// Can be used only during migrations when updating contract versions
-  #[payable]
   pub fn update_bounties_contract(&mut self, bounties_contract: AccountId) {
     self.assert_live();
-    assert_one_yocto();
     self.assert_admin_whitelist(&env::predecessor_account_id());
     self.bounties_contract = bounties_contract;
   }
@@ -278,7 +258,7 @@ mod tests {
     contract: &mut DisputesContract,
     bounty_id: u64,
     description: String,
-    claimer: AccountId,
+    receiver_id: AccountId,
     claim_number: Option<u8>,
     project_owner_delegate: AccountId,
   ) -> DisputeIndex {
@@ -288,7 +268,7 @@ mod tests {
     let dispute_create = DisputeCreate {
       bounty_id,
       description,
-      claimer,
+      receiver_id,
       project_owner_delegate,
       claim_number,
     };
@@ -353,7 +333,7 @@ mod tests {
       start_time: U64(0),
       description: "Test description".to_string(),
       bounty_id: U64(1),
-      claimer: accounts(1),
+      receiver_id: accounts(1),
       claim_number: None,
       project_owner_delegate: accounts(2),
       status: DisputeStatus::New,
@@ -506,21 +486,6 @@ mod tests {
   }
 
   #[test]
-  #[should_panic(expected = "Requires attached deposit of exactly 1 yoctoNEAR")]
-  fn test_add_to_admin_whitelist_without_deposit() {
-    let mut context = VMContextBuilder::new();
-    let mut contract = DisputesContract::new(
-      get_bounties_contract(),
-      get_dispute_dao(),
-      vec![accounts(0).into()],
-      None,
-    );
-    contract.set_status(ContractStatus::Live);
-    testing_env!(context.predecessor_account_id(accounts(0)).build());
-    contract.add_to_admin_whitelist(Some(accounts(1)), None);
-  }
-
-  #[test]
   #[should_panic(expected = "Not in admin whitelist")]
   fn test_add_to_admin_whitelist_by_other_user() {
     let mut context = VMContextBuilder::new();
@@ -627,7 +592,7 @@ mod tests {
           description: "The first argument".to_string()
         },
         Reason {
-          side: Side::Claimer,
+          side: Side::Claimant,
           argument_timestamp: U64(2),
           description: "The second argument".to_string()
         },
