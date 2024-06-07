@@ -596,7 +596,8 @@ impl BountiesContract {
     &mut self,
     id: BountyIndex,
     receiver_id: AccountId,
-    claim_number: Option<u8>
+    claim_number: Option<u8>,
+    prize_place: Option<usize>,
   ) -> PromiseOrValue<()> {
     self.assert_live();
     assert_one_yocto();
@@ -626,10 +627,12 @@ impl BountiesContract {
       "The claim status does not allow approval of the execution result"
     );
 
-    Self::assert_postpaid_is_ready(&bounty, &bounty_claim, true);
-    self.assert_multitasking_requirements(id, &bounty, &receiver_id, claim_number);
+    let place = Self::internal_get_real_prize_place(prize_place, &bounty);
 
-    self.internal_bounty_payout(id, Some((receiver_id, claim_number)))
+    Self::assert_postpaid_is_ready(&bounty, &bounty_claim, true);
+    self.assert_multitasking_requirements(id, &bounty, &receiver_id, claim_number, place);
+
+    self.internal_bounty_payout(id, Some((receiver_id, claim_number)), place)
   }
 
   pub fn bounty_reject(
@@ -699,7 +702,7 @@ impl BountiesContract {
       );
     }
 
-    self.internal_bounty_payout(id, None)
+    self.internal_bounty_payout(id, None, None)
   }
 
   pub fn bounty_finalize(
@@ -889,8 +892,7 @@ impl BountiesContract {
         "The bounty amount cannot be zero"
       );
       assert!(
-        bounty.is_payment_outside_contract() &&
-          !bounty.is_one_bounty_for_many_claimants() && !bounty.is_different_tasks(),
+        bounty.is_payment_outside_contract() && bounty.multitasking.is_none(),
         "The amount of the bounty cannot be changed"
       );
       assert!(
@@ -985,7 +987,8 @@ impl BountiesContract {
     &mut self,
     id: BountyIndex,
     receiver_id: Option<AccountId>,
-    claim_number: Option<u8>
+    claim_number: Option<u8>,
+    prize_place: Option<usize>,
   ) {
     self.assert_live();
 
@@ -1027,23 +1030,21 @@ impl BountiesContract {
       "This action has already been performed"
     );
 
-    if bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks() {
+    let place = Self::internal_get_real_prize_place(prize_place, &bounty);
+
+    if bounty.multitasking.is_some() {
+      if bounty.is_contest_or_hackathon() {
+        let multitasking = bounty.multitasking.clone().unwrap();
+        bounty.multitasking = Some(
+          multitasking.set_competition_winner(place.unwrap(), (receiver_id.unwrap(), claim_number))
+        );
+        self.internal_update_bounty(&id, bounty);
+      }
+
       bounty_claim.set_payment_at(Some(U64::from(env::block_timestamp())));
       self.claims.insert(&claim_id, &bounty_claim.into());
 
     } else {
-      if bounty.is_contest_or_hackathon() {
-        let multitasking = bounty.multitasking.clone().unwrap();
-        let competition_winner = multitasking.get_competition_winner();
-        assert!(
-          competition_winner.is_none(),
-          "The winner of the contest has already been decided"
-        );
-        bounty.multitasking = Some(
-          multitasking.set_competition_winner(Some((receiver_id.unwrap(), claim_number)))
-        );
-      }
-
       bounty.postpaid = Some(
         bounty.postpaid.clone().unwrap().set_payment_at(Some(U64::from(env::block_timestamp())))
       );
@@ -1095,7 +1096,15 @@ impl BountiesContract {
       "This action has already been performed"
     );
 
-    if bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks() {
+    if bounty.multitasking.is_some() {
+      if bounty.is_contest_or_hackathon() {
+        let competition_winner = bounty.multitasking
+          .clone()
+          .unwrap()
+          .get_competition_winner(None, Some((sender_id, claim_number)));
+        assert!(competition_winner.is_some(), "You aren't a contest winner");
+      }
+
       bounty_claim.set_payment_confirmed_at(Some(U64::from(env::block_timestamp())));
       self.claims.insert(&claim_id, &bounty_claim.clone().into());
 
@@ -1105,16 +1114,6 @@ impl BountiesContract {
       }
 
     } else {
-      if bounty.is_contest_or_hackathon() {
-        let competition_winner = bounty.multitasking.clone().unwrap().get_competition_winner();
-        assert!(
-          competition_winner.is_some() &&
-            competition_winner.clone().unwrap().0 == sender_id &&
-            competition_winner.clone().unwrap().1 == claim_number,
-          "You aren't a contest winner"
-        );
-      }
-
       bounty.postpaid = Some(
         bounty.postpaid.clone().unwrap().set_payment_confirmed_at(
           Some(U64::from(env::block_timestamp()))
@@ -1359,7 +1358,7 @@ impl BountiesContract {
       if bounty.is_different_tasks() {
         self.internal_claim_return_after_dispute(claim_id, &mut bounty_claim)
       } else {
-        self.internal_bounty_payout(id, Some((receiver_id, claim_number)))
+        self.internal_bounty_payout(id, Some((receiver_id, claim_number)), None)
       }
     } else {
       self.internal_reset_bounty_to_initial_state(
@@ -1561,7 +1560,7 @@ mod tests {
       .predecessor_account_id(project_owner.clone())
       .attached_deposit(1)
       .build());
-    contract.bounty_approve(id, receiver_id.clone(), claim_number);
+    contract.bounty_approve(id, receiver_id.clone(), claim_number, None);
   }
 
   fn bounty_reject(

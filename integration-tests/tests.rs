@@ -4,7 +4,7 @@ use serde_json::json;
 use workspaces::Account;
 use bounties::{Bounty, BountyFlow, BountyMetadata, BountyStatus, BountyUpdate, ClaimantApproval,
                ClaimStatus, ContactDetails, ContactType, Deadline, DefermentOfKYC, Experience,
-               KycConfig, KycVerificationMethod, Multitasking, Postpaid, Reviewers,
+               KycConfig, KycVerificationMethod, Multitasking, Postpaid, PrizePlace, Reviewers,
                ReviewersParams, StartConditions, Subtask, TokenDetails, WhitelistType};
 use disputes::DisputeStatus;
 
@@ -302,7 +302,7 @@ async fn test_claim_result_approve_by_project_owner(e: &Env) -> anyhow::Result<(
     bounty_id,
     &e.project_owner,
     &e.freelancer,
-    None, None,
+    None, None, None,
   ).await?;
 
   e.assert_statuses(
@@ -1335,7 +1335,7 @@ async fn test_using_more_reviewers(e: &Env) -> anyhow::Result<()> {
     bounty_id.clone(),
     &reviewer,
     &e.freelancer,
-    None, None,
+    None, None, None,
   ).await?;
   e.assert_reputation_stat_values_eq(
     Some([11, 9, 4, 3, 1, 1, 4, 2]),
@@ -2205,7 +2205,7 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
   e.mark_as_paid(
     &e.disputed_bounties,
     bounty_id,
-    None, None,
+    None, None, None,
     Some("The status of the claim does not allow this action")
   ).await?;
 
@@ -2222,7 +2222,7 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer,
-    None,
+    None, None,
     Some("No payment confirmation"),
   ).await?;
 
@@ -2233,14 +2233,14 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     None,
     Some("Payment by the bounty owner has not yet been confirmed")
   ).await?;
-  e.mark_as_paid(&e.disputed_bounties, bounty_id, None, None, None).await?;
+  e.mark_as_paid(&e.disputed_bounties, bounty_id, None, None, None, None).await?;
 
   Env::bounty_approve(
     &e.disputed_bounties,
     bounty_id,
     &e.project_owner,
     &freelancer,
-    None,
+    None, None,
     Some("No payment confirmation"),
   ).await?;
 
@@ -2251,7 +2251,7 @@ async fn test_postpaid_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer,
-    None, None,
+    None, None, None,
   ).await?;
 
   let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
@@ -2285,6 +2285,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
       allowed_create_claim_to: None,
       successful_claims_for_result: None,
       start_conditions: None,
+      prize_places: None,
       runtime_env: None,
     }),
     None, None, None, None,
@@ -2396,7 +2397,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancers[0],
-    None, None,
+    None, None, None,
   ).await?;
 
   let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
@@ -2430,6 +2431,16 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
       allowed_create_claim_to: None,
       successful_claims_for_result: None,
       start_conditions: Some(StartConditions::ManuallyStart),
+      prize_places: Some(vec![
+        PrizePlace {
+          place_description: "1st prize".to_string(),
+          place_amount: U128(66 * 10u128.pow(16))
+        },
+        PrizePlace {
+          place_description: "2nd prize".to_string(),
+          place_amount: U128(33 * 10u128.pow(16))
+        },
+      ]),
       runtime_env: None,
     }),
     None, None, None, None,
@@ -2506,11 +2517,18 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancers[1],
-    None, None,
+    None,
+    Some(0), // 1st prize
+    None,
   ).await?;
 
   let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
-  assert_eq!(bounty.status, BountyStatus::Completed);
+  assert_eq!(bounty.status, BountyStatus::ManyClaimed);
+  assert_eq!(
+    bounty.multitasking.clone().unwrap().get_competition_winner(Some(0), None).unwrap().0,
+    freelancers[1].id().to_string().parse().unwrap()
+  );
+  assert!(bounty.multitasking.clone().unwrap().get_competition_winner(Some(1), None).is_none());
   //println!("{:#?}", bounty);
   let bounty_claims = Env::get_claims_by_bounty_id(&e.disputed_bounties, bounty_id).await?;
   //println!("{:#?}", bounty_claims);
@@ -2519,24 +2537,39 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
   assert_eq!(bounty_claims[1].1.status, ClaimStatus::Approved);
   assert_eq!(bounty_claims[2].1.status, ClaimStatus::Competes);
 
-  Env::bounty_finalize(
+  Env::bounty_approve(
     &e.disputed_bounties,
     bounty_id,
+    &e.project_owner,
     &freelancers[0],
-    Some((&freelancers[0].id(), None)),
+    None,
+    Some(1), // 2nd prize
     None,
   ).await?;
 
-  e.bounty_done(
+  let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
+  assert_eq!(bounty.status, BountyStatus::Completed);
+  assert_eq!(
+    bounty.multitasking.clone().unwrap().get_competition_winner(Some(1), None).unwrap().0,
+    freelancers[0].id().to_string().parse().unwrap()
+  );
+  //println!("{:#?}", bounty);
+  let bounty_claims = Env::get_claims_by_bounty_id(&e.disputed_bounties, bounty_id).await?;
+  //println!("{:#?}", bounty_claims);
+  assert_eq!(bounty_claims.len(), 3);
+  assert_eq!(bounty_claims[0].1.status, ClaimStatus::Approved);
+  assert_eq!(bounty_claims[1].1.status, ClaimStatus::Approved);
+  assert_eq!(bounty_claims[2].1.status, ClaimStatus::Competes);
+
+  Env::bounty_finalize(
     &e.disputed_bounties,
     bounty_id,
-    "test description".to_string(),
-    Some(&freelancers[2]),
-    None, None,
+    &freelancers[2],
+    Some((&freelancers[2].id(), None)),
+    None,
   ).await?;
 
   let bounty_claims = Env::get_claims_by_bounty_id(&e.disputed_bounties, bounty_id).await?;
-  assert_eq!(bounty_claims[0].1.status, ClaimStatus::NotCompleted);
   assert_eq!(bounty_claims[2].1.status, ClaimStatus::NotCompleted);
 
   let _ = e.add_bounty(
@@ -2548,6 +2581,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
       allowed_create_claim_to: None,
       successful_claims_for_result: None,
       start_conditions: Some(StartConditions::MinAmountToStart { amount: 3 }),
+      prize_places: None,
       runtime_env: None,
     }),
     None, None, None, None,
@@ -2642,7 +2676,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancers[1],
-    None, None,
+    None, None, None,
   ).await?;
 
   let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
@@ -2686,6 +2720,7 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
       allowed_create_claim_to: None,
       successful_claims_for_result: None,
       start_conditions: None,
+      prize_places: None,
       runtime_env: None,
     }),
     None, None, None, None,
@@ -2736,13 +2771,13 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
   assert!(bounty.postpaid.clone().unwrap().get_payment_timestamps().payment_at.is_none());
   assert!(bounty.postpaid.clone().unwrap().get_payment_timestamps().payment_confirmed_at.is_none());
 
-  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancers[0].id()), None, None).await?;
+  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancers[0].id()), None, None, None).await?;
   e.confirm_payment(
     &e.disputed_bounties,
     bounty_id,
     Some(&freelancers[1]),
     None,
-    Some("You aren't a contest winner")
+    Some("Payment by the bounty owner has not yet been confirmed")
   ).await?;
   e.confirm_payment(&e.disputed_bounties, bounty_id, Some(&freelancers[0]), None, None).await?;
 
@@ -2751,17 +2786,17 @@ async fn test_competition_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancers[0],
-    None, None,
+    None, None, None,
   ).await?;
 
   let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
   assert_eq!(bounty.status, BountyStatus::Completed);
-  assert!(bounty.postpaid.clone().unwrap().get_payment_timestamps().payment_at.is_some());
-  assert!(bounty.postpaid.clone().unwrap().get_payment_timestamps().payment_confirmed_at.is_some());
   //println!("{:#?}", bounty);
   let bounty_claims = Env::get_claims_by_bounty_id(&e.disputed_bounties, bounty_id).await?;
   //println!("{:#?}", bounty_claims);
   assert_eq!(bounty_claims.len(), 2);
+  assert!(bounty_claims[0].1.payment_timestamps.clone().unwrap().payment_at.is_some());
+  assert!(bounty_claims[0].1.payment_timestamps.clone().unwrap().payment_confirmed_at.is_some());
   assert_eq!(bounty_claims[0].1.owner.to_string(), freelancers[0].id().to_string());
   assert_eq!(bounty_claims[0].1.status, ClaimStatus::Approved);
   assert_eq!(bounty_claims[1].1.owner.to_string(), freelancers[1].id().to_string());
@@ -2929,7 +2964,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancers[2],
-    None, None,
+    None, None, None,
   ).await?;
   e.bounty_give_up(&e.disputed_bounties, bounty_id, Some(&freelancers[3]), None).await?;
 
@@ -3072,7 +3107,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
       bounty_id,
       &e.project_owner,
       &freelancers[x],
-      None, None,
+      None, None, None,
     ).await?;
   }
 
@@ -3113,7 +3148,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer,
-    None, None,
+    None, None, None,
   ).await?;
 
   let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
@@ -3217,11 +3252,11 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancers[0],
-    None,
+    None, None,
     Some("No payment confirmation"),
   ).await?;
 
-  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancers[0].id()), None, None).await?;
+  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancers[0].id()), None, None, None).await?;
 
   Env::bounty_reject(
     &e.disputed_bounties,
@@ -3239,7 +3274,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancers[0],
-    None, None,
+    None, None, None,
   ).await?;
 
   Env::bounty_reject(
@@ -3281,7 +3316,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     None, None,
   ).await?;
 
-  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancers[2].id()), None, None).await?;
+  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancers[2].id()), None, None, None).await?;
   e.confirm_payment(&e.disputed_bounties, bounty_id, Some(&freelancers[2]), None, None).await?;
 
   Env::bounty_approve(
@@ -3289,7 +3324,7 @@ async fn test_one_bounty_for_many(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancers[2],
-    None, None,
+    None, None, None,
   ).await?;
 
   let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
@@ -3429,7 +3464,7 @@ async fn test_different_tasks_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancers[0],
-    None,
+    None, None,
     Some("This action is not available for DifferentTasks mode"),
   ).await?;
 
@@ -3712,16 +3747,16 @@ async fn test_different_tasks_flow(e: &Env) -> anyhow::Result<()> {
     None, None,
   ).await?;
 
-  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancers[0].id()), None, None).await?;
+  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancers[0].id()), None, None, None).await?;
   e.confirm_payment(&e.disputed_bounties, bounty_id, Some(&freelancers[0]), None, None).await?;
   e.mark_as_paid(
     &e.disputed_bounties,
     bounty_id,
     Some(freelancers[1].id()),
-    None,
+    None, None,
     Some("The status of the claim does not allow this action")
   ).await?;
-  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancers[2].id()), None, None).await?;
+  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancers[2].id()), None, None, None).await?;
 
   let bounty = get_bounty(&e.disputed_bounties, bounty_id).await?;
   assert_eq!(bounty.status, BountyStatus::ManyClaimed);
@@ -4126,7 +4161,7 @@ async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer2,
-    None, None,
+    None, None, None,
   ).await?;
 
   e.assert_statuses(
@@ -4148,6 +4183,7 @@ async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
       allowed_create_claim_to: None,
       successful_claims_for_result: None,
       start_conditions: None,
+      prize_places: None,
       runtime_env: None,
     }),
     Some(true),
@@ -4221,7 +4257,7 @@ async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer,
-    None, None,
+    None, None, None,
   ).await?;
 
   e.assert_statuses(
@@ -4320,7 +4356,7 @@ async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer,
-    None, None,
+    None, None, None,
   ).await?;
 
   e.assert_statuses(
@@ -4377,7 +4413,7 @@ async fn test_flow_with_stretch_claim_deadline(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer2,
-    None, None,
+    None, None, None,
   ).await?;
 
   e.assert_statuses(
@@ -4684,7 +4720,7 @@ async fn test_simple_bounty_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer,
-    None, None,
+    None, None, None,
   ).await?;
 
   e.assert_statuses(
@@ -4708,6 +4744,7 @@ async fn test_simple_bounty_flow(e: &Env) -> anyhow::Result<()> {
       allowed_create_claim_to: None,
       successful_claims_for_result: None,
       start_conditions: None,
+      prize_places: None,
       runtime_env: None,
     }),
     Some(true),
@@ -4728,6 +4765,7 @@ async fn test_simple_bounty_flow(e: &Env) -> anyhow::Result<()> {
       allowed_create_claim_to: None,
       successful_claims_for_result: None,
       start_conditions: None,
+      prize_places: None,
       runtime_env: None,
     }),
     None,
@@ -4785,7 +4823,7 @@ async fn test_simple_bounty_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer2,
-    None, None,
+    None, None, None,
   ).await?;
 
   e.assert_statuses(
@@ -4870,7 +4908,7 @@ async fn test_simple_bounty_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer4,
-    None, None,
+    None, None, None,
   ).await?;
 
   e.assert_statuses(
@@ -4909,7 +4947,7 @@ async fn test_simple_bounty_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer5,
-    None, None,
+    None, None, None,
   ).await?;
 
   e.assert_statuses(
@@ -5100,7 +5138,7 @@ async fn test_simple_bounty_flow(e: &Env) -> anyhow::Result<()> {
     BountyStatus::Claimed,
   ).await?;
 
-  e.mark_as_paid(&e.disputed_bounties, bounty_id, None, None, None).await?;
+  e.mark_as_paid(&e.disputed_bounties, bounty_id, None, None, None, None).await?;
   e.confirm_payment(&e.disputed_bounties, bounty_id, Some(&freelancer8), None, None).await?;
 
   Env::bounty_approve(
@@ -5108,7 +5146,7 @@ async fn test_simple_bounty_flow(e: &Env) -> anyhow::Result<()> {
     bounty_id,
     &e.project_owner,
     &freelancer8,
-    None, None,
+    None, None, None,
   ).await?;
 
   e.assert_statuses(
@@ -5397,7 +5435,7 @@ async fn test_many_claims_for_one_account(e: &Env) -> anyhow::Result<()> {
     &e.project_owner,
     &freelancer,
     Some(0),
-    None,
+    None, None,
   ).await?;
 
   e.assert_statuses(
@@ -5536,9 +5574,9 @@ async fn test_many_claims_for_one_account(e: &Env) -> anyhow::Result<()> {
     BountyStatus::ManyClaimed,
   ).await?;
 
-  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancer2.id()), Some(0), None).await?;
+  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancer2.id()), Some(0), None, None).await?;
   e.confirm_payment(&e.disputed_bounties, bounty_id, Some(&freelancer2), Some(0), None).await?;
-  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancer2.id()), Some(1), None).await?;
+  e.mark_as_paid(&e.disputed_bounties, bounty_id, Some(freelancer2.id()), Some(1), None, None).await?;
   e.confirm_payment(&e.disputed_bounties, bounty_id, Some(&freelancer2), Some(1), None).await?;
 
   Env::bounty_approve(
@@ -5547,7 +5585,7 @@ async fn test_many_claims_for_one_account(e: &Env) -> anyhow::Result<()> {
     &e.project_owner,
     &freelancer2,
     Some(0),
-    None,
+    None, None,
   ).await?;
 
   e.assert_statuses(
@@ -5565,7 +5603,7 @@ async fn test_many_claims_for_one_account(e: &Env) -> anyhow::Result<()> {
     &e.project_owner,
     &freelancer2,
     Some(1),
-    None,
+    None, None,
   ).await?;
 
   e.assert_statuses(
