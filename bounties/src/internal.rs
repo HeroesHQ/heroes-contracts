@@ -503,7 +503,7 @@ impl BountiesContract {
     }
   }
 
-  pub(crate) fn internal_get_claims_by_account_id_an_bounty_id(
+  pub(crate) fn internal_get_claims_by_account_id_and_bounty_id(
     &self,
     id: &BountyIndex,
     receiver_id: &AccountId,
@@ -574,7 +574,7 @@ impl BountiesContract {
     receiver_id: AccountId,
     claim_number: Option<u8>
   ) -> (ClaimIndex, BountyClaim) {
-    let claims = self.internal_get_claims_by_account_id_an_bounty_id(&id, &receiver_id, false);
+    let claims = self.internal_get_claims_by_account_id_and_bounty_id(&id, &receiver_id, false);
     let claim = self.internal_find_claim(&claims, id, receiver_id, claim_number);
     claim.expect("No bounty claim found")
   }
@@ -1518,11 +1518,42 @@ impl BountiesContract {
     }
   }
 
-  pub(crate) fn internal_are_all_slots_complete(
+  pub(crate) fn were_all_claims_completed(
+    &self,
+    id: BountyIndex,
     bounty: &Bounty,
     except: Option<(AccountId, Option<u8>)>
   ) -> bool {
-    bounty.multitasking.clone().unwrap().are_all_slots_complete(except)
+    let participants = bounty.multitasking.clone().unwrap().get_slots();
+    participants
+      .into_iter()
+      .find(
+        |p| {
+          let env = p.clone().unwrap();
+
+          if except.is_none() ||
+              env.participant != except.clone().unwrap().0 ||
+              env.claim_number != except.clone().unwrap().1
+          {
+            let (_, claim) = self.internal_get_claim(id, env.participant, env.claim_number);
+            return claim.status != ClaimStatus::Completed &&
+              claim.status != ClaimStatus::CompletedWithDispute;
+          }
+
+          false
+        }
+      )
+      .is_none()
+  }
+
+  pub(crate) fn internal_are_all_slots_complete(
+    &self,
+    id: BountyIndex,
+    bounty: &Bounty,
+    except: Option<(AccountId, Option<u8>)>
+  ) -> bool {
+    bounty.multitasking.clone().unwrap().are_all_slots_complete(except.clone()) &&
+      self.were_all_claims_completed(id, bounty, except)
   }
 
   pub(crate) fn internal_get_bounty_payout_proposal_id(bounty: &Bounty) -> Option<U64> {
@@ -2157,7 +2188,7 @@ impl BountiesContract {
         place_of_check
       )
     } else if bounty.is_validators_dao_used() && bounty.is_different_tasks() &&
-      Self::internal_are_all_slots_complete(&bounty, Some((receiver_id.clone(), claim_number))) &&
+      self.internal_are_all_slots_complete(id, &bounty, Some((receiver_id.clone(), claim_number))) &&
       Self::internal_get_bounty_payout_proposal_id(&bounty).is_none()
     {
       self.internal_add_proposal_to_finish_several_claims(
@@ -2229,7 +2260,7 @@ impl BountiesContract {
         "Bounty status does not allow to payout"
       );
       assert!(
-        Self::internal_are_all_slots_complete(&bounty, None),
+        self.internal_are_all_slots_complete(id, &bounty, None),
         "Not all tasks have already been completed"
       );
 
@@ -2331,7 +2362,7 @@ impl BountiesContract {
       env::panic_str(bounty_message);
     }
 
-    let claims = self.internal_get_claims_by_account_id_an_bounty_id(&id, &receiver_id, true);
+    let claims = self.internal_get_claims_by_account_id_and_bounty_id(&id, &receiver_id, true);
 
     if !bounty.allow_creating_many_claims || !no_claim_found {
       let claim = self.internal_find_claim(&claims, id, receiver_id, claim_number);
@@ -2397,7 +2428,7 @@ impl BountiesContract {
     if active_claim.is_none() {
       if bounty.status == BountyStatus::ManyClaimed &&
         different_task &&
-        Self::internal_are_all_slots_complete(&bounty, None) &&
+        self.internal_are_all_slots_complete(id, &bounty, None) &&
         Self::internal_get_bounty_payout_proposal_id(&bounty).is_some() &&
         bounty.is_validators_dao_used()
       {
@@ -2435,7 +2466,7 @@ impl BountiesContract {
       else if
         (bounty_claim.status == ClaimStatus::Completed && !different_task ||
           different_task &&
-          Self::internal_are_all_slots_complete(&bounty, None) &&
+          self.internal_are_all_slots_complete(id, &bounty, None) &&
           Self::internal_get_bounty_payout_proposal_id(&bounty).is_some()) &&
         (bounty.status == BountyStatus::Claimed ||
           bounty.status == BountyStatus::ManyClaimed) &&

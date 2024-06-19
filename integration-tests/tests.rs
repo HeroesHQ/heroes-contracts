@@ -3547,6 +3547,13 @@ async fn test_different_tasks_flow(e: &Env) -> anyhow::Result<()> {
     None, None,
   ).await?;
 
+  Env::bounty_approve_of_several(
+    &e.disputed_bounties,
+    bounty_id,
+    &e.project_owner,
+    Some("Not all tasks have already been completed"),
+  ).await?;
+
   e.open_dispute(&e.disputed_bounties, bounty_id, Some(&freelancers[3]), None).await?;
 
   let dispute_id = e.get_last_dispute_id().await? - 1;

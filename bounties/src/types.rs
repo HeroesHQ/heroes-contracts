@@ -820,7 +820,7 @@ impl Multitasking {
     }
   }
 
-  fn get_slots(self) -> Vec<Option<SubtaskEnv>> {
+  pub fn get_slots(self) -> Vec<Option<SubtaskEnv>> {
     self.get_different_tasks_env().participants
   }
 

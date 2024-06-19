@@ -176,7 +176,7 @@ impl BountiesContract {
     );
 
     for (_, bounty_claim) in claims.iter().enumerate() {
-      let claims = self.internal_get_claims_by_account_id_an_bounty_id(
+      let claims = self.internal_get_claims_by_account_id_and_bounty_id(
         &bounty_claim.bounty_id,
         &bounty_claim.owner,
         true

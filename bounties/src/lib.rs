@@ -692,7 +692,7 @@ impl BountiesContract {
       "This action is only available for the DifferentTasks mode"
     );
     assert!(
-      Self::internal_are_all_slots_complete(&bounty, None),
+      self.internal_are_all_slots_complete(id, &bounty, None),
       "Not all tasks have already been completed"
     );
     if bounty.is_payment_outside_contract() {
