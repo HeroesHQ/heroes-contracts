@@ -356,6 +356,14 @@ pub struct Subtask {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct PrizePlace {
+  pub place_description: String,
+  pub place_amount: U128,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct ContestOrHackathonEnvV1 {
   pub started_at: Option<U64>,
   pub finished_at: Option<U64>,
@@ -364,8 +372,8 @@ pub struct ContestOrHackathonEnvV1 {
 }
 
 impl ContestOrHackathonEnvV1 {
-  pub fn to_v2(&self) -> ContestOrHackathonEnv {
-    ContestOrHackathonEnv {
+  pub fn to_v2(&self) -> ContestOrHackathonEnvV2 {
+    ContestOrHackathonEnvV2 {
       started_at: self.started_at,
       finished_at: self.finished_at,
       participants: self.participants,
@@ -381,11 +389,35 @@ impl ContestOrHackathonEnvV1 {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
-pub struct ContestOrHackathonEnv {
+pub struct ContestOrHackathonEnvV2 {
   pub started_at: Option<U64>,
   pub finished_at: Option<U64>,
   pub participants: u32,
   pub competition_winner: Option<(AccountId, Option<u8>)>,
+}
+
+impl ContestOrHackathonEnvV2 {
+  pub fn to_v3(&self) -> ContestOrHackathonEnv {
+    ContestOrHackathonEnv {
+      started_at: self.started_at,
+      finished_at: self.finished_at,
+      participants: self.participants,
+      competition_winners: if self.competition_winner.is_some() {
+        vec![Some(self.competition_winner.clone().unwrap())]
+      } else {
+        vec![None]
+      }
+    }
+  }}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct ContestOrHackathonEnv {
+  pub started_at: Option<U64>,
+  pub finished_at: Option<U64>,
+  pub participants: u32,
+  pub competition_winners: Vec<Option<(AccountId, Option<u8>)>>,
 }
 
 impl Default for ContestOrHackathonEnv {
@@ -394,8 +426,16 @@ impl Default for ContestOrHackathonEnv {
       started_at: None,
       finished_at: None,
       participants: 0,
-      competition_winner: None,
+      competition_winners: vec![],
     }
+  }
+}
+
+impl ContestOrHackathonEnv {
+  fn init(number_of_prize_places: usize) -> Self {
+    let mut env = ContestOrHackathonEnv::default();
+    (0..number_of_prize_places).into_iter().for_each(|_| env.competition_winners.push(None));
+    env
   }
 }
 
@@ -478,6 +518,7 @@ pub struct DifferentTasksEnv {
   pub participants: Vec<Option<SubtaskEnv>>,
   pub bounty_payout_proposal_id: Option<U64>,
 }
+
 impl Default for DifferentTasksEnv {
   fn default() -> Self {
     Self {
@@ -515,15 +556,22 @@ pub enum Multitasking {
     subtasks: Vec<Subtask>,
     runtime_env: Option<DifferentTasksEnvV1>,
   },
-  ContestOrHackathon {
+  ContestOrHackathonV2 {
     allowed_create_claim_to: Option<DateOrPeriod>,
     successful_claims_for_result: Option<u16>,
     start_conditions: Option<StartConditions>,
-    runtime_env: Option<ContestOrHackathonEnv>,
+    runtime_env: Option<ContestOrHackathonEnvV2>,
   },
   DifferentTasks {
     subtasks: Vec<Subtask>,
     runtime_env: Option<DifferentTasksEnv>,
+  },
+  ContestOrHackathon {
+    allowed_create_claim_to: Option<DateOrPeriod>,
+    successful_claims_for_result: Option<u16>,
+    start_conditions: Option<StartConditions>,
+    prize_places: Option<Vec<PrizePlace>>,
+    runtime_env: Option<ContestOrHackathonEnv>,
   },
 }
 
@@ -534,17 +582,24 @@ impl Multitasking {
         allowed_create_claim_to,
         successful_claims_for_result,
         start_conditions,
+        prize_places,
         runtime_env,
       } => {
         assert!(
           runtime_env.is_none(),
           "The Multitasking instance is already initialized"
         );
+        let number_of_prize_places = if prize_places.is_some() {
+          prize_places.clone().unwrap().len()
+        } else {
+          1
+        };
         Self::ContestOrHackathon {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
-          runtime_env: Some(ContestOrHackathonEnv::default())
+          prize_places,
+          runtime_env: Some(ContestOrHackathonEnv::init(number_of_prize_places))
         }
       },
       Self::OneForAll {
@@ -578,6 +633,63 @@ impl Multitasking {
         }
       },
       _ => env::panic_str("Invalid multitasking parameter value")
+    }
+  }
+
+  pub fn upgrade_v1_to_v2(&self) -> Self {
+    match self {
+      Self::ContestOrHackathonV1 {
+        allowed_create_claim_to,
+        successful_claims_for_result,
+        start_conditions,
+        runtime_env,
+      } => Self::ContestOrHackathonV2 {
+        allowed_create_claim_to: allowed_create_claim_to.clone(),
+        successful_claims_for_result: successful_claims_for_result.clone(),
+        start_conditions: start_conditions.clone(),
+        runtime_env: if runtime_env.is_some() {
+          Some(runtime_env.clone().unwrap().to_v2())
+        } else {
+          unreachable!();
+        },
+      },
+      Self::OneForAll { .. } => self.clone(),
+      Self::DifferentTasksV1 {
+        subtasks,
+        runtime_env
+      } => Self::DifferentTasks {
+        subtasks: subtasks.clone(),
+        runtime_env: if runtime_env.is_some() {
+          Some(runtime_env.clone().unwrap().to_v2())
+        } else {
+          unreachable!();
+        }
+      },
+      _ => unreachable!(),
+    }
+  }
+
+  pub fn upgrade_v2_to_v3(&self) -> Self {
+    match self {
+      Self::ContestOrHackathonV2 {
+        allowed_create_claim_to,
+        successful_claims_for_result,
+        start_conditions,
+        runtime_env,
+      } => Self::ContestOrHackathon {
+        allowed_create_claim_to: allowed_create_claim_to.clone(),
+        successful_claims_for_result: successful_claims_for_result.clone(),
+        start_conditions: start_conditions.clone(),
+        prize_places: None,
+        runtime_env: if runtime_env.is_some() {
+          Some(runtime_env.clone().unwrap().to_v3())
+        } else {
+          unreachable!();
+        },
+      },
+      Self::OneForAll { .. } => self.clone(),
+      Self::DifferentTasks { .. } => self.clone(),
+      _ => unreachable!(),
     }
   }
 
@@ -655,8 +767,38 @@ impl Multitasking {
     self.get_contest_or_hackathon_env().participants
   }
 
-  pub fn get_competition_winner(&self) -> Option<(AccountId, Option<u8>)> {
-    self.get_contest_or_hackathon_env().competition_winner
+  pub fn get_competition_winner(
+    &self,
+    place: Option<usize>,
+    claimant: Option<(AccountId, Option<u8>)>,
+  ) -> Option<(AccountId, Option<u8>)> {
+    if place.is_some() {
+      let prize_place = place.unwrap();
+      assert!(
+        self.get_contest_or_hackathon_env().competition_winners.len() > prize_place,
+        "There are not so many prize places"
+      );
+      self.get_contest_or_hackathon_env().competition_winners[prize_place].clone()
+    } else {
+      let receiver_id = claimant.clone().expect("Place or claimant must be specified").0;
+      let claim_number = claimant.unwrap().1;
+      self.get_contest_or_hackathon_env()
+        .competition_winners
+        .into_iter()
+        .find(
+          |w|
+            w.is_some() &&
+              w.clone().unwrap().0 == receiver_id &&
+              w.clone().unwrap().1 == claim_number
+        )
+        .unwrap_or(None)
+    }
+  }
+
+  pub fn are_all_prize_places_taken(&self) -> bool {
+    self.get_contest_or_hackathon_env()
+      .competition_winners
+      .into_iter().find(|w| w.is_none()).is_none()
   }
 
   pub fn get_one_for_all_env(&self) -> (u16, u16) {
@@ -678,7 +820,7 @@ impl Multitasking {
     }
   }
 
-  fn get_slots(self) -> Vec<Option<SubtaskEnv>> {
+  pub fn get_slots(self) -> Vec<Option<SubtaskEnv>> {
     self.get_different_tasks_env().participants
   }
 
@@ -723,6 +865,7 @@ impl Multitasking {
         allowed_create_claim_to,
         successful_claims_for_result,
         start_conditions,
+        prize_places,
         runtime_env,
       } => {
         let mut new_runtime_env = runtime_env.clone().unwrap();
@@ -740,6 +883,7 @@ impl Multitasking {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
+          prize_places,
           runtime_env: Some(new_runtime_env),
         }
       },
@@ -753,6 +897,7 @@ impl Multitasking {
         allowed_create_claim_to,
         successful_claims_for_result,
         start_conditions,
+        prize_places,
         runtime_env,
       } => {
         let mut new_runtime_env = runtime_env.unwrap();
@@ -761,6 +906,7 @@ impl Multitasking {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
+          prize_places,
           runtime_env: Some(new_runtime_env),
         }
       },
@@ -768,20 +914,35 @@ impl Multitasking {
     }
   }
 
-  pub fn set_competition_winner(self, competition_winner: Option<(AccountId, Option<u8>)>) -> Self {
+  pub fn set_competition_winner(
+    self,
+    place: usize,
+    competition_winner: (AccountId, Option<u8>)
+  ) -> Self {
     match self {
       Self::ContestOrHackathon {
         allowed_create_claim_to,
         successful_claims_for_result,
         start_conditions,
+        prize_places,
         runtime_env,
       } => {
-        let mut new_runtime_env = runtime_env.unwrap();
-        new_runtime_env.competition_winner = competition_winner;
+        let mut new_runtime_env = runtime_env.clone().unwrap();
+        assert!(
+          new_runtime_env.competition_winners.len() > place,
+          "There are not so many prize places"
+        );
+        assert!(
+          new_runtime_env.competition_winners[place].is_none(),
+          "There is already a winner for this prize place"
+        );
+        new_runtime_env.competition_winners[place] = Some(competition_winner);
+
         Self::ContestOrHackathon {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
+          prize_places,
           runtime_env: Some(new_runtime_env),
         }
       },
@@ -1147,6 +1308,29 @@ pub struct BountyV5 {
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
 #[serde(crate = "near_sdk::serde")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
+pub struct BountyV6 {
+  pub token: Option<AccountId>,
+  pub amount: U128,
+  pub platform_fee: U128,
+  pub dao_fee: U128,
+  pub metadata: BountyMetadata,
+  pub deadline: Deadline,
+  pub claimant_approval: ClaimantApproval,
+  pub reviewers: Option<Reviewers>,
+  pub owner: AccountId,
+  pub status: BountyStatus,
+  pub created_at: U64,
+  pub kyc_config: KycConfig,
+  pub postpaid: Option<Postpaid>,
+  pub multitasking: Option<Multitasking>,
+  pub allow_deadline_stretch: bool,
+  pub bounty_flow: BountyFlow,
+  pub allow_creating_many_claims: bool,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Clone)]
+#[serde(crate = "near_sdk::serde")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Debug, PartialEq))]
 pub struct Bounty {
   pub token: Option<AccountId>,
   pub amount: U128,
@@ -1232,6 +1416,7 @@ impl Bounty {
           allowed_create_claim_to,
           successful_claims_for_result,
           start_conditions,
+          prize_places,
           ..
         } => {
           if allowed_create_claim_to.is_some() {
@@ -1265,6 +1450,26 @@ impl Bounty {
                 ),
               _ => (),
             }
+          }
+          if prize_places.is_some() {
+            let places_of_winners = prize_places.unwrap();
+            assert!(
+              places_of_winners.len() > 0 && places_of_winners.len() <= MAX_SLOTS as usize,
+              "The number of places must be greater than zero"
+            );
+            assert!(
+              places_of_winners
+                .clone()
+                .into_iter()
+                .find(|subtask| subtask.place_description.is_empty())
+                .is_none(),
+              "The places description cannot be empty"
+            );
+            assert_eq!(
+              places_of_winners.into_iter().map(|subtask| subtask.place_amount.0).sum::<u128>(),
+              self.amount.0,
+              "The sum of all places must equal the bounty amount"
+            );
           }
         },
         Multitasking::OneForAll {
@@ -1492,6 +1697,7 @@ pub enum VersionedBounty {
   V3(BountyV3),
   V4(BountyV4),
   V5(BountyV5),
+  V6(BountyV6),
   Current(Bounty),
 }
 
@@ -1587,53 +1793,14 @@ impl VersionedBounty {
     }
   }
 
-  fn upgrade_v5_to_v6(bounty: BountyV5) -> Bounty {
+  fn upgrade_v5_to_v6(bounty: BountyV5) -> BountyV6 {
     let multitasking = if bounty.multitasking.is_some() {
-      match bounty.multitasking.clone().unwrap() {
-        Multitasking::ContestOrHackathonV1 {
-          allowed_create_claim_to,
-          successful_claims_for_result,
-          start_conditions,
-          runtime_env,
-        } => Some(Multitasking::ContestOrHackathon {
-          allowed_create_claim_to,
-          successful_claims_for_result,
-          start_conditions,
-          runtime_env: if runtime_env.is_some() {
-            Some(runtime_env.unwrap().to_v2())
-          } else {
-            unreachable!();
-          },
-        }),
-        Multitasking::OneForAll {
-          number_of_slots,
-          amount_per_slot,
-          min_slots_to_start,
-          runtime_env
-        } => Some(Multitasking::OneForAll {
-          number_of_slots,
-          amount_per_slot,
-          min_slots_to_start,
-          runtime_env
-        }),
-        Multitasking::DifferentTasksV1 {
-          subtasks,
-          runtime_env
-        } => Some(Multitasking::DifferentTasks {
-          subtasks,
-          runtime_env: if runtime_env.is_some() {
-            Some(runtime_env.unwrap().to_v2())
-          } else {
-            unreachable!();
-          }
-        }),
-        _ => unreachable!(),
-      }
+      Some(bounty.multitasking.clone().unwrap().upgrade_v1_to_v2())
     } else {
       None
     };
 
-    Bounty {
+    BountyV6 {
       token: bounty.token,
       amount: bounty.amount,
       platform_fee: bounty.platform_fee,
@@ -1654,38 +1821,78 @@ impl VersionedBounty {
     }
   }
 
+  fn upgrade_v6_to_v7(bounty: BountyV6) -> Bounty {
+    let multitasking = if bounty.multitasking.is_some() {
+      Some(bounty.multitasking.clone().unwrap().upgrade_v2_to_v3())
+    } else {
+      None
+    };
+
+    Bounty {
+      token: bounty.token,
+      amount: bounty.amount,
+      platform_fee: bounty.platform_fee,
+      dao_fee: bounty.dao_fee,
+      metadata: bounty.metadata,
+      deadline: bounty.deadline,
+      claimant_approval: bounty.claimant_approval,
+      reviewers: bounty.reviewers,
+      owner: bounty.owner,
+      status: bounty.status,
+      created_at: bounty.created_at,
+      kyc_config: bounty.kyc_config,
+      postpaid: bounty.postpaid,
+      multitasking,
+      allow_deadline_stretch: bounty.allow_deadline_stretch,
+      bounty_flow: bounty.bounty_flow,
+      allow_creating_many_claims: bounty.allow_creating_many_claims,
+    }
+  }
+
   pub fn to_bounty(self) -> Bounty {
     match self {
       VersionedBounty::Current(bounty) => bounty,
       VersionedBounty::V1(bounty_v1) =>
-        VersionedBounty::upgrade_v5_to_v6(
-          VersionedBounty::upgrade_v4_to_v5(
-            VersionedBounty::upgrade_v3_to_v4(
-              VersionedBounty::upgrade_v2_to_v3(
-                VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+        VersionedBounty::upgrade_v6_to_v7(
+          VersionedBounty::upgrade_v5_to_v6(
+            VersionedBounty::upgrade_v4_to_v5(
+              VersionedBounty::upgrade_v3_to_v4(
+                VersionedBounty::upgrade_v2_to_v3(
+                  VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+                )
+              )
+            )
+          ),        ),
+      VersionedBounty::V2(bounty_v2) =>
+        VersionedBounty::upgrade_v6_to_v7(
+          VersionedBounty::upgrade_v5_to_v6(
+            VersionedBounty::upgrade_v4_to_v5(
+              VersionedBounty::upgrade_v3_to_v4(
+                VersionedBounty::upgrade_v2_to_v3(bounty_v2)
               )
             )
           )
         ),
-      VersionedBounty::V2(bounty_v2) =>
-        VersionedBounty::upgrade_v5_to_v6(
-          VersionedBounty::upgrade_v4_to_v5(
-            VersionedBounty::upgrade_v3_to_v4(
-              VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+      VersionedBounty::V3(bounty_v3) =>
+        VersionedBounty::upgrade_v6_to_v7(
+          VersionedBounty::upgrade_v5_to_v6(
+            VersionedBounty::upgrade_v4_to_v5(
+              VersionedBounty::upgrade_v3_to_v4(bounty_v3)
             )
           )
         ),
-      VersionedBounty::V3(bounty_v3) =>
-        VersionedBounty::upgrade_v5_to_v6(
-          VersionedBounty::upgrade_v4_to_v5(
-            VersionedBounty::upgrade_v3_to_v4(bounty_v3)
+      VersionedBounty::V4(bounty_v4) =>
+        VersionedBounty::upgrade_v6_to_v7(
+          VersionedBounty::upgrade_v5_to_v6(
+            VersionedBounty::upgrade_v4_to_v5(bounty_v4)
           )
         ),
-      VersionedBounty::V4(bounty_v4) =>
-        VersionedBounty::upgrade_v5_to_v6(
-          VersionedBounty::upgrade_v4_to_v5(bounty_v4)
+      VersionedBounty::V5(bounty_v5) =>
+        VersionedBounty::upgrade_v6_to_v7(
+          VersionedBounty::upgrade_v5_to_v6(bounty_v5)
         ),
-      VersionedBounty::V5(bounty_v5) => VersionedBounty::upgrade_v5_to_v6(bounty_v5),
+      VersionedBounty::V6(bounty_v6) =>
+        VersionedBounty::upgrade_v6_to_v7(bounty_v6)
     }
   }
 }
@@ -1695,34 +1902,46 @@ impl From<VersionedBounty> for Bounty {
     match value {
       VersionedBounty::Current(bounty) => bounty,
       VersionedBounty::V1(bounty_v1) =>
-        VersionedBounty::upgrade_v5_to_v6(
-          VersionedBounty::upgrade_v4_to_v5(
-            VersionedBounty::upgrade_v3_to_v4(
-              VersionedBounty::upgrade_v2_to_v3(
-                VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+        VersionedBounty::upgrade_v6_to_v7(
+          VersionedBounty::upgrade_v5_to_v6(
+            VersionedBounty::upgrade_v4_to_v5(
+              VersionedBounty::upgrade_v3_to_v4(
+                VersionedBounty::upgrade_v2_to_v3(
+                  VersionedBounty::upgrade_v1_to_v2(bounty_v1)
+                )
+              )
+            )
+          ),        ),
+      VersionedBounty::V2(bounty_v2) =>
+        VersionedBounty::upgrade_v6_to_v7(
+          VersionedBounty::upgrade_v5_to_v6(
+            VersionedBounty::upgrade_v4_to_v5(
+              VersionedBounty::upgrade_v3_to_v4(
+                VersionedBounty::upgrade_v2_to_v3(bounty_v2)
               )
             )
           )
         ),
-      VersionedBounty::V2(bounty_v2) =>
-        VersionedBounty::upgrade_v5_to_v6(
-          VersionedBounty::upgrade_v4_to_v5(
-            VersionedBounty::upgrade_v3_to_v4(
-              VersionedBounty::upgrade_v2_to_v3(bounty_v2)
+      VersionedBounty::V3(bounty_v3) =>
+        VersionedBounty::upgrade_v6_to_v7(
+          VersionedBounty::upgrade_v5_to_v6(
+            VersionedBounty::upgrade_v4_to_v5(
+              VersionedBounty::upgrade_v3_to_v4(bounty_v3)
             )
           )
         ),
-      VersionedBounty::V3(bounty_v3) =>
-        VersionedBounty::upgrade_v5_to_v6(
-          VersionedBounty::upgrade_v4_to_v5(
-            VersionedBounty::upgrade_v3_to_v4(bounty_v3)
+      VersionedBounty::V4(bounty_v4) =>
+        VersionedBounty::upgrade_v6_to_v7(
+          VersionedBounty::upgrade_v5_to_v6(
+            VersionedBounty::upgrade_v4_to_v5(bounty_v4)
           )
         ),
-      VersionedBounty::V4(bounty_v4) =>
-        VersionedBounty::upgrade_v5_to_v6(
-          VersionedBounty::upgrade_v4_to_v5(bounty_v4)
+      VersionedBounty::V5(bounty_v5) =>
+        VersionedBounty::upgrade_v6_to_v7(
+          VersionedBounty::upgrade_v5_to_v6(bounty_v5)
         ),
-      VersionedBounty::V5(bounty_v5) => VersionedBounty::upgrade_v5_to_v6(bounty_v5),
+      VersionedBounty::V6(bounty_v6) =>
+        VersionedBounty::upgrade_v6_to_v7(bounty_v6)
     }
   }
 }

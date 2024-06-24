@@ -70,6 +70,7 @@ impl BountiesContract {
     bounty: &Bounty,
     receiver_id: &AccountId,
     claim_number: Option<u8>,
+    place: Option<usize>,
   ) {
     if bounty.multitasking.is_some() {
       let multitasking = bounty.multitasking.clone().unwrap();
@@ -92,14 +93,16 @@ impl BountiesContract {
               "Not enough participants finished"
             );
           }
+          let competition_winner = multitasking.get_competition_winner(place, None);
           if bounty.is_payment_outside_contract() {
-            let competition_winner = multitasking.get_competition_winner();
             assert!(
               competition_winner.is_some() &&
                 competition_winner.clone().unwrap().0 == receiver_id.clone() &&
                 competition_winner.clone().unwrap().1 == claim_number,
               "Only the winner of the competition can be approved"
             );
+          } else {
+            assert!(competition_winner.is_none(), "There is already a winner for this prize place");
           }
         },
         Multitasking::OneForAll { .. } => {},
@@ -343,6 +346,34 @@ impl BountiesContract {
             bounty.dao_fee.0 / number_of_slots as u128 * remainder as u128
           )
         }
+        Multitasking::ContestOrHackathon {
+          prize_places,
+          runtime_env,
+          ..
+        } => {
+          let competition_winners = runtime_env.unwrap().competition_winners;
+          let places = prize_places.unwrap_or(
+            vec![PrizePlace { place_description: "".to_string(), place_amount: bounty.amount}]
+          );
+
+          let amount = places
+            .clone()
+            .into_iter()
+            .enumerate()
+            .filter(|&(i, _)| competition_winners[i].is_none())
+            .map(|(_, p)| p.place_amount.0).sum::<u128>();
+
+          let remainder = places
+            .clone()
+            .into_iter()
+            .enumerate()
+            .filter(|&(i, _)| competition_winners[i].is_none()).count();
+
+          let platform_fee = bounty.platform_fee.0 / places.len() as u128 * remainder as u128;
+          let dao_fee = bounty.dao_fee.0 / places.len() as u128 * remainder as u128;
+
+          (amount, platform_fee, dao_fee)
+        },
         _ => unreachable!(),
       }
     } else {
@@ -372,12 +403,13 @@ impl BountiesContract {
   }
 
   pub(crate) fn internal_get_bounty_amount_for_payment(
-    bounty: &Bounty
+    bounty: &Bounty,
+    place: Option<usize>,
   ) -> (U128, U128, U128) {
     if bounty.is_payment_outside_contract() {
       return (U128(0), U128(0), U128(0));
     }
-    if bounty.is_one_bounty_for_many_claimants() {
+    if bounty.is_one_bounty_for_many_claimants() || bounty.is_contest_or_hackathon() {
       let multitasking = bounty.multitasking.clone().unwrap();
       match multitasking {
         Multitasking::OneForAll { number_of_slots, .. } => {
@@ -398,6 +430,23 @@ impl BountiesContract {
           } else {
             (U128(one_slot_amount), U128(one_slot_platform_fee), U128(one_slot_dao_fee))
           }
+        },
+        Multitasking::ContestOrHackathon {
+          prize_places,
+          ..
+        } => {
+          let prize_place = place.expect("This bounty type requires a place value");
+          let places = prize_places.unwrap_or(
+            vec![PrizePlace { place_description: "".to_string(), place_amount: bounty.amount}]
+          );
+
+          assert!(places.len() > prize_place, "There are not so many prize places");
+
+          let amount = places[prize_place].place_amount.0;
+          let platform_fee = bounty.platform_fee.0 / places.len() as u128;
+          let dao_fee = bounty.dao_fee.0 / places.len() as u128;
+
+          (U128(amount), U128(platform_fee), U128(dao_fee))
         },
         _ => unreachable!(),
       }
@@ -454,7 +503,7 @@ impl BountiesContract {
     }
   }
 
-  pub(crate) fn internal_get_claims_by_account_id_an_bounty_id(
+  pub(crate) fn internal_get_claims_by_account_id_and_bounty_id(
     &self,
     id: &BountyIndex,
     receiver_id: &AccountId,
@@ -525,7 +574,7 @@ impl BountiesContract {
     receiver_id: AccountId,
     claim_number: Option<u8>
   ) -> (ClaimIndex, BountyClaim) {
-    let claims = self.internal_get_claims_by_account_id_an_bounty_id(&id, &receiver_id, false);
+    let claims = self.internal_get_claims_by_account_id_and_bounty_id(&id, &receiver_id, false);
     let claim = self.internal_find_claim(&claims, id, receiver_id, claim_number);
     claim.expect("No bounty claim found")
   }
@@ -534,7 +583,7 @@ impl BountiesContract {
     bounty: &Bounty,
     claim: &BountyClaim,
   ) -> PaymentTimestamps {
-    if bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks() {
+    if bounty.multitasking.is_some() {
       claim.payment_timestamps.clone().unwrap_or_default()
     } else {
       bounty.postpaid.clone().unwrap().get_payment_timestamps()
@@ -583,7 +632,9 @@ impl BountiesContract {
           if bounty.status == BountyStatus::ManyClaimed &&
             bounty.multitasking.clone().unwrap().get_participants() == 0
           {
-            self.internal_finish_competition(bounty, None);
+            bounty.multitasking = Some(
+              bounty.multitasking.clone().unwrap().set_competition_timestamp(None)
+            );
             bounty.status = BountyStatus::New;
           }
         },
@@ -740,9 +791,10 @@ impl BountiesContract {
     &mut self,
     id: BountyIndex,
     claimant: Option<(AccountId, Option<u8>)>,
+    place: Option<usize>,
   ) -> PromiseOrValue<()> {
     let bounty = self.get_bounty(id);
-    let amounts = Self::internal_get_bounty_amount_for_payment(&bounty);
+    let amounts = Self::internal_get_bounty_amount_for_payment(&bounty, place);
     self.assert_locked_amount_greater_than_or_equal_transaction_amount(
       &bounty,
       Some(amounts.1),
@@ -750,7 +802,7 @@ impl BountiesContract {
     );
 
     if bounty.is_payment_outside_contract() || bounty.is_different_tasks() {
-      self.internal_bounty_completion(id, bounty, claimant);
+      self.internal_bounty_completion(id, bounty, claimant, amounts, place);
       return PromiseOrValue::Value(())
     }
 
@@ -766,7 +818,7 @@ impl BountiesContract {
       .then(
         Self::ext(env::current_account_id())
           .with_static_gas(GAS_FOR_AFTER_FT_TRANSFER)
-          .after_ft_transfer(id, claimant)
+          .after_ft_transfer(id, claimant, amounts, place)
       )
       .into()
   }
@@ -985,6 +1037,7 @@ impl BountiesContract {
                       "id": id.clone(),
                       "receiver_id": receiver_id.to_string(),
                       "claim_number": claim_number,
+                      "place": Option::<usize>::None,
                     })
                       .to_string()
                       .into_bytes()
@@ -1338,6 +1391,25 @@ impl BountiesContract {
       .collect()
   }
 
+  pub(crate) fn internal_get_real_prize_place(
+    prize_place: Option<usize>,
+    bounty: &Bounty
+  ) -> Option<usize> {
+    if prize_place.is_none() {
+      if bounty.is_contest_or_hackathon() {
+        Some(0)
+      } else {
+        None
+      }
+    } else {
+      assert!(
+        bounty.is_contest_or_hackathon(),
+        "The prize_place parameter cannot be used for this bounty type"
+      );
+      prize_place
+    }
+  }
+
   pub(crate) fn internal_start_competition(
     &mut self,
     bounty: &mut Bounty,
@@ -1348,20 +1420,10 @@ impl BountiesContract {
     );
   }
 
-  pub(crate) fn internal_finish_competition(
-    &mut self,
-    bounty:
-    &mut Bounty,
-    winner: Option<(AccountId, Option<u8>)>
-  ) {
+  pub(crate) fn internal_finish_competition(&mut self, bounty: &mut Bounty) {
     bounty.multitasking = Some(
       bounty.multitasking.clone().unwrap().set_competition_timestamp(None)
     );
-    if winner.is_some() {
-      bounty.multitasking = Some(
-        bounty.multitasking.clone().unwrap().set_competition_winner(winner)
-      );
-    }
   }
 
   pub(crate) fn internal_participants_increment(&mut self, bounty: &mut Bounty) {
@@ -1456,11 +1518,42 @@ impl BountiesContract {
     }
   }
 
-  pub(crate) fn internal_are_all_slots_complete(
+  pub(crate) fn were_all_claims_completed(
+    &self,
+    id: BountyIndex,
     bounty: &Bounty,
     except: Option<(AccountId, Option<u8>)>
   ) -> bool {
-    bounty.multitasking.clone().unwrap().are_all_slots_complete(except)
+    let participants = bounty.multitasking.clone().unwrap().get_slots();
+    participants
+      .into_iter()
+      .find(
+        |p| {
+          let env = p.clone().unwrap();
+
+          if except.is_none() ||
+              env.participant != except.clone().unwrap().0 ||
+              env.claim_number != except.clone().unwrap().1
+          {
+            let (_, claim) = self.internal_get_claim(id, env.participant, env.claim_number);
+            return claim.status != ClaimStatus::Completed &&
+              claim.status != ClaimStatus::CompletedWithDispute;
+          }
+
+          false
+        }
+      )
+      .is_none()
+  }
+
+  pub(crate) fn internal_are_all_slots_complete(
+    &self,
+    id: BountyIndex,
+    bounty: &Bounty,
+    except: Option<(AccountId, Option<u8>)>
+  ) -> bool {
+    bounty.multitasking.clone().unwrap().are_all_slots_complete(except.clone()) &&
+      self.were_all_claims_completed(id, bounty, except)
   }
 
   pub(crate) fn internal_get_bounty_payout_proposal_id(bounty: &Bounty) -> Option<U64> {
@@ -1768,9 +1861,7 @@ impl BountiesContract {
       rejected_timestamp: None,
       dispute_id: None,
       is_kyc_delayed: None,
-      payment_timestamps: if bounty.is_payment_outside_contract() &&
-        bounty.is_one_bounty_for_many_claimants() || bounty.is_different_tasks()
-      {
+      payment_timestamps: if bounty.is_payment_outside_contract() && bounty.multitasking.is_some() {
         Some(PaymentTimestamps::default())
       } else {
         None
@@ -2085,7 +2176,10 @@ impl BountiesContract {
     place_of_check: PlaceOfCheckKYC,
   ) -> PromiseOrValue<()> {
     let bounty = self.get_bounty(id.clone());
-    if bounty.is_validators_dao_used() && !bounty.is_different_tasks() {
+    if bounty.is_validators_dao_used() &&
+      !bounty.is_different_tasks() &&
+      !bounty.is_contest_or_hackathon()
+    {
       self.internal_add_proposal_to_finish_claim(
         id,
         receiver_id,
@@ -2094,7 +2188,7 @@ impl BountiesContract {
         place_of_check
       )
     } else if bounty.is_validators_dao_used() && bounty.is_different_tasks() &&
-      Self::internal_are_all_slots_complete(&bounty, Some((receiver_id.clone(), claim_number))) &&
+      self.internal_are_all_slots_complete(id, &bounty, Some((receiver_id.clone(), claim_number))) &&
       Self::internal_get_bounty_payout_proposal_id(&bounty).is_none()
     {
       self.internal_add_proposal_to_finish_several_claims(
@@ -2147,6 +2241,8 @@ impl BountiesContract {
     id: BountyIndex,
     mut bounty: Bounty,
     claimant: Option<(AccountId, Option<u8>)>,
+    amounts: (U128, U128, U128),
+    place: Option<usize>,
   ) {
     let action_kind;
     let bond: Option<U128>;
@@ -2164,7 +2260,7 @@ impl BountiesContract {
         "Bounty status does not allow to payout"
       );
       assert!(
-        Self::internal_are_all_slots_complete(&bounty, None),
+        self.internal_are_all_slots_complete(id, &bounty, None),
         "Not all tasks have already been completed"
       );
 
@@ -2197,7 +2293,6 @@ impl BountiesContract {
       };
     }
 
-    let amounts = Self::internal_get_bounty_amount_for_payment(&bounty);
     self.internal_total_fees_unlocking_funds(&bounty, Some(amounts.1), Some(amounts.2));
 
     if bounty.multitasking.is_none() {
@@ -2206,11 +2301,18 @@ impl BountiesContract {
       match bounty.multitasking.clone().unwrap() {
         Multitasking::ContestOrHackathon { .. } => {
           self.internal_participants_decrement(&mut bounty);
-          self.internal_finish_competition(
-            &mut bounty,
-            Some((receiver_id.clone().unwrap(), claim_number))
-          );
-          bounty.status = BountyStatus::Completed;
+          if !bounty.is_payment_outside_contract() {
+            bounty.multitasking = Some(
+              bounty.multitasking.clone().unwrap().set_competition_winner(
+                place.expect("This bounty type requires a place value"),
+                claimant.unwrap(),
+              )
+            );
+          }
+          if bounty.multitasking.clone().unwrap().are_all_prize_places_taken() {
+            self.internal_finish_competition(&mut bounty);
+            bounty.status = BountyStatus::Completed;
+          }
         },
         Multitasking::OneForAll { number_of_slots, .. } => {
           self.internal_paid_slots_increment(&mut bounty);
@@ -2260,7 +2362,7 @@ impl BountiesContract {
       env::panic_str(bounty_message);
     }
 
-    let claims = self.internal_get_claims_by_account_id_an_bounty_id(&id, &receiver_id, true);
+    let claims = self.internal_get_claims_by_account_id_and_bounty_id(&id, &receiver_id, true);
 
     if !bounty.allow_creating_many_claims || !no_claim_found {
       let claim = self.internal_find_claim(&claims, id, receiver_id, claim_number);
@@ -2326,7 +2428,7 @@ impl BountiesContract {
     if active_claim.is_none() {
       if bounty.status == BountyStatus::ManyClaimed &&
         different_task &&
-        Self::internal_are_all_slots_complete(&bounty, None) &&
+        self.internal_are_all_slots_complete(id, &bounty, None) &&
         Self::internal_get_bounty_payout_proposal_id(&bounty).is_some() &&
         bounty.is_validators_dao_used()
       {
@@ -2364,7 +2466,7 @@ impl BountiesContract {
       else if
         (bounty_claim.status == ClaimStatus::Completed && !different_task ||
           different_task &&
-          Self::internal_are_all_slots_complete(&bounty, None) &&
+          self.internal_are_all_slots_complete(id, &bounty, None) &&
           Self::internal_get_bounty_payout_proposal_id(&bounty).is_some()) &&
         (bounty.status == BountyStatus::Claimed ||
           bounty.status == BountyStatus::ManyClaimed) &&

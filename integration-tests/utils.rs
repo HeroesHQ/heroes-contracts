@@ -665,11 +665,12 @@ impl Env {
     bounty_id: u64,
     claimant: Option<&AccountId>,
     claim_number: Option<u8>,
+    prize_place: Option<usize>,
     expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let res = self.project_owner
       .call(bounties.id(), "mark_as_paid")
-      .args_json((bounty_id, claimant, claim_number))
+      .args_json((bounty_id, claimant, claim_number, prize_place))
       .max_gas()
       .transact()
       .await?;
@@ -766,11 +767,12 @@ impl Env {
     user: &Account,
     receiver_id: &Account,
     claim_number: Option<u8>,
+    prize_place: Option<usize>,
     expected_msg: Option<&str>,
   ) -> anyhow::Result<()> {
     let res = user
       .call(bounties.id(), "bounty_approve")
-      .args_json((bounty_id, receiver_id.id(), claim_number))
+      .args_json((bounty_id, receiver_id.id(), claim_number, prize_place))
       .max_gas()
       .deposit(ONE_YOCTO)
       .transact()
